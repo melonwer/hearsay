@@ -279,9 +279,23 @@ function handleLine(line) {
     replyError(null, -32600, 'Invalid Request');
     return;
   }
-  const p = dispatch(/** @type {{id?: unknown, method?: string, params?: any}} */ (msg));
-  inflight.add(p);
-  void p.finally(() => inflight.delete(p));
+  // JSON-RPC batches: the 2025-03-26 MCP revision (which we offer in initialize)
+  // required servers to accept them. Unroll and dispatch individually — replies go out
+  // as separate ndjson lines, which stdio clients correlate by id.
+  const msgs = Array.isArray(msg) ? msg : [msg];
+  if (msgs.length === 0) {
+    replyError(null, -32600, 'Invalid Request');
+    return;
+  }
+  for (const one of msgs) {
+    if (one === null || typeof one !== 'object' || Array.isArray(one)) {
+      replyError(null, -32600, 'Invalid Request');
+      continue;
+    }
+    const p = dispatch(/** @type {{id?: unknown, method?: string, params?: any}} */ (one));
+    inflight.add(p);
+    void p.finally(() => inflight.delete(p));
+  }
 }
 
 process.stdin.on('data', (chunk) => {
