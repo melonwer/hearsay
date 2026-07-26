@@ -208,6 +208,16 @@ test('mutating methods refuse a cross-site Origin (§10.1)', async (t) => {
   await noOrigin.text();
   assert.equal(noOrigin.status, 200);
 
+  // An opaque origin ("null") is a header that is present and does not match the host —
+  // a sandboxed frame or a local file, never this app's own pages. Treat it as cross-site.
+  const opaqueOrigin = await fetch(`${app.base}/api/settings`, {
+    method: 'PATCH',
+    headers: { ...JSON_HEADERS, Origin: 'null' },
+    body,
+  });
+  await opaqueOrigin.text();
+  assert.equal(opaqueOrigin.status, 403);
+
   // Safe methods are never blocked by the guard.
   const read = await fetch(`${app.base}/api/entities`, { headers: { Origin: 'http://evil.example' } });
   await read.text();
