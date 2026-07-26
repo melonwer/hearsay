@@ -193,6 +193,27 @@ test('mcp: piped stdin — replies to all requests land before exit (drain on en
   await backend.close();
 });
 
+test('mcp: a `null` line gets -32600 Invalid Request and never kills the session', async () => {
+  const backend = await stubBackend({});
+  const child = spawn(process.execPath, ['mcp/server.mjs'], {
+    env: { ...process.env, HEARSAY_URL: backend.url },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  // `JSON.parse('null')` succeeds — this line is valid JSON but not a valid Request.
+  child.stdin.end('null\n{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+  let out = '';
+  for await (const chunk of child.stdout) out += chunk;
+  const [code] = await once(child, 'close');
+  await backend.close(); // close before asserting so a failure cannot hang the suite
+  assert.equal(code, 0, 'a malformed request must not tear the process down');
+  const replies = out.trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(replies.length, 2);
+  assert.equal(replies[0].id, null);
+  assert.equal(replies[0].error.code, -32600);
+  assert.equal(replies[1].id, 1);
+  assert.deepEqual(replies[1].result, {}); // the ping after the bad line still answered
+});
+
 test('mcp: unknown protocolVersion → server answers with its own latest', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);

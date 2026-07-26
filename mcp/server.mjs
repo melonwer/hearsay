@@ -258,20 +258,39 @@ let buffer = '';
 /** In-flight dispatches — piped stdin closes before async tools/call replies land. @type {Set<Promise<void>>} */
 const inflight = new Set();
 process.stdin.setEncoding('utf8');
+/**
+ * Parse and dispatch one newline-delimited JSON-RPC line. Never throws, never leaves an
+ * unhandled rejection: a malformed line gets a protocol error reply, not a dead session.
+ * @param {string} line
+ * @returns {void}
+ */
+function handleLine(line) {
+  /** @type {unknown} */
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    replyError(null, -32700, 'Parse error');
+    return;
+  }
+  if (msg === null || typeof msg !== 'object') {
+    // Valid JSON, invalid Request — e.g. the line `null`, which destructuring would
+    // otherwise turn into an unhandled rejection that kills the whole session.
+    replyError(null, -32600, 'Invalid Request');
+    return;
+  }
+  const p = dispatch(/** @type {{id?: unknown, method?: string, params?: any}} */ (msg));
+  inflight.add(p);
+  void p.finally(() => inflight.delete(p));
+}
+
 process.stdin.on('data', (chunk) => {
   buffer += chunk;
   let nl;
   while ((nl = buffer.indexOf('\n')) >= 0) {
     const line = buffer.slice(0, nl).trim();
     buffer = buffer.slice(nl + 1);
-    if (line === '') continue;
-    try {
-      const p = dispatch(JSON.parse(line));
-      inflight.add(p);
-      void p.finally(() => inflight.delete(p));
-    } catch {
-      replyError(null, -32700, 'Parse error');
-    }
+    if (line !== '') handleLine(line);
   }
 });
 process.stdin.on('end', () => {
