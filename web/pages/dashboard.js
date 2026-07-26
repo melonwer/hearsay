@@ -108,6 +108,7 @@ export function deltaPoints(last7, last14) {
  * @property {{p: number|null, lo?: number, hi?: number}|null} brandMentionRate
  * @property {number|null} avgRank
  * @property {number|null} citationShare
+ * @property {number} citationN
  * @property {string|null} lastError
  */
 
@@ -197,7 +198,7 @@ export function buildView({ db, config }, opts = {}) {
   /** @type {RecStat} */
   const rec14 = brandId === null ? null : m('recommendationRate', { entityId: brandId, days: 14 }, null);
 
-  /** @type {{provider:string,n:number,brandMentionRate:{p:number|null,lo?:number,hi?:number},avgRank:number|null,citationShare:number|null,lastError:string|null}[]} */
+  /** @type {{provider:string,n:number,brandMentionRate:{p:number|null,lo?:number,hi?:number},avgRank:number|null,citationShare:number|null,citationN?:number,lastError:string|null}[]} */
   const providerRows = m('providerBreakdown', { days }, []);
   /** @type {{intentId:number,label:string,n:number,pooled:{p:number|null,lo?:number,hi?:number},rerunSpread:number|null,phrasingSpread:number|null,paraphraseCount:number}[]} */
   const intentRows = m('intentTable', { days }, []);
@@ -301,6 +302,7 @@ export function buildView({ db, config }, opts = {}) {
         brandMentionRate: row ? row.brandMentionRate : null,
         avgRank: row ? row.avgRank : null,
         citationShare: row ? row.citationShare : null,
+        citationN: row ? Number(row.citationN ?? 0) : 0,
         lastError: row ? row.lastError : null,
       };
     }),
@@ -456,7 +458,7 @@ function providerRow(view) {
         <dd>${num(provider.avgRank, 1)}</dd>
         ${provider.provider === 'perplexity'
           ? html`<dt>Citation share</dt>
-              <dd>${pct(provider.citationShare)}</dd>`
+              <dd>${rateWithCI({ p: provider.citationShare, n: provider.citationN })}</dd>`
           : ''}
       </dl>
       ${status}

@@ -450,7 +450,7 @@ function byProviderOrder(a, b) {
  *
  * @param {Db|MetricsOpts} dbOrOpts open database, or an options object carrying `db`
  * @param {WindowOpts} [maybeOpts]
- * @returns {{provider:string, n:number, brandMentionRate:Rate, avgRank:number|null, citationShare:number|null, lastError:string|null}[]}
+ * @returns {{provider:string, n:number, brandMentionRate:Rate, avgRank:number|null, citationShare:number|null, citationN:number, lastError:string|null}[]}
  */
 export function providerBreakdown(dbOrOpts, maybeOpts) {
   const [db, opts] = args(dbOrOpts, maybeOpts);
@@ -476,12 +476,15 @@ export function providerBreakdown(dbOrOpts, maybeOpts) {
       [provider, w.start, w.end],
     );
     const rate = brand ? mentionRate(db, { ...scoped, entityId: brand.id }) : wilson(0, 0);
+    const citations = brand ? citationShare(db, { ...scoped, entityId: brand.id }) : null;
     return {
       provider,
       n: rate.n,
       brandMentionRate: rate,
       avgRank: brand ? avgRank(db, { ...scoped, entityId: brand.id }) : null,
-      citationShare: brand ? citationShare(db, { ...scoped, entityId: brand.id }).share : null,
+      citationShare: citations ? citations.share : null,
+      // The share is a rate, so it may never be displayed without its base (§7).
+      citationN: citations ? citations.answersWithCitations : 0,
       lastError: errorRow ? String(errorRow.error) : null,
     };
   });
