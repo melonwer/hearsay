@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { startServer } from '../server.js';
 import { buildConfig } from '../core/config.js';
+import { run as dbRun } from '../core/db.js';
 import { _setFetch } from '../core/providers/shared.js';
 
 after(() => {
@@ -234,6 +235,52 @@ test('setup: empty body 422; payload-internal domain dupe 422; competitor-name b
     const promo = await api(app.base, 'POST', '/api/setup', { brand: { name: 'Jotta' } });
     assert.equal(promo.status, 409);
     assert.equal(promo.body.error.code, 'entity_exists');
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Insert a finished run plus one stored answer directly (FKs are ON, so the whole
+ * chain is needed). Returns the response id for hanging mentions/citations off it.
+ * @param {import('node:sqlite').DatabaseSync} db @param {number} promptId @param {string} [text]
+ * @returns {number|bigint}
+ */
+function seedResponse(db, promptId, text = 'an answer') {
+  const runId = dbRun(
+    db,
+    "INSERT INTO runs(started_at, finished_at, trigger, status, total_calls, done_calls) VALUES('2026-07-01T00:00:00Z','2026-07-01T00:01:00Z','api','done',1,1)",
+  ).lastInsertRowid;
+  return dbRun(
+    db,
+    "INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, created_at) VALUES(?, ?, 'openai', 'test-model', 0, ?, '2026-07-01T00:00:30Z')",
+    [runId, promptId, text],
+  ).lastInsertRowid;
+}
+
+test('entities: PATCH is_self=true on an archived entity is refused, brand stays visible', async () => {
+  const app = await boot();
+  try {
+    await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
+    const jotta = (await api(app.base, 'POST', '/api/entities', { name: 'Jotta' })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' })).body;
+    const responseId = seedResponse(app.db, prompt.id);
+    dbRun(
+      app.db,
+      "INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet) VALUES(?, ?, 0, 1, 1, 0, 'snippet')",
+      [responseId, jotta.id],
+    );
+
+    const del = await api(app.base, 'DELETE', `/api/entities/${jotta.id}`);
+    assert.equal(del.body.archived, true, 'entity with mentions soft-archives');
+
+    // Making a hidden archived row the brand would strip is_self from the live brand
+    // and leave the deployment with no visible brand at all.
+    const patch = await api(app.base, 'PATCH', `/api/entities/${jotta.id}`, { is_self: true });
+    assert.equal(patch.status, 409);
+
+    const status = await api(app.base, 'GET', '/api/status');
+    assert.equal(status.body.configured, true, 'the live brand must keep is_self');
   } finally {
     await app.close();
   }

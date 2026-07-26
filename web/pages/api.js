@@ -306,6 +306,13 @@ function patchEntity({ db }, ctx) {
       : (strList(body.domains, 'domains') ?? []).map(normaliseDomain).filter((domain) => domain !== '');
   const isSelf = bool(body.is_self, 'is_self');
 
+  // The single-is_self invariant (§3) must land on a VISIBLE row: brandEntity()
+  // excludes archived entities, so parking the flag on an archived one would strip
+  // is_self from the live brand and leave the deployment with no brand at all.
+  if (isSelf === true && existing.archived_at !== null) {
+    throw new ApiError(409, 'conflict', 'Cannot make an archived entity the brand');
+  }
+
   if (domains !== undefined) assertDomainsFree(db, domains, id);
   if (name !== undefined && name !== existing.name && get(db, 'SELECT id FROM entities WHERE name = ?', [name])) {
     throw new ApiError(409, 'conflict', `An entity named ${name} already exists`);
