@@ -699,6 +699,11 @@ async function startRun({ db, config }, ctx) {
   if (config.demo) {
     throw new ApiError(400, 'demo_mode', 'Demo mode is on, so live provider calls are disabled. Set HEARSAY_DEMO=0.');
   }
+  // With zero providers a "run" would be an empty 0-call row finalised as 'done' —
+  // which later shadows the last genuine run when alerts pick their prior runs.
+  if (config.enabledProviders.length === 0) {
+    throw new ApiError(400, 'no_providers', 'No provider API keys configured — add one to .env to run a panel');
+  }
   const running = get(db, "SELECT id, done_calls, total_calls FROM runs WHERE status = 'running' ORDER BY id DESC LIMIT 1");
   if (running) {
     throw new ApiError(409, 'already_running', `Run ${running.id} in progress: ${running.done_calls}/${running.total_calls} calls done`);

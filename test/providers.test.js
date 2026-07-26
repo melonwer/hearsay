@@ -952,6 +952,23 @@ describe('scheduler (§8.2)', () => {
     assert.equal(await scheduler.tick(), false, 'no 60-second retry loop against a broken provider');
   });
 
+  it('is disabled with zero enabled providers (§8.2)', async () => {
+    const config = buildConfig({ HEARSAY_RUN_AT: '07:00' }); // no keys at all
+    let fired = 0;
+    const scheduler = start({
+      db,
+      config,
+      now: () => new Date(2026, 6, 26, 9, 0, 0),
+      runPanel: async () => {
+        fired += 1;
+      },
+    });
+    assert.equal(scheduler.enabled, false);
+    assert.equal(await scheduler.tick(), false);
+    assert.equal(fired, 0, 'a keyless install must never write empty done runs on a timer');
+    assert.equal(getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, null), null);
+  });
+
   it('is disabled in demo mode', async () => {
     const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_DEMO: '1' });
     let fired = 0;

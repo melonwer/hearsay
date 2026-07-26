@@ -92,7 +92,10 @@ export function startScheduler(options) {
     log = (message) => process.stderr.write(`${message}\n`),
   } = options;
 
-  if (config.demo) {
+  // §8.2: disabled when demo mode (demo instances must never spend money) or when
+  // zero providers are enabled — a keyless install firing daily would only write
+  // empty status='done' runs that later shadow real prior runs in alert evaluation.
+  if (config.demo || config.enabledProviders.length === 0) {
     return { enabled: false, tick: async () => false, stop: () => {} };
   }
 
