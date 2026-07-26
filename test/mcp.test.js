@@ -171,6 +171,28 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
   dead.kill();
 });
 
+test('mcp: piped stdin — replies to all requests land before exit (drain on end)', async () => {
+  const backend = await stubBackend({
+    'GET /api/status': { status: 200, body: { version: '0.1.0', demo: true, configured: true } },
+  });
+  const { spawn: spawnChild } = await import('node:child_process');
+  const child = spawnChild(process.execPath, ['mcp/server.mjs'], {
+    env: { ...process.env, HEARSAY_URL: backend.url },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const lines = [
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{}}}',
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hearsay_status","arguments":{}}}',
+  ];
+  child.stdin.end(`${lines.join('\n')}\n`); // pipe-and-close, like the §19.5 gate does
+  let out = '';
+  for await (const chunk of child.stdout) out += chunk;
+  const replies = out.trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(replies.map((r) => r.id), [1, 2]); // the async tools/call reply survived stdin close
+  assert.equal(JSON.parse(replies[1].result.content[0].text).configured, true);
+  await backend.close();
+});
+
 test('mcp: unknown protocolVersion → server answers with its own latest', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
