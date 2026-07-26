@@ -95,6 +95,25 @@ function str(value, field, { max = 300, required = false } = {}) {
 }
 
 /**
+ * An optional array-of-objects field (SPEC §3.2). Anything that is not an array — a
+ * single object, a string, a number — is a 422 with the field's path in the message,
+ * never a raw TypeError that the router would surface as a 500.
+ * @param {unknown} value
+ * @param {string} field
+ * @returns {Record<string, unknown>[]}
+ */
+function objectList(value, field) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new ApiError(422, 'unprocessable', `${field} must be an array of objects`);
+  return value.map((item, i) => {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new ApiError(422, 'unprocessable', `${field}[${i}] must be an object`);
+    }
+    return /** @type {Record<string, unknown>} */ (item);
+  });
+}
+
+/**
  * @param {unknown} value
  * @param {string} field
  * @returns {string[]|undefined}
@@ -529,8 +548,8 @@ function setupTracking({ db, config }, ctx) {
   if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on. Set HEARSAY_DEMO=0 to configure live tracking.');
   const body = asObject(ctx.body);
   const brand = body.brand === undefined ? null : asObject(body.brand);
-  const competitors = (body.competitors === undefined ? [] : /** @type {unknown[]} */ (body.competitors)).map(asObject);
-  const intents = (body.intents === undefined ? [] : /** @type {unknown[]} */ (body.intents)).map(asObject);
+  const competitors = objectList(body.competitors, 'competitors');
+  const intents = objectList(body.intents, 'intents');
   if (brand === null && competitors.length === 0 && intents.length === 0) {
     throw new ApiError(422, 'nothing_to_do', 'Provide at least one of brand, competitors, intents');
   }

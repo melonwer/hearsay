@@ -239,6 +239,28 @@ test('setup: empty body 422; payload-internal domain dupe 422; competitor-name b
   }
 });
 
+test('setup: non-array competitors/intents → 422 validation envelope, not 500', async () => {
+  const app = await boot();
+  try {
+    // Easy agent schema slip: a single object (or a string) where an array belongs.
+    for (const payload of [
+      { competitors: { name: 'Jotta' } },
+      { intents: 'best tool?' },
+      { competitors: 42 },
+      { intents: [{ label: 'x', paraphrases: 'not-an-array' }] },
+    ]) {
+      const { status, body } = await api(app.base, 'POST', '/api/setup', payload);
+      assert.equal(status, 422, `expected 422 for ${JSON.stringify(payload)}, got ${status}`);
+      assert.notEqual(body.error.code, 'internal_error');
+    }
+    // Zero writes on every one of them.
+    const s = await api(app.base, 'GET', '/api/status');
+    assert.deepEqual(s.body.counts, { entities: 0, intents: 0, activePrompts: 0 });
+  } finally {
+    await app.close();
+  }
+});
+
 test('setup: different existing brand → 409 brand_exists; demo mode → 400', async () => {
   const app = await boot();
   try {
