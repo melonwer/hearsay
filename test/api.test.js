@@ -137,6 +137,22 @@ test('run gate: HEARSAY_CONFIRM_USD=0 always quotes; confirm:true starts', async
   }
 });
 
+test('run: zero enabled providers → 400 no_providers, and no empty run row is written', async () => {
+  const app = await boot(); // no provider keys
+  try {
+    await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
+    await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' });
+    // confirm:true bypasses the quote gate — without a guard this wrote a 0-call
+    // status='done' run that later shadowed real prior runs in alert evaluation.
+    const { status, body } = await api(app.base, 'POST', '/api/run', { confirm: true });
+    assert.equal(status, 400);
+    assert.equal(body.error.code, 'no_providers');
+    assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
+  } finally {
+    await app.close();
+  }
+});
+
 test('run gate: unknown model cost quotes even below call threshold', async () => {
   const app = await bootRunnable({ OPENAI_MODEL: 'mystery-model-9000', HEARSAY_CONFIRM_USD: '999' });
   try {
