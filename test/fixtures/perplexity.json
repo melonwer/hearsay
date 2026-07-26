@@ -1,0 +1,56 @@
+{
+  "id": "fixture-perplexity-1",
+  "model": "sonar",
+  "created": 1785072000,
+  "object": "chat.completion",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "Based on recent reviews, Notewell is the most frequently recommended AI meeting-notes tool for teams under 20 people, followed by Jotta and EchoPad. Quillo ranks lower on transcription accuracy in independent tests."
+      },
+      "delta": { "role": "assistant", "content": "" }
+    }
+  ],
+  "citations": [
+    "https://reviewradar.io/best-ai-meeting-notes",
+    "https://worktools.dev/guides/meeting-notes-2026",
+    "https://notewell.io/customers",
+    "https://reviewradar.io/best-ai-meeting-notes"
+  ],
+  "search_results": [
+    {
+      "title": "Best AI meeting notes tools, tested",
+      "url": "https://reviewradar.io/best-ai-meeting-notes",
+      "date": "2026-05-11",
+      "last_updated": "2026-07-02",
+      "snippet": "We ran 40 hours of calls through nine tools.",
+      "source": "web"
+    },
+    {
+      "title": "Meeting notes tooling in 2026",
+      "url": "https://worktools.dev/guides/meeting-notes-2026",
+      "date": "2026-06-30",
+      "last_updated": null,
+      "snippet": "A buyer's guide for small teams.",
+      "source": "web"
+    },
+    {
+      "title": "Notewell customer stories",
+      "url": "https://notewell.io/customers",
+      "date": null,
+      "last_updated": null,
+      "snippet": "How teams use Notewell.",
+      "source": "web"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 26,
+    "completion_tokens": 144,
+    "total_tokens": 170,
+    "search_context_size": "low",
+    "num_search_queries": 2
+  }
+}

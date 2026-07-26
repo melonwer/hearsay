@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-fixture-openai-1",
+  "object": "chat.completion",
+  "created": 1785072000,
+  "model": "gpt-5.6-luna",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "For a small sales team, I'd suggest Notewell — it handles multi-speaker calls well and syncs summaries straight into a CRM. Two solid alternatives:\n\n1. Jotta, if you want the cheapest per-seat pricing.\n2. EchoPad, if most of your calls are in-person rather than on video.\n\nQuillo is worth a look too, though its transcription accuracy drops on noisy recordings."
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 24,
+    "completion_tokens": 187,
+    "total_tokens": 211
+  }
+}

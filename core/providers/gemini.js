@@ -1,11 +1,90 @@
 /**
- * Google Gemini adapter (§5.2). Phase 1 Lane A.
+ * Google Gemini adapter (§5.2).
  *
- * Contract: `async runPrompt(text, {model, timeoutMs}) → ProviderResult`.
- * Endpoint (`:generateContent`), the `x-goog-api-key` header and the exact model id are
- * [VERIFY-AT-BUILD] against https://ai.google.dev/gemini-api/docs — the default model
- * lives in core/config.js and is env-overridable via GEMINI_MODEL. Gemini exposes no
- * native citations, so only markdown links in the answer text are extracted.
- * Unit-tested against test/fixtures/gemini.json, never the live API.
+ * Verified at build time, 2026-07-26:
+ * - Endpoint  `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+ *   — https://ai.google.dev/api/generate-content
+ * - Auth  `x-goog-api-key` header. The reference page also shows `?key=…` as a query
+ *   parameter; we use the header so the key can never land in a URL, a proxy log or an
+ *   error string (§19.6 #9). Header form confirmed at
+ *   https://ai.google.dev/gemini-api/docs/quickstart
+ * - Response  `candidates[0].content.parts[].text` (concatenated), `modelVersion`,
+ *   `usageMetadata.promptTokenCount` / `candidatesTokenCount` / `thoughtsTokenCount`.
+ * - Default model `gemini-3.6-flash` (stable) — https://ai.google.dev/gemini-api/docs/models
+ *   — override with `GEMINI_MODEL`.
+ *
+ * Gemini exposes no native citation array on `generateContent`, so `citations` is left
+ * undefined and the analyzer picks up markdown/bare links in the answer text (§6.3).
+ *
+ * No system prompt (`systemInstruction` is never sent), no temperature override (§5.1).
+ * Unit-tested against test/fixtures/gemini.json; never calls the live API.
  */
-export {};
+
+import { config } from '../config.js';
+import { ProviderError, fetchWithRetry, requireKey, tokensOrUndefined, usageNumber } from './shared.js';
+
+/** @typedef {import('./shared.js').ProviderResult} ProviderResult */
+
+export const id = 'gemini';
+export const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
+/**
+ * @param {string} model
+ * @returns {string}
+ */
+export function endpointFor(model) {
+  return `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
+}
+
+/**
+ * @param {string} text the prompt, sent verbatim as the single user turn
+ * @param {{model?: string, timeoutMs?: number, apiKey?: string}} [opts]
+ * @returns {Promise<ProviderResult>}
+ */
+export async function runPrompt(text, opts = {}) {
+  const provider = config.providers.gemini;
+  const model = opts.model ?? provider.model;
+  const timeoutMs = opts.timeoutMs ?? config.timeoutMs;
+  const apiKey = opts.apiKey ?? provider.apiKey;
+  requireKey(apiKey, provider.keyEnv);
+
+  const startedAt = Date.now();
+  const res = await fetchWithRetry(
+    endpointFor(model),
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': apiKey,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text }] }] }),
+    },
+    { timeoutMs },
+  );
+  const latencyMs = Date.now() - startedAt;
+
+  const data = /** @type {{modelVersion?: unknown, candidates?: {content?: {parts?: {text?: unknown}[]}}[], usageMetadata?: {promptTokenCount?: unknown, candidatesTokenCount?: unknown, thoughtsTokenCount?: unknown}}|null} */ (
+    res.json
+  );
+  if (!data || !Array.isArray(data.candidates) || data.candidates.length === 0) {
+    throw new ProviderError('other', 'Response had no candidates', 'unexpected Gemini response shape');
+  }
+
+  const parts = data.candidates[0]?.content?.parts;
+  const answer = Array.isArray(parts)
+    ? parts.map((part) => (part && typeof part.text === 'string' ? part.text : '')).join('')
+    : '';
+
+  // Thinking tokens are billed at the output rate for this model family, so they belong
+  // in `output` rather than being dropped (source: Gemini API pricing, 2026-07-26).
+  const input = usageNumber(data.usageMetadata?.promptTokenCount);
+  const candidates = usageNumber(data.usageMetadata?.candidatesTokenCount);
+  const thoughts = usageNumber(data.usageMetadata?.thoughtsTokenCount) ?? 0;
+
+  return {
+    text: answer,
+    model: typeof data.modelVersion === 'string' ? data.modelVersion : model,
+    latencyMs,
+    tokens: tokensOrUndefined(input, candidates === null ? null : candidates + thoughts),
+  };
+}
