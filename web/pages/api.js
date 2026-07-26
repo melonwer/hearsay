@@ -476,13 +476,6 @@ const SUGGEST_NAMES = ['suggestIntents', 'suggestPrompts', 'suggest', 'generateI
  * @returns {Promise<unknown>}
  */
 async function suggestPrompts({ db, config }, ctx) {
-  if (config.enabledProviders.length === 0) {
-    throw new ApiError(
-      400,
-      'no_provider_key',
-      'Drafting prompts needs one provider API key. Without one, use the starter pack in /setup.',
-    );
-  }
   const body = asObject(ctx.body);
   const args = {
     db,
@@ -491,10 +484,17 @@ async function suggestPrompts({ db, config }, ctx) {
     keywords: str(body.keywords, 'keywords', { max: 500 }),
     brand: brandEntity(db),
   };
+  if (config.enabledProviders.length === 0) {
+    // SPEC §3.4: never a dead end — same §20.3 pack the wizard uses, still draft-only.
+    const competitors = listEntities(db).filter((e) => !e.is_self);
+    const pack = strict(/** @type {*} */ (suggest), 'starterPack', { ...args, competitors });
+    return { source: 'starter-pack', intents: /** @type {*} */ (pack)?.intents ?? pack };
+  }
   const name = SUGGEST_NAMES.find((candidate) => typeof (/** @type {*} */ (suggest)[candidate]) === 'function');
   if (name === undefined) throw new NotReadyError('suggest');
   // Draft only — this never persists anything (§6.7).
-  return await Promise.resolve(strict(/** @type {*} */ (suggest), name, args));
+  const result = await Promise.resolve(strict(/** @type {*} */ (suggest), name, args));
+  return { source: 'llm', intents: /** @type {*} */ (result)?.intents ?? result };
 }
 
 /**
