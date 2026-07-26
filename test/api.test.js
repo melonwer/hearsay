@@ -148,6 +148,21 @@ test('run gate: unknown model cost quotes even below call threshold', async () =
   }
 });
 
+test('suggest: zero keys → 200 starter pack, nothing persisted', async () => {
+  const app = await boot(); // no provider keys
+  try {
+    const before = (await api(app.base, 'GET', '/api/prompts')).body.length;
+    const { status, body } = await api(app.base, 'POST', '/api/prompts/suggest', {});
+    assert.equal(status, 200);
+    assert.equal(body.source, 'starter-pack');
+    assert.ok(Array.isArray(body.intents) && body.intents.length > 0);
+    assert.ok(body.intents.every((/** @type {*} */ i) => typeof i.label === 'string' && Array.isArray(i.paraphrases)));
+    assert.equal((await api(app.base, 'GET', '/api/prompts')).body.length, before);
+  } finally {
+    await app.close();
+  }
+});
+
 test('results routes: arrays with days validation', async () => {
   const app = await boot();
   try {
