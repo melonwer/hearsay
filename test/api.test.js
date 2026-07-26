@@ -321,6 +321,27 @@ test('entities: DELETE of a cited-but-unmentioned entity archives — no danglin
   }
 });
 
+test('answers page: a legacy non-http citation never renders as a clickable href', async () => {
+  const app = await boot();
+  try {
+    await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' })).body;
+    const responseId = seedResponse(app.db, prompt.id, 'Some answer text with no links.');
+    // Simulates a row stored before the analyzer's http(s) allowlist existed.
+    dbRun(
+      app.db,
+      "INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?, 'javascript://x/%0aalert(1)', 'x', 1, NULL)",
+      [responseId],
+    );
+    const res = await fetch(`${app.base}/answers`);
+    const page = await res.text();
+    assert.equal(res.status, 200);
+    assert.ok(!page.includes('href="javascript:'), 'stored javascript: URL must not become a link');
+  } finally {
+    await app.close();
+  }
+});
+
 test('setup: non-array competitors/intents → 422 validation envelope, not 500', async () => {
   const app = await boot();
   try {

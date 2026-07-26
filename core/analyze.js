@@ -319,7 +319,11 @@ function isRecommended(starts, ctx) {
 const URL_TRAILING = /[).,;:!?'"\]}>»…]+$/;
 
 /**
- * Normalise one URL to `{url, domain}`, or null when it will not parse.
+ * Normalise one URL to `{url, domain}`, or null when it will not parse — or when it
+ * is not a web URL. Only `http:`/`https:` pass: a citation is a web receipt, and a
+ * stored `javascript:` URL would become a clickable XSS payload the moment the
+ * answers page renders it as an href (§10.1). Native provider citations are the one
+ * path with no upstream scheme filter, so the allowlist lives here.
  * @param {string} raw
  * @returns {{url:string, domain:string}|null}
  */
@@ -328,13 +332,15 @@ export function normaliseUrl(raw) {
     .trim()
     .replace(URL_TRAILING, '');
   if (url === '') return null;
-  let host;
+  /** @type {URL} */
+  let parsed;
   try {
-    host = new URL(url).hostname;
+    parsed = new URL(url);
   } catch {
     return null;
   }
-  const domain = host.toLowerCase().replace(/^www\./, '');
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  const domain = parsed.hostname.toLowerCase().replace(/^www\./, '');
   if (domain === '') return null;
   return { url, domain };
 }
