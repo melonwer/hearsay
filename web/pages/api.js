@@ -27,8 +27,9 @@ import {
   PROVIDERS,
   queryAnswers,
 } from '../queries.js';
-import { MIN_ALIAS_LENGTH } from '../../core/analyze.js';
+import { aliasesFor, MIN_ALIAS_LENGTH } from '../../core/analyze.js';
 import { PROVIDER_IDS } from '../../core/config.js';
+import { PROMPT_CATEGORIES } from '../../core/suggest.js';
 
 /** Default reporting window (§7). */
 export const DEFAULT_DAYS = 30;
@@ -497,6 +498,166 @@ async function suggestPrompts({ db, config }, ctx) {
   return { source: 'llm', intents: /** @type {*} */ (result)?.intents ?? result };
 }
 
+const SETUP_CATEGORIES = PROMPT_CATEGORIES.includes('branded') ? PROMPT_CATEGORIES : [...PROMPT_CATEGORIES, 'branded'];
+
+/**
+ * Brand-word test for PROMPT tagging (SPEC §3.2 branded auto-tag). Deliberately
+ * stricter than the analyzer's §6.2 answer matching: a hyphen is word-INTERNAL here,
+ * so "best acme-like tool?" is discovery phrasing (stays in SOV denominators) while
+ * "is Acme any good?" is navigational (branded). See the SPEC §3.2 example.
+ * @param {string} text
+ * @param {string[]} aliases
+ * @returns {boolean}
+ */
+function mentionsBrandWord(text, aliases) {
+  return aliases.some((alias) => {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, 'iu').test(text);
+  });
+}
+
+/**
+ * `POST /api/setup` — SPEC §3.2 transactional bulk create/append, the backing
+ * endpoint for the agent's hearsay_setup_tracking. Validate everything first,
+ * then write everything in one transaction; 422 lists every problem with zero
+ * writes. Never merges or renames — those stay UI actions (409s).
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {WithStatus|Record<string, unknown>}
+ */
+function setupTracking({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on. Set HEARSAY_DEMO=0 to configure live tracking.');
+  const body = asObject(ctx.body);
+  const brand = body.brand === undefined ? null : asObject(body.brand);
+  const competitors = (body.competitors === undefined ? [] : /** @type {unknown[]} */ (body.competitors)).map(asObject);
+  const intents = (body.intents === undefined ? [] : /** @type {unknown[]} */ (body.intents)).map(asObject);
+  if (brand === null && competitors.length === 0 && intents.length === 0) {
+    throw new ApiError(422, 'nothing_to_do', 'Provide at least one of brand, competitors, intents');
+  }
+
+  // 409 pre-checks (SPEC §3.2) — before field validation.
+  const existingBrand = get(db, 'SELECT id, name FROM entities WHERE is_self = 1 AND archived_at IS NULL');
+  if (brand !== null && existingBrand && String(existingBrand.name).toLowerCase() !== String(brand.name ?? '').trim().toLowerCase()) {
+    throw new ApiError(409, 'brand_exists', `Brand is "${existingBrand.name}" — changing the brand is destructive; use the web UI.`);
+  }
+  if (brand !== null && !existingBrand) {
+    const clash = get(db, 'SELECT id FROM entities WHERE name = ? COLLATE NOCASE', [String(brand.name ?? '').trim()]);
+    if (clash) throw new ApiError(409, 'entity_exists', 'That name already exists as a competitor — promoting it to brand is a web-UI action.');
+  }
+
+  // Validate everything, then write everything (all-or-nothing).
+  /** @type {{path: string, message: string}[]} */
+  const errors = [];
+  /** @param {string} path @param {() => void} fn */
+  const check = (path, fn) => {
+    try {
+      fn();
+    } catch (err) {
+      errors.push({ path, message: err instanceof Error ? err.message : String(err) });
+    }
+  };
+  const seenDomains = new Set();
+  /** @param {Record<string, unknown>} e @param {string} path */
+  const validateEntity = (e, path) => {
+    check(`${path}.name`, () => str(e.name, 'name', { max: 120, required: true }));
+    check(`${path}.aliases`, () => checkAliases(strList(e.aliases, 'aliases') ?? []));
+    check(`${path}.domains`, () => {
+      const ds = (strList(e.domains, 'domains') ?? []).map(normaliseDomain).filter((d) => d !== '');
+      for (const d of ds) {
+        if (seenDomains.has(d)) throw new ApiError(422, 'unprocessable', `Domain ${d} appears twice in this payload`);
+        seenDomains.add(d);
+      }
+      // A rerun re-sends domains that already belong to the same-named (soon to be
+      // dedupe-skipped) entity — except that entity, or reruns would 422.
+      const own = get(db, 'SELECT id FROM entities WHERE name = ? COLLATE NOCASE', [String(e.name ?? '').trim()]);
+      assertDomainsFree(db, ds, own ? Number(own.id) : null);
+    });
+  };
+  if (brand !== null) validateEntity(brand, 'brand');
+  competitors.forEach((c, i) => validateEntity(c, `competitors[${i}]`));
+  intents.forEach((intent, i) => {
+    check(`intents[${i}].label`, () => str(intent.label, 'label', { max: 300, required: true }));
+    check(`intents[${i}].category`, () => {
+      const cat = str(intent.category, 'category', { max: 40 }) ?? 'general';
+      if (!SETUP_CATEGORIES.includes(cat)) throw new ApiError(422, 'unprocessable', `category must be one of: ${SETUP_CATEGORIES.join(', ')}`);
+    });
+    const ps = strList(intent.paraphrases, `intents[${i}].paraphrases`) ?? [];
+    if (ps.length === 0) errors.push({ path: `intents[${i}].paraphrases`, message: 'each intent needs at least one paraphrase' });
+    ps.forEach((p, j) => check(`intents[${i}].paraphrases[${j}]`, () => str(p, 'paraphrase', { max: 300, required: true })));
+  });
+  if (errors.length > 0) {
+    return new WithStatus(422, { error: { code: 'validation', message: `${errors.length} problem(s) — nothing was saved` }, errors });
+  }
+
+  // Apply.
+  const created = { entities: 0, intents: 0, prompts: 0 };
+  /** @type {{type: string, value: string, reason: string}[]} */
+  const skipped = [];
+  /** @type {string[]} */
+  const retagged = [];
+  transaction(db, () => {
+    /** @param {Record<string, unknown>} e @param {boolean} isSelf */
+    const ensureEntity = (e, isSelf) => {
+      const name = /** @type {string} */ (str(e.name, 'name', { max: 120, required: true }));
+      if (get(db, 'SELECT id FROM entities WHERE name = ? COLLATE NOCASE', [name])) {
+        skipped.push({ type: 'entity', value: name, reason: 'exists' });
+        return;
+      }
+      const result = run(db, 'INSERT INTO entities(name, aliases, domains, is_self, created_at) VALUES(?, ?, ?, ?, ?)', [
+        name,
+        JSON.stringify(checkAliases(strList(e.aliases, 'aliases') ?? [])),
+        JSON.stringify((strList(e.domains, 'domains') ?? []).map(normaliseDomain).filter((d) => d !== '')),
+        isSelf ? 1 : 0,
+        isoNow(),
+      ]);
+      if (isSelf) makeSelf(db, result.lastInsertRowid);
+      created.entities += 1;
+    };
+    if (brand !== null) ensureEntity(brand, true);
+    for (const c of competitors) ensureEntity(c, false);
+
+    const brandRow = brandEntity(db);
+    const brandAliases = brandRow === null ? [] : aliasesFor(brandRow);
+    for (const intent of intents) {
+      const label = /** @type {string} */ (str(intent.label, 'label', { max: 300, required: true }));
+      let intentId = Number(get(db, 'SELECT id FROM intents WHERE label = ?', [label])?.id ?? 0);
+      if (intentId === 0) {
+        intentId = Number(run(db, 'INSERT INTO intents(label, created_at) VALUES(?, ?)', [label, isoNow()]).lastInsertRowid);
+        created.intents += 1;
+      }
+      const category = str(intent.category, 'category', { max: 40 }) ?? 'general';
+      for (const raw of strList(intent.paraphrases, 'paraphrases') ?? []) {
+        const text = /** @type {string} */ (str(raw, 'paraphrase', { max: 300, required: true }));
+        if (get(db, 'SELECT id FROM prompts WHERE text = ?', [text])) {
+          skipped.push({ type: 'prompt', value: text, reason: 'duplicate' });
+          continue;
+        }
+        // SOV-denominator invariant (SPEC §3.2): brand-name prompts are always 'branded'.
+        const isBranded = brandAliases.length > 0 && mentionsBrandWord(text, brandAliases);
+        if (isBranded && category !== 'branded') retagged.push(text);
+        run(db, 'INSERT INTO prompts(intent_id, text, category, active, created_at) VALUES(?, ?, ?, 1, ?)', [
+          intentId,
+          text,
+          isBranded ? 'branded' : category,
+          isoNow(),
+        ]);
+        created.prompts += 1;
+      }
+    }
+  });
+
+  return {
+    created,
+    skipped,
+    retagged_branded: retagged,
+    config: {
+      entities: listEntities(db).length,
+      intents: Number(get(db, 'SELECT COUNT(*) AS n FROM intents')?.n ?? 0),
+      activePrompts: activePromptCount(db),
+    },
+  };
+}
+
 /**
  * SPEC §3.3: demo → 400; running → 409 with progress; over-threshold or unknown
  * cost without confirm → 200 quote; otherwise start → 202. The gate lives here so
@@ -792,6 +953,11 @@ export function registerApiRoutes(router, deps) {
     'POST',
     '/api/run',
     json((ctx) => startRun(deps, ctx)),
+  );
+  router.add(
+    'POST',
+    '/api/setup',
+    json((ctx) => setupTracking(deps, ctx)),
   );
   router.add(
     'GET',

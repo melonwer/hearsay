@@ -163,6 +163,103 @@ test('suggest: zero keys → 200 starter pack, nothing persisted', async () => {
   }
 });
 
+test('setup: happy path creates brand + competitors + intents transactionally', async () => {
+  const app = await boot();
+  try {
+    const { status, body } = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', aliases: ['Acme AI'], domains: ['acme.example'] },
+      competitors: [{ name: 'Jotta', domains: ['jotta.example'] }],
+      intents: [
+        { label: 'best acme-like tool', category: 'general', paraphrases: ['best acme-like tool?', 'top acme-like tools 2026'] },
+        { label: 'is Acme any good', category: 'general', paraphrases: ['is Acme any good?'] },
+      ],
+    });
+    assert.equal(status, 200);
+    assert.deepEqual(body.created, { entities: 2, intents: 2, prompts: 3 });
+    // brand-name paraphrase forced to category 'branded' (SOV-denominator invariant)
+    assert.deepEqual(body.retagged_branded, ['is Acme any good?']);
+    assert.equal(body.config.activePrompts, 3);
+  } finally {
+    await app.close();
+  }
+});
+
+test('setup: dedupe-skip on rerun; append paraphrase to existing intent', async () => {
+  const app = await boot();
+  try {
+    const payload = { brand: { name: 'Acme' }, intents: [{ label: 'best tool', paraphrases: ['best tool?'] }] };
+    await api(app.base, 'POST', '/api/setup', payload);
+    const again = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme' },
+      intents: [{ label: 'best tool', paraphrases: ['best tool?', 'which tool is best'] }],
+    });
+    assert.equal(again.status, 200);
+    assert.deepEqual(again.body.created, { entities: 0, intents: 0, prompts: 1 });
+    assert.equal(again.body.skipped.length, 2); // brand + duplicate paraphrase
+  } finally {
+    await app.close();
+  }
+});
+
+test('setup: validation is all-or-nothing (bad alias → 422, zero writes)', async () => {
+  const app = await boot();
+  try {
+    const { status, body } = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', aliases: ['ab'] },
+      intents: [{ label: 'ok', paraphrases: ['ok?'] }],
+    });
+    assert.equal(status, 422);
+    assert.ok(Array.isArray(body.errors) && body.errors.length > 0);
+    const s = await api(app.base, 'GET', '/api/status');
+    assert.deepEqual(s.body.counts, { entities: 0, intents: 0, activePrompts: 0 });
+  } finally {
+    await app.close();
+  }
+});
+
+test('setup: empty body 422; payload-internal domain dupe 422; competitor-name brand 409', async () => {
+  const app = await boot();
+  try {
+    const empty = await api(app.base, 'POST', '/api/setup', {});
+    assert.equal(empty.status, 422);
+    assert.equal(empty.body.error.code, 'nothing_to_do');
+
+    const dupe = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['same.example'] },
+      competitors: [{ name: 'Jotta', domains: ['same.example'] }],
+    });
+    assert.equal(dupe.status, 422);
+
+    await api(app.base, 'POST', '/api/entities', { name: 'Jotta', is_self: false });
+    const promo = await api(app.base, 'POST', '/api/setup', { brand: { name: 'Jotta' } });
+    assert.equal(promo.status, 409);
+    assert.equal(promo.body.error.code, 'entity_exists');
+  } finally {
+    await app.close();
+  }
+});
+
+test('setup: different existing brand → 409 brand_exists; demo mode → 400', async () => {
+  const app = await boot();
+  try {
+    await api(app.base, 'POST', '/api/entities', { name: 'Notewell', is_self: true });
+    const conflict = await api(app.base, 'POST', '/api/setup', { brand: { name: 'Acme' } });
+    assert.equal(conflict.status, 409);
+    assert.equal(conflict.body.error.code, 'brand_exists');
+  } finally {
+    await app.close();
+  }
+
+  const demo = await boot({ HEARSAY_DEMO: '1' });
+  try {
+    const blocked = await api(demo.base, 'POST', '/api/setup', { brand: { name: 'Acme' } });
+    assert.equal(blocked.status, 400);
+    assert.equal(blocked.body.error.code, 'demo_mode');
+  } finally {
+    await demo.close();
+  }
+});
+
 test('results routes: arrays with days validation', async () => {
   const app = await boot();
   try {
