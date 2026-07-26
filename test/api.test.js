@@ -256,6 +256,59 @@ test('setup: empty body 422; payload-internal domain dupe 422; competitor-name b
   }
 });
 
+test('boot: stale running runs (>2h) are marked failed at startup (§8.1)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-boot-'));
+  const dbPath = join(dir, 'boot.db');
+  // Simulate a crash mid-run: a 'running' row three hours old, left in the DB file.
+  const { openDb } = await import('../core/db.js');
+  const pre = openDb(dbPath);
+  const started = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  dbRun(pre, "INSERT INTO runs(started_at, trigger, status, total_calls, done_calls) VALUES(?, 'api', 'running', 8, 3)", [
+    started,
+  ]);
+  pre.close();
+
+  const config = buildConfig({ HEARSAY_DB_PATH: dbPath });
+  const app = await startServer({ port: 0, host: '127.0.0.1', dbPath, config });
+  try {
+    const { status, body } = await api(`http://127.0.0.1:${app.port}`, 'GET', '/api/runs/latest');
+    assert.equal(status, 200);
+    assert.equal(body.status, 'failed', 'orphaned running row must be recovered at boot');
+  } finally {
+    await app.close();
+  }
+});
+
+test('boot: scheduler starts with keys (with a next-run log line), stays off for demo/keyless (§8.2)', async () => {
+  /** @type {string[]} */
+  const logs = [];
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-sched-'));
+  const config = buildConfig({ HEARSAY_DB_PATH: join(dir, 's.db'), OPENAI_API_KEY: 'k' });
+  const app = await startServer({ port: 0, host: '127.0.0.1', dbPath: config.dbPath, config, log: (m) => logs.push(m) });
+  try {
+    assert.equal(app.scheduler?.enabled, true);
+    assert.ok(
+      logs.some((m) => /next panel run/.test(m) && m.includes(config.runAt)),
+      `boot log must state the next run time, got: ${JSON.stringify(logs)}`,
+    );
+  } finally {
+    await app.close();
+  }
+
+  const demo = await boot({ HEARSAY_DEMO: '1', OPENAI_API_KEY: 'k' });
+  try {
+    assert.equal(demo.scheduler?.enabled, false);
+  } finally {
+    await demo.close();
+  }
+  const keyless = await boot();
+  try {
+    assert.equal(keyless.scheduler?.enabled, false);
+  } finally {
+    await keyless.close();
+  }
+});
+
 /**
  * Insert a finished run plus one stored answer directly (FKs are ON, so the whole
  * chain is needed). Returns the response id for hanging mentions/citations off it.
