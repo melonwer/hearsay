@@ -461,9 +461,12 @@ test('providerBreakdown covers every provider seen, including one that only erro
   const openai = rows[0];
   assert.deepEqual([openai.n, openai.brandMentionRate.mentioned], [8, 4]);
   close(openai.citationShare ?? NaN, 1 / 4, 1e-12, 'openai citation share');
+  // The share's own denominator travels with it, so the UI can print n (§7 display rule).
+  assert.equal(openai.citationN, 4, 'answers with citations behind the share');
 
   const gemini = rows[2];
   assert.deepEqual([gemini.n, gemini.brandMentionRate.p, gemini.avgRank, gemini.citationShare], [0, null, null, null]);
+  assert.equal(gemini.citationN, 0);
   assert.equal(gemini.lastError, 'auth', 'a provider that only errors is still visible');
 });
 
