@@ -11,7 +11,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { config as processConfig } from './core/config.js';
-import { openDb } from './core/db.js';
+import { getSetting, openDb, SETTING_KEYS } from './core/db.js';
+import { recoverStaleRuns } from './core/runner.js';
+import { localDate, startScheduler } from './core/scheduler.js';
 import { seedIfDemoAndEmpty } from './core/seed.js';
 import { createRouter } from './web/router.js';
 import { registerApiRoutes } from './web/pages/api.js';
@@ -60,13 +62,15 @@ export function buildRouter({ db, config }) {
  * @param {string} [opts.host]
  * @param {string} [opts.dbPath]
  * @param {import('./core/config.js').Config} [opts.config]
- * @returns {Promise<{server: import('node:http').Server, port: number, db: import('node:sqlite').DatabaseSync, close: () => Promise<void>}>}
+ * @param {(message: string) => void} [opts.log] boot diagnostics; stderr by default
+ * @returns {Promise<{server: import('node:http').Server, port: number, db: import('node:sqlite').DatabaseSync, scheduler: import('./core/scheduler.js').Scheduler, close: () => Promise<void>}>}
  */
 export async function startServer(opts = {}) {
   const config = opts.config ?? processConfig;
   const dbPath = opts.dbPath ?? config.dbPath;
   const port = opts.port ?? config.port;
   const host = opts.host ?? config.host;
+  const log = opts.log ?? ((/** @type {string} */ message) => process.stderr.write(`${message}\n`));
 
   const db = openDb(dbPath);
   // Demo mode with nothing to show boots into the fictional universe rather than an empty
@@ -77,6 +81,20 @@ export async function startServer(opts = {}) {
       `Demo mode: seeded ${seeded.responses} answers over ${seeded.runs} days (${seeded.from} to ${seeded.to}).\n`,
     );
   }
+
+  // §8.1 step 1: a 'running' row older than 2h is an orphan from a crashed process —
+  // mark it failed now, or runPanel refuses with RunInProgressError for up to 2h.
+  const recovered = recoverStaleRuns(db);
+  if (recovered > 0) log(`Recovered ${recovered} stale running run(s) — marked failed.`);
+
+  // §8.2: the daily scheduler. startScheduler itself declines demo mode and keyless
+  // installs; the boot log states the next run time when it is live.
+  const scheduler = startScheduler({ db, config });
+  if (scheduler.enabled) {
+    const ranToday = getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, null) === localDate(new Date());
+    log(`Scheduler: next panel run ${ranToday ? 'tomorrow' : 'today'} at ${config.runAt} (local time).`);
+  }
+
   const router = buildRouter({ db, config });
   const server = createServer((req, res) => {
     void router.handle(req, res);
@@ -97,7 +115,9 @@ export async function startServer(opts = {}) {
     server,
     port: boundPort,
     db,
+    scheduler,
     close: async () => {
+      scheduler.stop();
       await new Promise((done) => server.close(() => done(undefined)));
       db.close();
     },
@@ -119,6 +139,4 @@ if (isMainModule()) {
   } else if (processConfig.enabledProviders.length === 0) {
     process.stdout.write('No provider API keys found — add one to .env to run a panel.\n');
   }
-  // Phase 1 Lane A: mark stale 'running' runs failed, then start the daily scheduler
-  // (core/scheduler.js) here when demo mode is off.
 }
