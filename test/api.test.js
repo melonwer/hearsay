@@ -286,6 +286,41 @@ test('entities: PATCH is_self=true on an archived entity is refused, brand stays
   }
 });
 
+test('entities: DELETE of a cited-but-unmentioned entity archives — no dangling citation ids', async () => {
+  const app = await boot();
+  try {
+    // Quillo is cited via its domain but never named in answer text: 0 mentions,
+    // 1 citation. The old mentions-only guard hard-deleted it, leaving
+    // citations.entity_id (no FK) pointing at a row that no longer exists.
+    const quillo = (await api(app.base, 'POST', '/api/entities', { name: 'Quillo', domains: ['quillo.co'] })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' })).body;
+    const responseId = seedResponse(app.db, prompt.id);
+    dbRun(
+      app.db,
+      "INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?, 'https://quillo.co/docs', 'quillo.co', 1, ?)",
+      [responseId, quillo.id],
+    );
+
+    const del = await api(app.base, 'DELETE', `/api/entities/${quillo.id}`);
+    assert.equal(del.status, 200);
+    assert.notEqual(del.body.deleted, true, 'citation receipts must keep their entity');
+
+    // Every citation entity_id in /api/answers must resolve to a real entity.
+    const entityIds = new Set((await api(app.base, 'GET', '/api/entities')).body.map((/** @type {*} */ e) => e.id));
+    const answers = await api(app.base, 'GET', '/api/answers');
+    for (const item of answers.body.items) {
+      for (const citation of item.citations) {
+        assert.ok(
+          citation.entity_id === null || entityIds.has(citation.entity_id),
+          `citation entity_id ${citation.entity_id} resolves to no entity`,
+        );
+      }
+    }
+  } finally {
+    await app.close();
+  }
+});
+
 test('setup: non-array competitors/intents → 422 validation envelope, not 500', async () => {
   const app = await boot();
   try {
