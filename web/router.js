@@ -246,7 +246,10 @@ export function sameOrigin(req) {
   const method = String(req.method ?? 'GET').toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
   const origin = req.headers.origin;
-  if (!origin || origin === 'null') return true; // header absent — nothing to compare
+  if (!origin) return true; // header absent — nothing to compare
+  // "null" is an opaque origin (sandboxed frame, local file, some redirects). It is a
+  // header that is present and cannot match this host, so §10.1 says refuse it.
+  if (origin === 'null') return false;
   try {
     return new URL(origin).host === String(req.headers.host ?? '');
   } catch {
