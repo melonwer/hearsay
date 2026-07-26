@@ -38,6 +38,17 @@ export async function api(base, method, path, body) {
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
+test('plumbing: /api/status route exists and echoes the package version', { todo: true }, async () => {
+  const app = await boot();
+  try {
+    const { status, body } = await api(app.base, 'GET', '/api/status');
+    assert.equal(status, 200);
+    assert.match(body.version, /^\d+\.\d+\.\d+/);
+  } finally {
+    await app.close();
+  }
+});
+
 test('config: HEARSAY_CONFIRM_USD parses as float >= 0, default 1', () => {
   assert.equal(buildConfig({}).confirmUsd, 1);
   assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: '0' }).confirmUsd, 0);
