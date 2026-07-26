@@ -194,3 +194,215 @@ export function emptyState({ title, line, hint, action }) {
     ${action ? html`<p><a class="btn" href="${action.href}">${action.label}</a></p>` : ''}
   </section>`;
 }
+
+/* ------------------------------------------------------------------ *
+ * Presentation helpers. Series colour follows the entity, never the
+ * rank (§11.1); every rate carries its n (§7, §19.6 #4).
+ * ------------------------------------------------------------------ */
+
+/** Categorical slots in fixed order. Slot 0 is always the brand (§11.1). */
+export const SERIES_SLOTS = /** @type {const} */ (['s1', 's2', 's3', 's4']);
+
+/** Sample size below which a rate is flagged as thin evidence (§7). */
+export const LOW_SAMPLE_N = 5;
+
+/**
+ * Slot name for a colour index: the fifth entity onwards is grey, never a new hue
+ * (§19.6 #2).
+ * @param {number} index
+ * @returns {string} `s1`…`s4` or `other`
+ */
+export function seriesSlot(index) {
+  return index >= 0 && index < SERIES_SLOTS.length ? SERIES_SLOTS[index] : 'other';
+}
+
+/**
+ * CSS colour for a colour index, as a custom-property reference.
+ * @param {number} index
+ * @returns {string}
+ */
+export function seriesColor(index) {
+  const slot = seriesSlot(index);
+  return slot === 'other' ? 'var(--muted)' : `var(--${slot})`;
+}
+
+/**
+ * 10px colour chip that stands in for colouring the label text (§11.1).
+ * @param {number} index
+ * @returns {RawHtml}
+ */
+export function chip(index) {
+  return html`<span class="chip chip-${seriesSlot(index)}" aria-hidden="true"></span>`;
+}
+
+/**
+ * @param {number|null|undefined} value 0..1
+ * @param {number} [digits]
+ * @returns {string} e.g. `61%`, or `—` when there is no value
+ */
+export function pct(value, digits = 0) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  return `${(value * 100).toFixed(digits)}%`;
+}
+
+/**
+ * @param {number|null|undefined} value
+ * @param {number} [digits]
+ * @returns {string}
+ */
+export function num(value, digits = 1) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+  return value.toFixed(digits);
+}
+
+/**
+ * @typedef {Object} Rate
+ * @property {number|null} p
+ * @property {number} n
+ * @property {number} [lo]
+ * @property {number} [hi]
+ */
+
+/**
+ * "low sample" badge for rates resting on almost nothing (§7).
+ * @param {number} n
+ * @returns {RawHtml|string}
+ */
+export function lowSampleBadge(n) {
+  if (n >= LOW_SAMPLE_N) return '';
+  return html`<span class="tag tag-low" title="Fewer than ${LOW_SAMPLE_N} valid answers — treat as anecdote">low sample</span>`;
+}
+
+/**
+ * A rate, its 95% interval and its sample size, in one string of markup. There is no
+ * variant of this helper that omits n — that is the point of it (§19.6 #4).
+ *
+ * @param {Rate|null|undefined} rate
+ * @param {Object} [opts]
+ * @param {boolean} [opts.badge] append the low-sample badge
+ * @returns {RawHtml}
+ */
+export function rateWithCI(rate, { badge = true } = {}) {
+  if (!rate || rate.p === null || rate.p === undefined || !Number.isFinite(rate.p)) {
+    const n = Number(rate?.n ?? 0);
+    return html`<span class="rate"><span class="rate-value">—</span>
+      <span class="rate-n">n=${n}</span></span>`;
+  }
+  const half =
+    typeof rate.lo === 'number' && typeof rate.hi === 'number' && Number.isFinite(rate.lo) && Number.isFinite(rate.hi)
+      ? Math.round(((rate.hi - rate.lo) / 2) * 100)
+      : null;
+  return html`<span class="rate"
+    ><span class="rate-value">${pct(rate.p)}</span>${half === null ? '' : html` <span class="rate-ci">± ${half}</span>`},
+    <span class="rate-n">n=${rate.n}</span>${badge ? lowSampleBadge(Number(rate.n ?? 0)) : ''}</span
+  >`;
+}
+
+/**
+ * Change line for a KPI tile: arrow, points, and the words that say what it compares
+ * (never colour alone, §11.3).
+ *
+ * @param {number|null} deltaPoints percentage points
+ * @param {string} [against]
+ * @returns {RawHtml|string}
+ */
+export function deltaLine(deltaPoints, against = 'vs prior 7d') {
+  if (deltaPoints === null || !Number.isFinite(deltaPoints)) {
+    return html`<p class="kpi-delta muted">no comparable prior window</p>`;
+  }
+  const rounded = Math.round(deltaPoints * 10) / 10;
+  if (rounded === 0) return html`<p class="kpi-delta muted">no change ${against}</p>`;
+  const up = rounded > 0;
+  return html`<p class="kpi-delta ${up ? 'is-up' : 'is-down'}">
+    <span aria-hidden="true">${up ? '▲' : '▼'}</span> ${Math.abs(rounded)} pts ${against}
+  </p>`;
+}
+
+/** @type {Record<string, {icon: string, word: string}>} */
+const SEVERITY = {
+  good: { icon: '✓', word: 'good' },
+  warning: { icon: '⚠', word: 'warning' },
+  serious: { icon: '✖', word: 'serious' },
+};
+
+/**
+ * Severity chip — icon AND word, so the meaning never rides on colour alone (§11.3).
+ * @param {string} severity
+ * @returns {RawHtml}
+ */
+export function severityChip(severity) {
+  const s = SEVERITY[severity] ?? { icon: '•', word: severity };
+  return html`<span class="sev sev-${severity}"><span aria-hidden="true">${s.icon}</span> ${s.word}</span>`;
+}
+
+/** Letter-marks for the provider badges on answer cards (§11.4). */
+const PROVIDER_LETTER = /** @type {Record<string, string>} */ ({
+  openai: 'C',
+  anthropic: 'A',
+  gemini: 'G',
+  perplexity: 'P',
+});
+
+/** Consumer-product names, so the UI never shows a bare API slug. */
+export const PROVIDER_LABEL = /** @type {Record<string, string>} */ ({
+  openai: 'ChatGPT',
+  anthropic: 'Claude',
+  gemini: 'Gemini',
+  perplexity: 'Perplexity',
+});
+
+/**
+ * @param {string} provider
+ * @returns {RawHtml}
+ */
+export function providerBadge(provider) {
+  const label = PROVIDER_LABEL[provider] ?? provider;
+  return html`<span class="pbadge"
+    ><span class="pbadge-mark" aria-hidden="true">${PROVIDER_LETTER[provider] ?? '?'}</span>${label}</span
+  >`;
+}
+
+/**
+ * Relative time in words. Takes `now` so callers can render deterministically in tests.
+ * @param {string|null|undefined} iso UTC ISO-8601
+ * @param {number} [nowMs]
+ * @returns {string}
+ */
+export function relTime(iso, nowMs = Date.now()) {
+  if (!iso) return 'never';
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return 'unknown';
+  const secs = Math.round((nowMs - then) / 1000);
+  if (secs < 45) return 'just now';
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} d ago`;
+  return `${Math.round(days / 30)} mo ago`;
+}
+
+/**
+ * Money, from `core/cost.js` output only — never a hardcoded figure (§19.6 #13).
+ * @param {number|null|undefined} value
+ * @returns {string}
+ */
+export function usd(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'not tracked';
+  return `$${value > 0 && value < 0.01 ? value.toFixed(4) : value.toFixed(2)}`;
+}
+
+/**
+ * Shorten a long string for a label, on a word boundary where possible.
+ * @param {string} text
+ * @param {number} max
+ * @returns {string}
+ */
+export function truncate(text, max) {
+  const s = String(text ?? '');
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}

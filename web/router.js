@@ -9,6 +9,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve, sep, extname } from 'node:path';
 
+import { esc } from './layout.js';
+
 /** @typedef {import('node:http').IncomingMessage} Req */
 /** @typedef {import('node:http').ServerResponse} Res */
 
@@ -102,21 +104,51 @@ export function sendText(res, status, body) {
 }
 
 /**
+ * Default machine-readable code per status, so every error carries one (§10.3).
+ * @type {Record<number, string>}
+ */
+const STATUS_CODE = {
+  400: 'bad_request',
+  403: 'forbidden',
+  404: 'not_found',
+  405: 'method_not_allowed',
+  409: 'conflict',
+  413: 'payload_too_large',
+  415: 'unsupported_media_type',
+  422: 'unprocessable',
+  500: 'internal_error',
+  503: 'not_ready',
+};
+
+/**
  * Error response, shaped by what the client asked for.
+ *
+ * JSON errors use the §10.3 envelope exactly: `{"error":{"code","message"}}`.
+ *
  * @param {Ctx|{res: Res, wantsJson: boolean}} ctx
  * @param {number} status
  * @param {string} message safe, secret-free text
  * @param {Record<string, string>} [headers]
+ * @param {string} [code] machine-readable code; defaults per status
  * @returns {void}
  */
-export function sendError(ctx, status, message, headers = {}) {
+export function sendError(ctx, status, message, headers = {}, code) {
   if (ctx.wantsJson) {
-    sendJson(ctx.res, status, { error: message }, headers);
+    sendJson(
+      ctx.res,
+      status,
+      { error: { code: code ?? STATUS_CODE[status] ?? 'error', message } },
+      headers,
+    );
     return;
   }
+  // Today every message that reaches this branch is a literal from this module, so
+  // esc() is a no-op — but §10.1 admits no unescaped interpolation, and the day an
+  // HTML route reports back something a user typed is not the day to remember why.
+  const safe = esc(message);
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${status}</title>
 <link rel="stylesheet" href="/public/style.css"></head>
-<body><main class="main"><section class="card"><h1>${status}</h1><p>${message}</p>
+<body><main class="main"><section class="card"><h1>${status}</h1><p>${safe}</p>
 <p><a href="/">Back to dashboard</a></p></section></main></body></html>`;
   sendHtml(ctx.res, status, body, headers);
 }
@@ -180,15 +212,21 @@ async function readBody(req) {
   /** @type {Buffer[]} */
   const chunks = [];
   let total = 0;
+  let tooLarge = false;
   for await (const chunk of req) {
     const buf = /** @type {Buffer} */ (chunk);
     total += buf.length;
     if (total > MAX_BODY_BYTES) {
-      req.destroy();
-      return { ok: false, status: 413, message: 'Request body too large' };
+      // Keep draining, but stop buffering. Destroying the request here would take the
+      // socket with it and the client would see a hang-up instead of the 413.
+      tooLarge = true;
+      chunks.length = 0;
+      if (total > MAX_BODY_BYTES * 8) break;
+      continue;
     }
     chunks.push(buf);
   }
+  if (tooLarge) return { ok: false, status: 413, message: 'Request body exceeds the 1 MB limit' };
   const text = Buffer.concat(chunks).toString('utf8');
   if (text.trim() === '') return { ok: true, body: {} };
   try {
