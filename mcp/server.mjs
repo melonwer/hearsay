@@ -320,6 +320,10 @@ process.stdin.on('data', (chunk) => {
   }
 });
 process.stdin.on('end', () => {
+  // A final record without a trailing newline is still a request — flush it first.
+  const residue = buffer.trim();
+  buffer = '';
+  if (residue !== '') handleLine(residue);
   // Drain before exiting: every request read from stdin gets its reply written.
   void Promise.allSettled([...inflight]).then(() => process.exit(0));
 });

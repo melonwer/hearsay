@@ -285,6 +285,25 @@ test('mcp: a backend that stalls mid-body cannot hang tools/call past the timeou
   assert.equal(payload.error.code, 'timeout'); // reachable-but-stalled is not "unreachable"
 });
 
+test('mcp: a final request without a trailing newline is still answered on stdin close', async () => {
+  const backend = await stubBackend({});
+  const child = spawn(process.execPath, ['mcp/server.mjs'], {
+    env: { ...process.env, HEARSAY_URL: backend.url },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  // No terminating \n — ndjson consumers conventionally accept a final bare record.
+  child.stdin.end('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+  let out = '';
+  for await (const chunk of child.stdout) out += chunk;
+  const [code] = await once(child, 'close');
+  await backend.close();
+  assert.equal(code, 0);
+  const replies = out.trim().split('\n').filter((l) => l !== '').map((l) => JSON.parse(l));
+  assert.equal(replies.length, 1, 'the unterminated request must not vanish');
+  assert.equal(replies[0].id, 1);
+  assert.ok(Array.isArray(replies[0].result.tools));
+});
+
 test('mcp: unknown protocolVersion → server answers with its own latest', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
