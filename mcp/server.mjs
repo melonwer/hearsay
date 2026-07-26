@@ -255,6 +255,8 @@ async function dispatch(msg) {
 }
 
 let buffer = '';
+/** In-flight dispatches — piped stdin closes before async tools/call replies land. @type {Set<Promise<void>>} */
+const inflight = new Set();
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => {
   buffer += chunk;
@@ -264,10 +266,15 @@ process.stdin.on('data', (chunk) => {
     buffer = buffer.slice(nl + 1);
     if (line === '') continue;
     try {
-      void dispatch(JSON.parse(line));
+      const p = dispatch(JSON.parse(line));
+      inflight.add(p);
+      void p.finally(() => inflight.delete(p));
     } catch {
       replyError(null, -32700, 'Parse error');
     }
   }
 });
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => {
+  // Drain before exiting: every request read from stdin gets its reply written.
+  void Promise.allSettled([...inflight]).then(() => process.exit(0));
+});
