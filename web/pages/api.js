@@ -28,6 +28,7 @@ import {
   queryAnswers,
 } from '../queries.js';
 import { MIN_ALIAS_LENGTH } from '../../core/analyze.js';
+import { PROVIDER_IDS } from '../../core/config.js';
 
 /** Default reporting window (§7). */
 export const DEFAULT_DAYS = 30;
@@ -549,6 +550,35 @@ async function startRun({ db, config }, ctx) {
   return new WithStatus(202, { runId: started ? Number(started.id) : null, estUsd: estimate.estUsd });
 }
 
+/**
+ * `GET /api/status` — SPEC §3.1 orientation endpoint; must work on an empty DB
+ * (unlike /api/summary, which presumes a configured brand). Never includes key
+ * material in any form (§19.6 #9): providers are re-shaped to four safe fields.
+ * @param {ApiDeps} deps
+ * @returns {unknown}
+ */
+function statusReport({ db, config, version }) {
+  const brand = brandEntity(db);
+  const activePrompts = activePromptCount(db);
+  return {
+    version,
+    demo: config.demo,
+    configured: brand !== null && activePrompts > 0,
+    providers: PROVIDER_IDS.map((id) => {
+      const p = config.providers[id];
+      return { id: p.id, label: p.label, model: p.model, enabled: p.enabled };
+    }),
+    counts: {
+      entities: listEntities(db).length,
+      intents: Number(get(db, 'SELECT COUNT(*) AS n FROM intents')?.n ?? 0),
+      activePrompts,
+    },
+    schedule: { runAt: config.runAt, schedulerEnabled: !config.demo && config.enabledProviders.length > 0 },
+    lastRun: latestRun(db),
+    spend30dUsd: Number(soft(/** @type {*} */ (metrics), 'actualSpend', { db, days: 30, now: isoNow() }, null)?.totalUsd ?? 0),
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * Summary (§10.4)
  * ------------------------------------------------------------------ */
@@ -738,6 +768,12 @@ export function registerApiRoutes(router, deps) {
     '/api/run',
     json((ctx) => startRun(deps, ctx)),
   );
+  router.add(
+    'GET',
+    '/api/status',
+    json(() => statusReport(deps)),
+  );
+
   router.add(
     'GET',
     '/api/runs/latest',
