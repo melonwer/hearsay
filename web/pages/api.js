@@ -49,6 +49,20 @@ export class ApiError extends Error {
   }
 }
 
+/** Lets a handler pick its own success status inside the json() wrapper (SPEC §3.3). */
+export class WithStatus {
+  /**
+   * @param {number} status
+   * @param {unknown} body
+   */
+  constructor(status, body) {
+    /** @type {number} */
+    this.status = status;
+    /** @type {unknown} */
+    this.body = body;
+  }
+}
+
 /**
  * @param {unknown} body
  * @returns {Record<string, unknown>}
@@ -165,6 +179,7 @@ function normaliseDomain(value) {
  * @typedef {Object} ApiDeps
  * @property {import('node:sqlite').DatabaseSync} db
  * @property {import('../../core/config.js').Config} config
+ * @property {string} version package.json version, surfaced by /api/status (SPEC §3.1)
  */
 
 /* ------------------------------------------------------------------ *
@@ -422,7 +437,7 @@ function patchIntent({ db }, ctx) {
  * `GET /api/cost/estimate` (§4.3, §10.3). `estUsd` is null — never a guess — when the
  * price table has no entry for a configured model (§19.6 #13).
  *
- * @param {ApiDeps} deps
+ * @param {Pick<ApiDeps, 'db'|'config'>} deps
  * @returns {{calls: number, estUsd: number|null, perProvider: {provider: string, calls: number, estUsd: number|null}[]}}
  */
 export function costEstimate({ db, config }) {
@@ -580,6 +595,10 @@ function json(handler, okStatus = 200) {
   return async (ctx) => {
     try {
       const data = await handler(ctx);
+      if (data instanceof WithStatus) {
+        sendJson(ctx.res, data.status, data.body);
+        return;
+      }
       sendJson(ctx.res, okStatus, data);
     } catch (err) {
       if (err instanceof ApiError) {

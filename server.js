@@ -48,7 +48,7 @@ export const VERSION = readVersion();
 export function buildRouter({ db, config }) {
   const router = createRouter({ publicDir: PUBLIC_DIR });
   registerPageRoutes(router, { db, config, version: VERSION });
-  registerApiRoutes(router, { db, config });
+  registerApiRoutes(router, { db, config, version: VERSION });
   return router;
 }
 
