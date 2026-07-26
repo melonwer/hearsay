@@ -497,28 +497,56 @@ async function suggestPrompts({ db, config }, ctx) {
 }
 
 /**
+ * SPEC §3.3: demo → 400; running → 409 with progress; over-threshold or unknown
+ * cost without confirm → 200 quote; otherwise start → 202. The gate lives here so
+ * UI, curl, and MCP are protected identically (§4.3, §19.6 #13).
  * @param {ApiDeps} deps
- * @returns {Promise<unknown>}
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {Promise<WithStatus>}
  */
-async function startRun({ db, config }) {
+async function startRun({ db, config }, ctx) {
   if (config.demo) {
     throw new ApiError(400, 'demo_mode', 'Demo mode is on, so live provider calls are disabled. Set HEARSAY_DEMO=0.');
   }
-  const running = get(db, "SELECT id FROM runs WHERE status = 'running' ORDER BY id DESC LIMIT 1");
-  if (running) throw new ApiError(409, 'already_running', 'A panel run is already in progress');
+  const running = get(db, "SELECT id, done_calls, total_calls FROM runs WHERE status = 'running' ORDER BY id DESC LIMIT 1");
+  if (running) {
+    throw new ApiError(409, 'already_running', `Run ${running.id} in progress: ${running.done_calls}/${running.total_calls} calls done`);
+  }
   if (typeof (/** @type {*} */ (runner).runPanel) !== 'function') throw new NotReadyError('runPanel');
 
+  // Callers always send a JSON body ({} at minimum) — the router 415s non-JSON POSTs.
+  const body = ctx.body !== null && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? /** @type {Record<string, unknown>} */ (ctx.body) : {};
+  const confirm = body.confirm === true;
   const estimate = costEstimate({ db, config });
+  const needsQuote =
+    !confirm &&
+    (config.confirmUsd === 0 || estimate.estUsd === null || estimate.estUsd > config.confirmUsd || estimate.calls > 200);
+  if (needsQuote) {
+    return new WithStatus(200, {
+      status: 'quote_required',
+      calls: estimate.calls,
+      estUsd: estimate.estUsd,
+      perProvider: estimate.perProvider,
+      confirmHint: 'POST /api/run with {"confirm":true} to start',
+    });
+  }
+
   // 202: the run is accepted, not finished. Progress is read from /api/runs/latest.
-  const promise = Promise.resolve(/** @type {*} */ (runner).runPanel({ trigger: 'api' }));
+  const before = Number(get(db, 'SELECT COALESCE(MAX(id), 0) AS id FROM runs')?.id ?? 0);
+  const promise = Promise.resolve(/** @type {*} */ (runner).runPanel({ db, config, trigger: 'api' }));
   promise.catch((err) => {
     process.stderr.write(`[hearsay] run failed: ${err instanceof Error ? err.message : String(err)}\n`);
   });
-  await new Promise((resolveTick) => {
-    setImmediate(resolveTick);
-  });
-  const started = get(db, "SELECT id FROM runs WHERE status = 'running' ORDER BY id DESC LIMIT 1");
-  return { runId: started ? Number(started.id) : null, estUsd: estimate.estUsd };
+  // The run row appears a few ticks after firing; a fast run may even be 'done'
+  // already. Briefly poll for the new row (any status) instead of sampling one tick.
+  let started = null;
+  for (let i = 0; i < 100 && !started; i += 1) {
+    await new Promise((resolveTick) => {
+      setTimeout(resolveTick, 10);
+    });
+    started = get(db, 'SELECT id FROM runs WHERE id > ? ORDER BY id DESC LIMIT 1', [before]);
+  }
+  return new WithStatus(202, { runId: started ? Number(started.id) : null, estUsd: estimate.estUsd });
 }
 
 /* ------------------------------------------------------------------ *
@@ -708,7 +736,7 @@ export function registerApiRoutes(router, deps) {
   router.add(
     'POST',
     '/api/run',
-    json(() => startRun(deps), 202),
+    json((ctx) => startRun(deps, ctx)),
   );
   router.add(
     'GET',
