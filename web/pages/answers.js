@@ -222,8 +222,15 @@ function answerCard(view, item) {
   const recommended = item.mentions.some((mention) => mention.recommended === 1);
   const citations = item.citations.map((citation) => {
     const slot = citation.entity_id === null ? undefined : view.colorIndex.get(citation.entity_id);
+    const cls = `cite${slot === undefined ? '' : ` cite-s${slot + 1}`}`;
+    // Defence in depth: the analyzer only stores http(s) URLs, but a row written
+    // before that allowlist existed must still never render as a clickable
+    // javascript:/data: href (§10.1).
+    if (!/^https?:\/\//i.test(citation.url)) {
+      return html`<span class="${cls}">${citation.domain}</span>`;
+    }
     return html`<a
-      class="cite${slot === undefined ? '' : ` cite-s${slot + 1}`}"
+      class="${cls}"
       href="${citation.url}"
       rel="noreferrer noopener nofollow"
       target="_blank"

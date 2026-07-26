@@ -125,6 +125,24 @@ test('R1 negative: the same trigger more than 80 chars away does not carry', () 
   assert.equal(forEntity(mentions, 2)?.recommended, 0);
 });
 
+test('citations: non-http(s) schemes are rejected on every path, including provider-native', () => {
+  // The markdown/bare-URL extractors are regex-restricted to https?://, but native
+  // citations (e.g. Perplexity search_results) reached the store unguarded — and a
+  // stored javascript: URL becomes a clickable XSS payload as an href on /answers.
+  const { citations } = analyzeResponse('no urls in this answer text', ENTITIES, [
+    { url: 'javascript://benign.example/%0aalert(document.domain)' },
+    { url: 'data:text/html,<script>alert(1)</script>' },
+    { url: 'file:///etc/passwd' },
+    { url: 'https://notewell.io/docs' },
+    { url: 'http://plain.example/page' },
+  ]);
+  assert.deepEqual(
+    citations.map((c) => c.url),
+    ['https://notewell.io/docs', 'http://plain.example/page'],
+  );
+  assert.equal(citations[0].entity_id, 1);
+});
+
 test('R1 boundaries: trigger phrases never match inside other tokens', () => {
   const filler = 'The rest of this answer keeps going for a good while about export formats and admin controls so that the four hundred character short-answer rule can never apply to anything here. '.repeat(2);
   // '#1' must not fire inside '#10' — the answer explicitly ranks the brand tenth.
