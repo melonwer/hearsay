@@ -1,0 +1,47 @@
+/**
+ * Agent-surface API tests (Phase 2 plan Tasks 2–9) plus the shared boot/api
+ * harness the e2e suite reuses. Every test boots a real server on port 0 with a
+ * throwaway DB — no live network ever (§15); provider fetch is stubbed via
+ * _setFetch() where a test needs a "live-ish" run.
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startServer } from '../server.js';
+import { buildConfig } from '../core/config.js';
+
+/**
+ * Boot a server on an ephemeral port with a throwaway DB.
+ * @param {Record<string, string>} [env]
+ * @returns {Promise<Awaited<ReturnType<typeof startServer>> & {base: string, config: import('../core/config.js').Config}>}
+ */
+export async function boot(env = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-api-'));
+  const config = buildConfig({ HEARSAY_DB_PATH: join(dir, 'test.db'), ...env });
+  const app = await startServer({ port: 0, host: '127.0.0.1', dbPath: config.dbPath, config });
+  return { ...app, base: `http://127.0.0.1:${app.port}`, config };
+}
+
+/**
+ * JSON request helper.
+ * @param {string} base @param {string} method @param {string} path @param {unknown} [body]
+ * @returns {Promise<{status: number, body: *}>}
+ */
+export async function api(base, method, path, body) {
+  const res = await fetch(base + path, {
+    method,
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+test('config: HEARSAY_CONFIRM_USD parses as float >= 0, default 1', () => {
+  assert.equal(buildConfig({}).confirmUsd, 1);
+  assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: '0' }).confirmUsd, 0);
+  assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: '2.5' }).confirmUsd, 2.5);
+  assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: 'garbage' }).confirmUsd, 1);
+  assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: '-3' }).confirmUsd, 1);
+});

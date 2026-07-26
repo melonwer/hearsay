@@ -32,6 +32,7 @@ import { resolve } from 'node:path';
  * @property {number} concurrency parallel in-flight LLM calls
  * @property {number} timeoutMs per-call timeout
  * @property {boolean} demo demo mode: no live calls, no scheduler, banner shown
+ * @property {number} confirmUsd Run-cost confirm threshold in USD (SPEC §3.3); 0 = every run quotes first.
  * @property {Record<ProviderId, ProviderConfig>} providers
  * @property {ProviderConfig[]} enabledProviders
  */
@@ -126,6 +127,19 @@ function intIn(value, fallback, min, max) {
 
 /**
  * @param {string|undefined} value
+ * @param {number} fallback
+ * @param {number} min
+ * @returns {number}
+ */
+function floatIn(value, fallback, min) {
+  const s = String(value ?? '').trim();
+  if (s === '') return fallback; // Number('') is 0, which would silently defeat the fallback
+  const n = Number(s);
+  return Number.isFinite(n) && n >= min ? n : fallback;
+}
+
+/**
+ * @param {string|undefined} value
  * @param {string} fallback must already be valid
  * @returns {string}
  */
@@ -185,6 +199,7 @@ export function buildConfig(env) {
     concurrency: intIn(env.HEARSAY_CONCURRENCY, 2, 1, 16),
     timeoutMs: intIn(env.HEARSAY_TIMEOUT_MS, 45000, 1000, 600000),
     demo: String(env.HEARSAY_DEMO ?? '').trim() === '1',
+    confirmUsd: floatIn(env.HEARSAY_CONFIRM_USD, 1, 0),
     providers: registry,
     enabledProviders: PROVIDER_IDS.map((id) => registry[id]).filter((p) => p.enabled),
   };
