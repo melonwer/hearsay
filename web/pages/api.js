@@ -738,6 +738,31 @@ export function registerApiRoutes(router, deps) {
     '/api/intents',
     json(() => listIntents(db)),
   );
+  // SPEC §3.5 read wrappers over §7's intentTable/promptTable — the §7 shapes are the
+  // contract. Registered before any GET /api/intents/:id could exist: the router
+  // matches :param segments, and today only PATCH uses :id, so no shadowing.
+  router.add(
+    'GET',
+    '/api/intents/results',
+    json((ctx) =>
+      strict(/** @type {*} */ (metrics), 'intentTable', {
+        db,
+        now: isoNow(),
+        days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
+      }),
+    ),
+  );
+  router.add(
+    'GET',
+    '/api/prompts/results',
+    json((ctx) =>
+      strict(/** @type {*} */ (metrics), 'promptTable', {
+        db,
+        now: isoNow(),
+        days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
+      }),
+    ),
+  );
   router.add(
     'PATCH',
     '/api/intents/:id',
