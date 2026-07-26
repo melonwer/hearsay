@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: node --test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Show versions
+        run: node --version
+      # Bare `node --test` (default discovery). A bare directory positional such as
+      # `node --test test/` is treated as a file path on Node 24 and fails; default
+      # discovery finds test/**/*.test.js on both 22 and 24.
+      - name: Tests
+        run: node --test
+
+  typecheck:
+    name: tsc --noEmit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      # Dev tooling only, installed with --no-save so the shipped manifest keeps its
+      # zero-dependency guarantee (§19.6 #1). @types/node is what makes `node:` imports
+      # resolvable for checkJs.
+      - name: Install dev tooling
+        run: npm install --no-save typescript@^5 @types/node@^24
+      - name: Typecheck
+        run: npx tsc -p jsconfig.json --noEmit
+
+  zero-deps:
+    name: zero-dependency proof
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: package.json declares no dependencies
+        run: |
+          node -e '
+            const pkg = require("./package.json");
+            for (const field of ["dependencies", "peerDependencies", "optionalDependencies", "bundledDependencies"]) {
+              if (pkg[field]) { console.error(`package.json must not declare ${field}`); process.exit(1); }
+            }
+            console.log("no dependency fields declared");
+          '
+      - name: every import is a node: builtin or a relative path
+        run: |
+          if grep -rnE "(from|import|require\()[[:space:]]*['\"]" \
+               --include='*.js' --include='*.mjs' \
+               core web mcp scripts test server.js \
+             | grep -vE "['\"](node:|\./|\.\./)"; then
+            echo "::error::found a non-builtin, non-relative import"
+            exit 1
+          fi
+          echo "all imports are node: builtins or relative paths"
