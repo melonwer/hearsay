@@ -148,6 +148,21 @@ test('run gate: unknown model cost quotes even below call threshold', async () =
   }
 });
 
+test('results routes: arrays with days validation', async () => {
+  const app = await boot();
+  try {
+    for (const path of ['/api/intents/results', '/api/prompts/results']) {
+      const ok = await api(app.base, 'GET', path);
+      assert.equal(ok.status, 200, `${path} status`);
+      assert.ok(Array.isArray(ok.body), `${path} returns array`);
+      const bad = await api(app.base, 'GET', `${path}?days=0`);
+      assert.equal(bad.status, 400, `${path}?days=0 rejected`);
+    }
+  } finally {
+    await app.close();
+  }
+});
+
 test('runs/latest: 404 no_runs when no run has ever happened', async () => {
   const app = await boot();
   try {
