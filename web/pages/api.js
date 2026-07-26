@@ -338,10 +338,13 @@ function deleteEntity({ db }, ctx) {
   const id = idParam(ctx.params.id);
   if (!get(db, 'SELECT id FROM entities WHERE id = ?', [id])) throw new ApiError(404, 'not_found', 'No such entity');
   const mentions = Number(get(db, 'SELECT COUNT(*) AS n FROM mentions WHERE entity_id = ?', [id])?.n ?? 0);
-  if (mentions > 0) {
-    // Soft delete: past answers keep their receipts, metrics stop counting it.
+  const citations = Number(get(db, 'SELECT COUNT(*) AS n FROM citations WHERE entity_id = ?', [id])?.n ?? 0);
+  if (mentions > 0 || citations > 0) {
+    // Soft delete: past answers keep their receipts — text mentions AND citation
+    // matches — and metrics stop counting it. citations.entity_id carries no FK, so a
+    // hard delete here would leave dangling ids in /api/answers and /api/export.
     run(db, 'UPDATE entities SET archived_at = ? WHERE id = ?', [isoNow(), id]);
-    return { archived: true, mentions };
+    return { archived: true, mentions, citations };
   }
   run(db, 'DELETE FROM entities WHERE id = ?', [id]);
   return { deleted: true };
