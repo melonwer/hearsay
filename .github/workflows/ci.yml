@@ -62,7 +62,7 @@ jobs:
             }
             console.log("no dependency fields declared");
           '
-      - name: every import is a node: builtin or a relative path
+      - name: 'every import is a node: builtin or a relative path'
         run: |
           if grep -rnE "(from|import|require\()[[:space:]]*['\"]" \
                --include='*.js' --include='*.mjs' \
