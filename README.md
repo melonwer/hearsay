@@ -30,7 +30,12 @@ a conversation.
 
 ## Ask your agent
 
+<!-- TODO: record docs/demo.gif, then restore this embed:
 ![Claude Code answering "how's our AI visibility this week?" from Hearsay's MCP server](docs/demo.gif)
+-->
+
+Ask it in plain language — *"how's our AI visibility this week?"* — and your agent
+answers from your own measurements, with the error bars attached.
 
 <p>
   <img src="docs/screenshot-light.png" alt="Hearsay dashboard, light theme — share of AI voice with confidence intervals, provider trends, alerts" width="49%">
