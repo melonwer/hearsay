@@ -1,0 +1,51 @@
+{
+  "_comment": "Canned provider error bodies (§5.1 classification). Shapes copied from the providers' documented error envelopes; every key-like string is fake and deliberately key-shaped so tests can assert it never reaches an error message or the database.",
+  "openai_401": {
+    "error": {
+      "message": "Incorrect API key provided: sk-fixture-not-a-real-key-000. You can find your API key at https://platform.openai.com/account/api-keys.",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "invalid_api_key"
+    }
+  },
+  "openai_429": {
+    "error": {
+      "message": "Rate limit reached for gpt-5.6-luna in organization org-fixture on requests per min (RPM): Limit 500, Used 500.",
+      "type": "requests",
+      "param": null,
+      "code": "rate_limit_exceeded"
+    }
+  },
+  "openai_500": {
+    "error": {
+      "message": "The server had an error while processing your request. Sorry about that!",
+      "type": "server_error",
+      "param": null,
+      "code": null
+    }
+  },
+  "anthropic_401": {
+    "type": "error",
+    "error": { "type": "authentication_error", "message": "invalid x-api-key" }
+  },
+  "anthropic_429": {
+    "type": "error",
+    "error": { "type": "rate_limit_error", "message": "Number of request tokens has exceeded your per-minute rate limit." }
+  },
+  "gemini_403": {
+    "error": {
+      "code": 403,
+      "message": "Method doesn't allow unregistered callers (key AIzaFixtureNotARealKey000).",
+      "status": "PERMISSION_DENIED"
+    }
+  },
+  "gemini_429": {
+    "error": { "code": 429, "message": "Resource has been exhausted (e.g. check quota).", "status": "RESOURCE_EXHAUSTED" }
+  },
+  "perplexity_401": {
+    "error": { "message": "Authorization header is invalid: Bearer pplx-fixture-not-a-real-key-000", "type": "authentication_error" }
+  },
+  "perplexity_429": {
+    "error": { "message": "You have exceeded your request quota for this billing period.", "type": "rate_limit_error" }
+  }
+}

@@ -48,7 +48,12 @@ import { resolve } from 'node:path';
  * - gemini      `gemini-3.6-flash` — current stable mainstream Flash tier.
  *                                  Source: https://ai.google.dev/gemini-api/docs/models
  * - perplexity  `sonar`          — "lightweight, cost-effective search model with grounding".
- *                                  Source: https://docs.perplexity.ai/docs/sonar/models
+ *                                  Source: https://docs.perplexity.ai/getting-started/models
+ *
+ * Re-verified 2026-07-26 by Lane A alongside each provider's endpoint, request shape and
+ * per-token price; the prices live in core/cost.js, keyed by these same model ids. Change
+ * a model here without adding its price there and Hearsay reports "unpriced" rather than
+ * billing you at the old model's rate (§4.3).
  */
 const PROVIDER_DEFAULTS = /** @type {const} */ ([
   { id: 'openai', label: 'ChatGPT', keyEnv: 'OPENAI_API_KEY', modelEnv: 'OPENAI_MODEL', model: 'gpt-5.6-luna' },

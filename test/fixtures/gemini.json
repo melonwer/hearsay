@@ -1,0 +1,27 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Here are the meeting-notes tools most often recommended for small teams:\n\n1. Jotta — generous free tier, see https://jotta.app/pricing\n"
+          },
+          {
+            "text": "2. Notewell — better summaries, and [their docs](https://docs.notewell.io/quickstart) are unusually good.\n3. Quillo — worth it only if you need 30+ languages."
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 19,
+    "candidatesTokenCount": 168,
+    "thoughtsTokenCount": 41,
+    "totalTokenCount": 228
+  },
+  "modelVersion": "gemini-3.6-flash",
+  "responseId": "fixture-gemini-1"
+}
