@@ -214,6 +214,33 @@ test('mcp: a `null` line gets -32600 Invalid Request and never kills the session
   assert.deepEqual(replies[1].result, {}); // the ping after the bad line still answered
 });
 
+test('mcp: JSON-RPC batch is unrolled — every request in it gets a reply (2025-03-26)', async () => {
+  const backend = await stubBackend({});
+  const child = spawn(process.execPath, ['mcp/server.mjs'], {
+    env: { ...process.env, HEARSAY_URL: backend.url },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const lines = [
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{}}}',
+    '[{"jsonrpc":"2.0","id":2,"method":"ping"},{"jsonrpc":"2.0","id":3,"method":"tools/list"}]',
+    '[]',
+  ];
+  child.stdin.end(`${lines.join('\n')}\n`);
+  let out = '';
+  for await (const chunk of child.stdout) out += chunk;
+  const [code] = await once(child, 'close');
+  await backend.close();
+  assert.equal(code, 0);
+  const replies = out.trim().split('\n').map((l) => JSON.parse(l));
+  // The server offers 2025-03-26 — a revision whose spec REQUIRED batch support — so a
+  // batch must never be silently swallowed.
+  assert.equal(replies[0].result.protocolVersion, '2025-03-26');
+  assert.deepEqual(replies.map((r) => r.id), [1, 2, 3, null]);
+  assert.deepEqual(replies[1].result, {});
+  assert.ok(Array.isArray(replies[2].result.tools) && replies[2].result.tools.length > 0);
+  assert.equal(replies[3].error.code, -32600); // an empty batch is an invalid request
+});
+
 test('mcp: unknown protocolVersion → server answers with its own latest', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
