@@ -506,18 +506,38 @@ function initSuggest() {
   if (save instanceof HTMLElement && list instanceof HTMLElement) {
     save.addEventListener('click', async () => {
       save.setAttribute('disabled', 'disabled');
+      // 409 (duplicate text) and 422 (too long after an edit) are routine here — a
+      // failed save must surface, not silently vanish while the wizard advances.
+      /** @type {string[]} */
+      const failed = [];
+      let attempted = 0;
       for (const item of list.querySelectorAll('li')) {
         const check = item.querySelector('[data-suggest-check]');
         const text = item.querySelector('[data-suggest-text]');
         const category = item.querySelector('[data-suggest-category]');
         if (!(check instanceof HTMLInputElement) || !check.checked) continue;
         if (!(text instanceof HTMLInputElement) || text.value.trim() === '') continue;
-        await api('/api/prompts', 'POST', {
+        attempted += 1;
+        const { ok, data } = await api('/api/prompts', 'POST', {
           text: text.value.trim(),
           category: category instanceof HTMLInputElement ? category.value : 'general',
         });
+        if (ok) {
+          // Saved: untick it so a retry after a partial failure cannot re-post it
+          // straight into a 409 duplicate.
+          check.checked = false;
+        } else {
+          failed.push(data && data.error && data.error.message ? data.error.message : 'That did not work.');
+        }
       }
-      window.location.href = '/setup?step=3';
+      if (failed.length === 0) {
+        window.location.href = '/setup?step=3';
+        return;
+      }
+      save.removeAttribute('disabled');
+      showError(save, {
+        error: { message: `${failed.length} of ${attempted} prompts failed to save — ${failed[0]}` },
+      });
     });
   }
 }
