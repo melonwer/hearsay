@@ -125,6 +125,24 @@ test('R1 negative: the same trigger more than 80 chars away does not carry', () 
   assert.equal(forEntity(mentions, 2)?.recommended, 0);
 });
 
+test('R1 boundaries: trigger phrases never match inside other tokens', () => {
+  const filler = 'The rest of this answer keeps going for a good while about export formats and admin controls so that the four hundred character short-answer rule can never apply to anything here. '.repeat(2);
+  // '#1' must not fire inside '#10' — the answer explicitly ranks the brand tenth.
+  const ranked = `Our survey covered many tools over several weeks of daily use. Ranked #10 overall: Jotta trailed the pack. ${filler}`;
+  assert.equal(forEntity(extractMentions(ranked, ENTITIES), 2)?.recommended, 0);
+  // 'best' must not fire inside 'asbestos'.
+  const asbestos = `Their offices dealt with an asbestos removal, and Jotta kept working through it. ${filler}`;
+  assert.equal(forEntity(extractMentions(asbestos, ENTITIES), 2)?.recommended, 0);
+  // 'go with' must not fire inside 'cargo with'.
+  const cargo = `They ship cargo with Jotta handling the paperwork end to end. ${filler}`;
+  assert.equal(forEntity(extractMentions(cargo, ENTITIES), 2)?.recommended, 0);
+  // The genuine phrases still fire at word boundaries.
+  const real = `Overall #1: Jotta, by a comfortable margin over everything else we tried. ${filler}`;
+  assert.equal(forEntity(extractMentions(real, ENTITIES), 2)?.recommended, 1);
+  const best = `The best pick here is Jotta for almost every team we talked to. ${filler}`;
+  assert.equal(forEntity(extractMentions(best, ENTITIES), 2)?.recommended, 1);
+});
+
 test('R2 positive: first mention inside the first item of the first list', () => {
   const text = [
     'Here are the leading tools, in no particular order, for teams that record a lot of calls and want searchable transcripts afterwards.',

@@ -267,8 +267,12 @@ function triggerEnds(text) {
     for (;;) {
       const at = normalised.indexOf(phrase, from);
       if (at === -1) break;
-      ends.push(at + phrase.length);
       from = at + 1;
+      // Word boundaries on both sides, exactly like alias matching (§6.2 #3): '#1'
+      // must not fire inside '#10', 'best' inside 'asbestos', 'go with' inside
+      // 'cargo with'.
+      if (!isBoundaryAt(normalised, at - 1) || !isBoundaryAt(normalised, at + phrase.length)) continue;
+      ends.push(at + phrase.length);
     }
   }
   return ends;
