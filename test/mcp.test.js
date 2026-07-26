@@ -120,6 +120,57 @@ test('mcp tools/list: exactly 13 tools, schemas, read-only annotations', async (
   await backend.close();
 });
 
+test('mcp tools/call: happy path, param mapping, error mapping, unreachable', async () => {
+  const backend = await stubBackend({
+    'GET /api/summary': { status: 200, body: { brand: { id: 1, name: 'Acme' }, windowDays: 7 } },
+    'GET /api/answers': { status: 200, body: { total: 0, page: 1, items: [] } },
+    'POST /api/setup': { status: 422, body: { error: { code: 'validation', message: '1 problem(s) — nothing was saved' }, errors: [] } },
+    'POST /api/run': { status: 200, body: { status: 'quote_required', calls: 300, estUsd: 2.4, perProvider: [] } },
+    'POST /api/alerts/7/ack': { status: 200, body: { ok: true } },
+  });
+  const mcp = startMcp(backend.url);
+  await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
+
+  const call = (/** @type {number} */ id, /** @type {string} */ name, /** @type {object} */ args) =>
+    rpc(mcp, 'tools/call', { name, arguments: args }, id);
+
+  const summary = await call(2, 'hearsay_summary', { days: 7 });
+  assert.notEqual(summary.result.isError, true);
+  assert.equal(JSON.parse(summary.result.content[0].text).brand.name, 'Acme');
+  assert.equal(backend.seen.at(-1).url, '/api/summary?days=7');
+
+  await call(3, 'hearsay_answers_search', { provider: 'perplexity', limit: 10, page: 2 });
+  assert.equal(backend.seen.at(-1).url, '/api/answers?provider=perplexity&page=2&per=10');
+
+  const invalid = await call(4, 'hearsay_setup_tracking', { brand: { name: 'X', aliases: ['ab'] } });
+  assert.equal(invalid.result.isError, true);
+  assert.equal(JSON.parse(invalid.result.content[0].text).error.code, 'validation');
+
+  const quote = await call(5, 'hearsay_run_panel', {});
+  assert.notEqual(quote.result.isError, true); // a quote is a successful outcome
+  assert.equal(JSON.parse(quote.result.content[0].text).status, 'quote_required');
+  assert.equal(JSON.parse(backend.seen.at(-1).body).confirm, false);
+
+  await call(6, 'hearsay_ack_alert', { id: 7 });
+  assert.equal(backend.seen.at(-1).url, '/api/alerts/7/ack');
+
+  const unknown = await call(7, 'hearsay_teleport', {});
+  assert.equal(unknown.error.code, -32602);
+
+  mcp.kill();
+  await backend.close();
+
+  // unreachable backend → isError content, process stays alive
+  const dead = startMcp('http://127.0.0.1:9'); // discard port, nothing listens
+  await rpc(dead, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
+  const down = await rpc(dead, 'tools/call', { name: 'hearsay_status', arguments: {} }, 2);
+  assert.equal(down.result.isError, true);
+  assert.equal(JSON.parse(down.result.content[0].text).error.code, 'unreachable');
+  const pong = await rpc(dead, 'ping', {}, 3);
+  assert.deepEqual(pong.result, {}); // still alive
+  dead.kill();
+});
+
 test('mcp: unknown protocolVersion → server answers with its own latest', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
