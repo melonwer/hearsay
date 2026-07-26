@@ -213,10 +213,38 @@ async function dispatch(msg) {
           })),
         });
         return;
-      case 'tools/call':
-        // Implemented in Task 6.
-        replyError(id, -32601, `${method} not wired yet`);
+      case 'tools/call': {
+        const tool = TOOLS.find((t) => t.name === params?.name);
+        if (!tool) {
+          replyError(id, -32602, `Unknown tool: ${params?.name}`);
+          return;
+        }
+        const req = tool.call(params?.arguments ?? {});
+        /** @param {boolean} isError @param {string} text */
+        const content = (isError, text) =>
+          reply(id, { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 60_000);
+          const res = await fetch(HEARSAY_URL + req.path, {
+            method: req.method,
+            headers: req.body === undefined ? {} : { 'content-type': 'application/json' },
+            body: req.body === undefined ? undefined : JSON.stringify(req.body),
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          const text = await res.text();
+          content(!res.ok, text);
+        } catch {
+          content(
+            true,
+            JSON.stringify({
+              error: { code: 'unreachable', message: `Hearsay not reachable at ${HEARSAY_URL} — is \`node server.js\` running?` },
+            }),
+          );
+        }
         return;
+      }
       default:
         if (!isNotification) replyError(id, -32601, `Unknown method: ${method}`);
     }
