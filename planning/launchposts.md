@@ -2,60 +2,60 @@
 
 **How to use these (don't paste this header anywhere):**
 
-- Post from your own account, days apart, not the same day. r/selfhosted first (it settles the biggest open question), then r/SEO, then r/DigitalMarketing.
-- These are *validation* posts, not ads. You have nothing to sell yet and the posts say so. That's what makes them work.
-- Disclose that you're the one building it if anyone asks. It's already implied in the text. Check each subreddit's self-promo rules the week you post; r/SEO in particular removes anything that smells like a pitch.
-- Reply to every comment for the first day. The comments are the actual research, so save the good ones. They feed the v1 priority order.
-- Tweak the wording so it sounds like you. If a sentence doesn't feel like something you'd type, change it. Don't add emoji, don't add a TL;DR, don't make the formatting prettier. Reddit trusts ugly.
-- The middle post mentions testing tools manually and trialing a couple of trackers. Actually do that before posting (a free trial and ten ChatGPT tabs is an afternoon), so every claim in your post is something that happened to you.
-- When you later launch for real, go back to your own thread and reply "you asked, I built it" with the repo link (§18 Phase B).
+## What we learned from the r/selfhosted attempt (2026-07-26)
+
+- **r/selfhosted is out.** They answered the question the post asked: it's a hobby sub (media servers, home automation), they don't have marketing problems and don't want marketing tools. That's real Phase A data, not a failed post. Delete the thread if it's sitting at 0.
+- One useful comment (u/PatochiDesu): target small/medium companies that contract an IT person, not self-hosters. That means setup simplicity is a nice-to-have for the buyer, not the hook, and business users expect maintenance/support, which a community can't fully cover. Feed this into §1.4 target-user thinking: distribution goes through marketing/SEO people, and "self-hosted" is a deployment detail to them, not an identity.
+- The post also got read as AI-written before that. Retype these drafts in your own words, don't paste. Uneven paragraphs, lowercase, no tidy closers.
+
+## Posting plan
+
+- Order: r/bigseo, then r/content_marketing, then r/DigitalMarketing, days apart. Each post has a different angle (measurement, workflow, agency pricing), never the same text twice.
+- r/SEO only via their pinned weekly thread if at all, they ban for tool-shaped posts.
+- These are validation posts, nothing to sell yet. Disclose you're building it if asked. Reply to every comment on day one, the comments are the research.
+- The bigseo post claims you trialed trackers and ran manual ChatGPT checks. Actually do that first.
+- At real launch, reply in your own threads with the repo link (§18 Phase B).
 
 ---
 
-## 1. r/selfhosted
+## 1. r/bigseo
 
-**Title:** Would anyone here actually self-host a marketing tool?
+**Title:** every AI visibility tracker gives me a different number
 
-Genuine question, I can't find a straight answer anywhere.
+clients started asking why they don't show up in ChatGPT answers, so I trialed two of the known tracking tools with the same prompt set. tool A gives one visibility score, tool B gives a different one. then I asked ChatGPT the same question 10 times myself and the brand came up in 6 of them. so that's three numbers, and each tool presents theirs like it's gospel.
 
-There's a newish category of SaaS that tracks what ChatGPT/Claude/Gemini/Perplexity say about your brand or product. Companies pay $99 to $500 a month for this. Under the hood most of it is a cron job that sends prompts to the same APIs you and I already have keys for and greps the answers. One of them charges hundreds per month extra just to add Claude as an engine. I went down this rabbit hole for work and came out kind of angry about the markup.
+pricing made it worse. one charges hundreds a month extra to include Claude, another prices per domain, which stops making sense past a couple of clients.
 
-So I want to build an open source one. MIT license, bring your own API keys, and your monthly cost is whatever the API calls cost, which for a normal setup is a few dollars. The bit I care about most is install friction. Node 22 ships sqlite built in now, so this can literally be git clone and `node server.js`. No docker, no postgres, not even an npm install.
+what I actually want is dumb: run my prompt set a few times a day across the engines, give me a mention rate with an honest error margin, and let me read the raw answers so I can check any number myself. I write code, so I'm about halfway to just building that on my own API keys.
 
-What I can't figure out is whether anyone would run it. Browsing this sub it's all media servers and *arr stacks and home automation. Is that because nobody makes decent self-hostable marketing tools, or because the people who need marketing tools don't self-host and never will? I have a suspicion it's the second one and I'd rather hear it now than after three months of building.
-
-Also curious what your dealbreaker list looks like when you evaluate a new project. Mine is a real license (not FSL or some rug-pull-later thing), no features gated behind a cloud account, and easy data export. No telemetry goes without saying. What else do people check for these days?
-
-Nothing to link yet, there's no repo. Just trying to work out if the audience for this is bigger than one person.
+before I do, am I missing a tool that already measures this properly? and be honest, do clients even care about an error margin, or is the single fake-precise score exactly what sells the report?
 
 ---
 
-## 2. r/SEO
+## 2. r/content_marketing
 
-**Title:** Tested a few AI visibility trackers and got different numbers from each. What are you all actually using?
+**Title:** how is everyone actually checking what ChatGPT says about their brand?
 
-Been evaluating tools that track brand mentions in ChatGPT/Perplexity etc because clients started asking why they don't show up in AI answers, and "I'll look into it" stopped being an acceptable answer at some point this year.
+not asking about the paid trackers, I know they exist, the quotes start at $99/mo and go up fast. asking what people actually do day to day.
 
-The evaluation did not go great. I ran the same prompt set through trials of two of the known tools and got noticeably different visibility numbers from each. Then I sanity checked by hand, same question to ChatGPT ten times, and the brand came up in 6 of the 10 answers. So now I have three numbers. The tools give you one clean score and never mention that it would come out different if you reran it five minutes later.
+right now my version is embarrassing: I ask ChatGPT and Perplexity the same handful of questions by hand every so often and paste anything interesting into a doc. it's slow, and the answers change between runs, so I'm never sure if a change is real or just the model being random that day.
 
-Pricing didn't help either. Entry tiers look fine until you see what's metered. One tool wanted hundreds a month extra to include Claude. Another prices per domain, which gets absurd fast if you have more than a couple of clients.
+I write code so I've been sketching a free open source version that runs your question set daily on your own API keys and tracks the mention rate over time, with the raw answers saved so you can verify any number.
 
-The thing I actually want is boring. Run my prompt set N times a day across the major engines, give me a mention rate with an honest margin of error, and let me read the raw answers so I can check any number myself. I write code as well as doing SEO, so I've half decided to just build it as an open source thing where you plug in your own API keys and pay OpenAI/Anthropic directly instead of paying a markup.
-
-Before I commit to that: what is everyone using in practice? Did I miss a tool that already does repeatable measurement? And be honest, would a margin of error even matter to you, or does the single-score thing work fine for client reporting and I'm overthinking this?
+but I don't want to build for an audience of one. what's your current setup, even if it's "nothing"? and would running a small self hosted thing yourself (or handing it to whoever manages your site) be realistic, or is that dead on arrival for a marketing team?
 
 ---
 
 ## 3. r/DigitalMarketing
 
-**Title:** Agency folks: how are you handling "what does ChatGPT say about us" without paying per client?
+**Title:** agency people: what do you do when a client asks "what does ChatGPT say about us"
 
-A year ago this was a novelty question. Now it comes up in most client calls. Somebody's competitor gets recommended by ChatGPT and they don't, and there's no Search Console equivalent to point at, so the conversation is either vibes or a tool quote.
+this comes up on most calls now. their competitor gets recommended, they don't, and there's no Search Console for it, so the answer is either vibes or a tool quote.
 
-And the tool quotes are rough. Everything prices per brand or per domain, so tracking 10+ clients turns into a four figure monthly line item for what is basically automated prompting. When I trialed a couple of them, two tools gave me two different visibility numbers for the same brand. Try putting that in a client report.
+and the quotes are rough. everything prices per brand or per domain, so 10+ clients turns into four figures a month for what is honestly automated prompting. I trialed two of the tools and they gave me two different visibility numbers for the same brand. have fun explaining that in a client report.
 
-I write code, so I've started building an open source alternative for my own use. Self-hosted, runs on your own OpenAI/Anthropic/Google keys, runs the prompt panel daily, tracks mentions against competitors with an actual margin of error rather than an invented score, and keeps every raw answer so there are receipts behind every number. Per client that works out to a cheap VPS plus a few dollars of API usage.
+I write code, so I started building my own thing: self-hosted, your own OpenAI/Anthropic/Google keys, runs the prompt panel daily, tracks mentions against competitors with a real error margin, and keeps every raw answer so there are receipts behind the numbers. works out to a cheap VPS plus a few dollars of API usage per client.
 
-Two things I want to understand before I build too much. First, would an agency actually run one small instance per client? It's genuinely one command, no docker, but maybe self-hosting is a nonstarter for marketing teams no matter how simple it gets. Second, what does the client-facing side need to be? I keep suspecting the white-label PDF/HTML report is the real product and the dashboard is just for us.
+two things I can't tell from the inside though. would an agency actually run one small instance per client, even if setup is one command? and is the white-label report the actual product, with the dashboard just being for us?
 
-If you're handling this some other way today, manual spot checks, a spreadsheet, an intern with 40 ChatGPT tabs open, I'd love to hear what the setup is and where it hurts.
+if you're covering this with a spreadsheet or an intern with 40 ChatGPT tabs open, how is that going.
