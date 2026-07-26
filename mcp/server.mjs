@@ -10,6 +10,11 @@ const HEARSAY_URL = (process.env.HEARSAY_URL ?? 'http://127.0.0.1:3000').replace
 // [VERIFY-AT-BUILD]: verified 2026-07-26 against modelcontextprotocol.io/specification/versioning
 // — current revision is 2025-11-25; earlier revisions remain valid to echo.
 const KNOWN_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+/** Whole-request bound for one tools/call: headers AND body. Env override for tests. */
+const TIMEOUT_MS = (() => {
+  const n = Number(process.env.HEARSAY_MCP_TIMEOUT_MS ?? '');
+  return Number.isFinite(n) && n > 0 ? n : 60_000;
+})();
 const VERSION = (() => {
   try {
     return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? '0.0.0';
@@ -223,25 +228,32 @@ async function dispatch(msg) {
         /** @param {boolean} isError @param {string} text */
         const content = (isError, text) =>
           reply(id, { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
+        const controller = new AbortController();
+        // Armed until the BODY is read, not just the headers — a backend that stalls
+        // mid-stream must abort res.text(), not hang the reply (and the drain-on-end
+        // exit) forever. Cleared in finally so a rejected fetch cannot leak the timer.
+        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         try {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 60_000);
           const res = await fetch(HEARSAY_URL + req.path, {
             method: req.method,
             headers: req.body === undefined ? {} : { 'content-type': 'application/json' },
             body: req.body === undefined ? undefined : JSON.stringify(req.body),
             signal: controller.signal,
           });
-          clearTimeout(timer);
           const text = await res.text();
           content(!res.ok, text);
-        } catch {
+        } catch (err) {
+          const timedOut = controller.signal.aborted;
           content(
             true,
             JSON.stringify({
-              error: { code: 'unreachable', message: `Hearsay not reachable at ${HEARSAY_URL} — is \`node server.js\` running?` },
+              error: timedOut
+                ? { code: 'timeout', message: `Hearsay at ${HEARSAY_URL} did not answer within ${TIMEOUT_MS}ms` }
+                : { code: 'unreachable', message: `Hearsay not reachable at ${HEARSAY_URL} — is \`node server.js\` running?` },
             }),
           );
+        } finally {
+          clearTimeout(timer);
         }
         return;
       }

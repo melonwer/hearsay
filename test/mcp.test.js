@@ -241,6 +241,50 @@ test('mcp: JSON-RPC batch is unrolled — every request in it gets a reply (2025
   assert.equal(replies[3].error.code, -32600); // an empty batch is an invalid request
 });
 
+test('mcp: a backend that stalls mid-body cannot hang tools/call past the timeout', async () => {
+  // Stub that sends headers, streams half a body, then stalls forever. The old code
+  // cleared its abort timer as soon as headers arrived, so res.text() hung unbounded.
+  /** @type {Set<import('node:net').Socket>} */
+  const sockets = new Set();
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.write('{"partial":');
+    // never ends
+  });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
+
+  const child = spawn(process.execPath, ['mcp/server.mjs'], {
+    env: { ...process.env, HEARSAY_URL: `http://127.0.0.1:${port}`, HEARSAY_MCP_TIMEOUT_MS: '250' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  // Watchdog: a regression here would otherwise hang the suite, not just fail it.
+  const watchdog = setTimeout(() => child.kill('SIGKILL'), 10_000);
+  const lines = [
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{}}}',
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"hearsay_status","arguments":{}}}',
+  ];
+  child.stdin.end(`${lines.join('\n')}\n`);
+  let out = '';
+  for await (const chunk of child.stdout) out += chunk;
+  const [code] = await once(child, 'close');
+  clearTimeout(watchdog);
+  for (const socket of sockets) socket.destroy();
+  await new Promise((r) => server.close(r));
+
+  assert.equal(code, 0, 'drain-and-exit must not block on a stalled body');
+  const replies = out.trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(replies.map((r) => r.id), [1, 2]);
+  assert.equal(replies[1].result.isError, true);
+  const payload = JSON.parse(replies[1].result.content[0].text);
+  assert.equal(payload.error.code, 'timeout'); // reachable-but-stalled is not "unreachable"
+});
+
 test('mcp: unknown protocolVersion → server answers with its own latest', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
