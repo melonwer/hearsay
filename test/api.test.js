@@ -44,12 +44,41 @@ export async function api(base, method, path, body) {
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-test('plumbing: /api/status route exists and echoes the package version', { todo: true }, async () => {
+test('plumbing: /api/status route exists and echoes the package version', async () => {
   const app = await boot();
   try {
     const { status, body } = await api(app.base, 'GET', '/api/status');
     assert.equal(status, 200);
     assert.match(body.version, /^\d+\.\d+\.\d+/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('status: empty DB → configured:false, zero counts, null lastRun, no key material', async () => {
+  const app = await boot({ OPENAI_API_KEY: 'sk-super-secret-value' });
+  try {
+    const { status, body } = await api(app.base, 'GET', '/api/status');
+    assert.equal(status, 200);
+    assert.equal(body.configured, false);
+    assert.deepEqual(body.counts, { entities: 0, intents: 0, activePrompts: 0 });
+    assert.equal(body.lastRun, null);
+    assert.equal(body.providers.find((/** @type {*} */ p) => p.id === 'openai').enabled, true);
+    const raw = JSON.stringify(body);
+    assert.ok(!raw.includes('sk-super-secret-value') && !raw.includes('apiKey') && !raw.includes('maskedKey'));
+  } finally {
+    await app.close();
+  }
+});
+
+test('status: configured flips true with a brand and an active prompt', async () => {
+  const app = await boot();
+  try {
+    await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
+    await api(app.base, 'POST', '/api/prompts', { text: 'best acme-like tool?' });
+    const { body } = await api(app.base, 'GET', '/api/status');
+    assert.equal(body.configured, true);
+    assert.equal(body.counts.activePrompts, 1);
   } finally {
     await app.close();
   }
