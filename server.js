@@ -11,17 +11,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { config as processConfig } from './core/config.js';
-import { get, openDb } from './core/db.js';
-import { createRouter, sendHtml } from './web/router.js';
+import { openDb } from './core/db.js';
+import { seedIfDemoAndEmpty } from './core/seed.js';
+import { createRouter } from './web/router.js';
 import { registerApiRoutes } from './web/pages/api.js';
-import * as dashboardPage from './web/pages/dashboard.js';
-import * as answersPage from './web/pages/answers.js';
-import * as promptsPage from './web/pages/prompts.js';
-import * as entitiesPage from './web/pages/entities.js';
-import * as alertsPage from './web/pages/alerts.js';
-import * as settingsPage from './web/pages/settings.js';
-import * as setupPage from './web/pages/setup.js';
-import * as methodologyPage from './web/pages/methodology.js';
+import { registerPageRoutes } from './web/pages/index.js';
 
 const APP_DIR = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(APP_DIR, 'public');
@@ -41,43 +35,10 @@ function readVersion() {
 export const VERSION = readVersion();
 
 /**
- * @param {import('node:sqlite').DatabaseSync} db
- * @param {import('./core/config.js').Config} config
- * @returns {import('./web/layout.js').ShellCtx}
- */
-function shellCtx(db, config) {
-  const alertRow = get(db, 'SELECT COUNT(*) AS n FROM alerts WHERE acknowledged = 0');
-  const runRow = get(db, 'SELECT status, started_at, finished_at, done_calls, total_calls FROM runs ORDER BY id DESC LIMIT 1');
-
-  /** @type {string|null} */
-  let lastRunLine = null;
-  if (runRow) {
-    const status = String(runRow.status ?? '');
-    const stamp = String(runRow.finished_at ?? runRow.started_at ?? '');
-    const when = stamp === '' ? 'unknown time' : new Date(stamp).toLocaleString();
-    const calls = `${Number(runRow.done_calls ?? 0)}/${Number(runRow.total_calls ?? 0)} calls`;
-    lastRunLine = `Last run ${when} · ${status} · ${calls}`;
-  }
-
-  return {
-    demo: config.demo,
-    openAlerts: Number(alertRow?.n ?? 0),
-    lastRunLine,
-    version: VERSION,
-  };
-}
-
-/**
- * @param {import('node:sqlite').DatabaseSync} db
- * @returns {number}
- */
-function entityCount(db) {
-  const row = get(db, 'SELECT COUNT(*) AS n FROM entities WHERE archived_at IS NULL');
-  return Number(row?.n ?? 0);
-}
-
-/**
  * Build the router for a given database + config.
+ *
+ * The page and API route tables live in `web/` (§10.2, §10.3); this function only
+ * wires them together, so the HTTP surface stays in one lane.
  *
  * @param {Object} deps
  * @param {import('node:sqlite').DatabaseSync} deps.db
@@ -86,63 +47,8 @@ function entityCount(db) {
  */
 export function buildRouter({ db, config }) {
   const router = createRouter({ publicDir: PUBLIC_DIR });
-
-  router.add('GET', '/', (ctx) => {
-    // First-run redirect (§11.8): no entities and demo mode off → the wizard.
-    if (!config.demo && entityCount(db) === 0) {
-      ctx.res.writeHead(302, { Location: '/setup' });
-      ctx.res.end();
-      return;
-    }
-    sendHtml(ctx.res, 200, dashboardPage.render(shellCtx(db, config)));
-  });
-
-  router.add('GET', '/answers', (ctx) => {
-    sendHtml(ctx.res, 200, answersPage.render(shellCtx(db, config)));
-  });
-
-  router.add('GET', '/prompts', (ctx) => {
-    sendHtml(ctx.res, 200, promptsPage.render(shellCtx(db, config)));
-  });
-
-  router.add('GET', '/entities', (ctx) => {
-    sendHtml(ctx.res, 200, entitiesPage.render(shellCtx(db, config)));
-  });
-
-  router.add('GET', '/alerts', (ctx) => {
-    sendHtml(ctx.res, 200, alertsPage.render(shellCtx(db, config)));
-  });
-
-  router.add('GET', '/settings', (ctx) => {
-    const view = {
-      providers: Object.values(config.providers).map((p) => ({
-        label: p.label,
-        model: p.model,
-        enabled: p.enabled,
-        maskedKey: p.maskedKey,
-        keyEnv: p.keyEnv,
-      })),
-      runAt: config.runAt,
-      samples: config.samples,
-      concurrency: config.concurrency,
-      timeoutMs: config.timeoutMs,
-      demo: config.demo,
-      dbPath: config.dbPath,
-    };
-    sendHtml(ctx.res, 200, settingsPage.render(shellCtx(db, config), view));
-  });
-
-  router.add('GET', '/setup', (ctx) => {
-    const view = { enabledProviders: config.enabledProviders.map((p) => p.label) };
-    sendHtml(ctx.res, 200, setupPage.render(shellCtx(db, config), view));
-  });
-
-  router.add('GET', '/methodology', (ctx) => {
-    sendHtml(ctx.res, 200, methodologyPage.render(shellCtx(db, config)));
-  });
-
+  registerPageRoutes(router, { db, config, version: VERSION });
   registerApiRoutes(router, { db, config });
-
   return router;
 }
 
@@ -163,6 +69,14 @@ export async function startServer(opts = {}) {
   const host = opts.host ?? config.host;
 
   const db = openDb(dbPath);
+  // Demo mode with nothing to show boots into the fictional universe rather than an empty
+  // dashboard (§12). Never touches a database that already has rows, seeded or live.
+  const seeded = seedIfDemoAndEmpty(db, config);
+  if (seeded) {
+    process.stderr.write(
+      `Demo mode: seeded ${seeded.responses} answers over ${seeded.runs} days (${seeded.from} to ${seeded.to}).\n`,
+    );
+  }
   const router = buildRouter({ db, config });
   const server = createServer((req, res) => {
     void router.handle(req, res);
