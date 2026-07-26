@@ -91,6 +91,35 @@ test('mcp: initialize handshake, ping, unknown method, notification silence', as
   await backend.close();
 });
 
+test('mcp tools/list: exactly 13 tools, schemas, read-only annotations', async () => {
+  const backend = await stubBackend({});
+  const mcp = startMcp(backend.url);
+  await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
+  const list = await rpc(mcp, 'tools/list', {}, 2);
+  const tools = list.result.tools;
+  assert.equal(tools.length, 13);
+  const names = tools.map((/** @type {*} */ t) => t.name);
+  for (const name of [
+    'hearsay_status', 'hearsay_summary', 'hearsay_intent_results', 'hearsay_prompt_results',
+    'hearsay_answers_search', 'hearsay_citation_gap', 'hearsay_alerts', 'hearsay_cost_estimate',
+    'hearsay_suggest_prompts', 'hearsay_setup_tracking', 'hearsay_run_panel', 'hearsay_run_status',
+    'hearsay_ack_alert',
+  ]) assert.ok(names.includes(name), `missing ${name}`);
+  for (const t of tools) {
+    assert.equal(t.inputSchema.type, 'object');
+    assert.ok(t.description.length > 40, `${t.name} description too thin to trigger on`);
+  }
+  const readOnly = tools.filter((/** @type {*} */ t) => t.annotations?.readOnlyHint === true).map((/** @type {*} */ t) => t.name).sort();
+  assert.deepEqual(readOnly, [
+    'hearsay_alerts', 'hearsay_answers_search', 'hearsay_citation_gap', 'hearsay_cost_estimate',
+    'hearsay_intent_results', 'hearsay_prompt_results', 'hearsay_run_status', 'hearsay_status',
+    'hearsay_summary',
+  ]);
+  assert.equal(tools.find((/** @type {*} */ t) => t.name === 'hearsay_ack_alert').inputSchema.required?.includes('id'), true);
+  mcp.kill();
+  await backend.close();
+});
+
 test('mcp: unknown protocolVersion → server answers with its own latest', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
