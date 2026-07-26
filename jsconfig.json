@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "checkJs": true,
+    "strict": true,
+    "module": "nodenext",
+    "target": "es2022",
+    "noEmit": true
+  },
+  "include": ["core", "web", "server.js", "mcp", "scripts"]
+}

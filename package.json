@@ -1,0 +1,19 @@
+{
+  "name": "hearsay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI visibility tracker for humans and agents. See how ChatGPT, Claude, Gemini & Perplexity talk about your brand — self-hosted, zero dependencies, your own API keys, MCP built in.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "seed": "node scripts/seed.js",
+    "run-panel": "node scripts/run-panel.js",
+    "suggest-prompts": "node scripts/suggest-prompts.js",
+    "typecheck": "tsc -p jsconfig.json --noEmit"
+  }
+}
