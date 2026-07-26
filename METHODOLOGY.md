@@ -1,15 +1,57 @@
 # Methodology
 
-Written in full in Phase 3 (§16). It covers, in plain words:
+Hearsay's promise is **receipts over scores**: every number on the dashboard can be traced back to stored AI answers you can read yourself. This page explains, in plain words, what is measured, how the error bars are computed, and — just as important — what these numbers cannot tell you.
 
-- Repeated sampling and Wilson 95% confidence intervals; why every rate ships with its n.
-- Variance decomposition: rerun variance versus phrasing variance, which dominates and
-  why intents are sampled at the paraphrase level (§6.6).
-- The API-versus-consumer-app caveat: consumer products add hidden system prompts, tools,
-  web search, memory and personalisation. That is a bias no amount of sampling removes.
-- No system prompt, provider-default temperature — as close as an API gets to defaults.
-- The share-of-voice formula and why `branded` prompts are excluded from its denominator.
-- Gaps are gaps: days with no valid responses are omitted, never zero-filled.
-- Why bring-your-own-keys, and honest framing of how small the channel still is.
-- Receipts over scores: no blended visibility number, no rank positions, no prompt-volume
-  estimates.
+## What Hearsay measures
+
+Hearsay repeatedly asks AI models (ChatGPT, Claude, Gemini, Perplexity) the questions your buyers ask, stores every raw answer, and analyses each one deterministically: which brands were mentioned, in what order, which domains were cited, and whether the answer reads as a recommendation. Nothing is summarised away. Click any rate on the dashboard and you land on the exact answers behind it — the receipts.
+
+There is no machine-learned scoring layer between the answer and the metric. Mention detection is word-boundary text matching against your entity names and aliases; recommendation detection is a small set of documented, deterministic rules. That trades a little nuance for something better: you can audit every classification by reading the answer it came from.
+
+## Sampling and confidence intervals
+
+A single AI answer is an anecdote, not a measurement. The same prompt, re-sent a minute later, routinely produces a different brand list. So Hearsay asks each prompt several times per provider per run and reports rates, not one-off observations.
+
+Every rate ships with a Wilson 95% confidence interval — **the error bar others hide** — which says: given this many trials, the true rate plausibly lies in this range. Every rate also ships its sample size (the "n=" you see everywhere), and anything with n below 5 is explicitly flagged as low-sample rather than quietly displayed as if it were solid.
+
+## Phrasing variance vs rerun variance (why intents exist)
+
+Rerunning the *same* prompt is only half the variance story. Published measurement work found that **phrasing variance exceeds rerun variance: cross-paraphrase agreement (0.135–0.288) is far lower than same-prompt rerun agreement (0.50–0.61)** ([arXiv:2605.27440](https://arxiv.org/pdf/2605.27440)). In plain words: rewording the question changes the answer far more than re-asking the same wording does. A tool that only reruns one phrasing shows you the *smaller* error bar and hides the bigger one.
+
+That is why Hearsay groups prompts into **intents**: one buying question ("best AI meeting-notes tool") expressed as several paraphrases. For each intent it reports the pooled mention rate with its Wilson interval, *and* splits the spread into two components:
+
+- **Rerun spread** — variation across repeated samples of the same wording.
+- **Phrasing spread** — variation across the paraphrase means.
+
+Both numbers are always shown. The phrasing number is never hidden, even though it is usually the larger and less flattering one.
+
+## What the API can and cannot tell you
+
+Hearsay measures models through their public APIs. That is a deliberate, documented trade-off, and it is a bias no amount of sampling removes:
+
+- **No memory or personalisation.** Consumer apps adapt to each user's history; the API sees a fresh, anonymous caller every time.
+- **No consumer-app system prompts or tools.** ChatGPT-the-app wraps the model in hidden instructions, browsing and other tooling that the raw API does not replicate.
+- **No geography or account effects.** Your customers' answers vary by locale and account state in ways an API panel cannot reproduce.
+
+Treat Hearsay's numbers as **a logged-out discovery baseline, directional only** — a consistent, repeatable measurement of how the underlying models talk about your category, not a replay of any one customer's screen. A paired API-vs-UI comparison study is planned; it will be linked here when published.
+
+## Deliberate choices
+
+- **No system prompt.** Hearsay sends your prompt and nothing else, so the measurement is of the model's defaults, not of our framing.
+- **Provider-default temperature.** No sampling parameters are overridden; you measure what a default caller gets.
+- **Gaps are gaps.** Days without valid responses render as missing, never as zero. An interpolated line would be fabricated continuity.
+- **Branded prompts are excluded from share-of-voice denominators.** Share of AI voice is: of all brand mentions across your non-branded panel, the fraction that are yours. A prompt that names your brand ("Is Notewell any good?") measures navigational recall, not discovery, and would inflate the number — so it is tracked but kept out of the denominator by default (a Settings toggle lets you include it, visibly).
+- **Bring your own keys.** Measurement runs on your own provider accounts. Nothing is resold, nothing is metered, and the spend estimate you see before a run comes from a calculator over your actual panel size and current per-token prices — never a flat figure asserted in marketing copy.
+
+## How big this channel really is
+
+Honesty cuts both ways: organic LLM traffic is still small for most sites — under 0.2% of visits per [organicllm.org](https://organicllm.org), with complex and considered-purchase categories running multiples higher. This channel is worth measuring and watching, not worth a three-figure-per-month subscription for most teams. Hearsay's bring-your-own-keys cost structure is built for a channel this size; you pay providers for exactly the calls your panel makes, and the built-in calculator shows that spend before and after every run.
+
+## What Hearsay refuses to fake
+
+These are product decisions, not gaps in the roadmap:
+
+- **No single blended "AI visibility score".** Collapsing mention rates, citations and recommendations into one magic number destroys the information you need to act, and hides the uncertainty this page exists to expose.
+- **No rank-position claims.** AI answers are not a ranked results page; pretending a stable "position 3" exists in a stochastic answer stream is false precision.
+- **No prompt-volume estimates.** Nobody has real data on how often people prompt a given question; a made-up volume column would poison every number next to it.
+- **No content generation.** Hearsay is a measurement instrument. The moment it also writes your content, its numbers become marketing for itself.
