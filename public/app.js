@@ -300,11 +300,26 @@ function startPolling() {
 /** @param {HTMLElement} button */
 async function triggerRun(button) {
   button.setAttribute('disabled', 'disabled');
-  const { ok, data } = await api('/api/run', 'POST', {});
-  if (!ok) {
+  const first = await api('/api/run', 'POST', {});
+  if (!first.ok) {
     button.removeAttribute('disabled');
-    showError(button, data);
+    showError(button, first.data);
     return;
+  }
+  // SPEC §3.3: the server is the single source of truth for the cost gate — this
+  // handler only relays the quote and echoes the human's yes as {confirm:true}.
+  if (first.data && first.data.status === 'quote_required') {
+    const usd = first.data.estUsd === null ? 'unknown cost' : `≈ $${Number(first.data.estUsd).toFixed(2)}`;
+    if (!window.confirm(`This run makes ${first.data.calls} API calls (${usd}). Start it?`)) {
+      button.removeAttribute('disabled');
+      return;
+    }
+    const go = await api('/api/run', 'POST', { confirm: true });
+    if (!go.ok) {
+      button.removeAttribute('disabled');
+      showError(button, go.data);
+      return;
+    }
   }
   await pollRun();
   startPolling();
