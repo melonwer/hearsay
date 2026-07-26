@@ -49,6 +49,17 @@ test('plumbing: /api/status route exists and echoes the package version', { todo
   }
 });
 
+test('runs/latest: 404 no_runs when no run has ever happened', async () => {
+  const app = await boot();
+  try {
+    const { status, body } = await api(app.base, 'GET', '/api/runs/latest');
+    assert.equal(status, 404);
+    assert.equal(body.error.code, 'no_runs');
+  } finally {
+    await app.close();
+  }
+});
+
 test('config: HEARSAY_CONFIRM_USD parses as float >= 0, default 1', () => {
   assert.equal(buildConfig({}).confirmUsd, 1);
   assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: '0' }).confirmUsd, 0);

@@ -713,7 +713,11 @@ export function registerApiRoutes(router, deps) {
   router.add(
     'GET',
     '/api/runs/latest',
-    json(() => latestRun(db)),
+    json(() => {
+      const run_ = latestRun(db);
+      if (run_ === null) throw new ApiError(404, 'no_runs', 'No panel runs yet');
+      return run_;
+    }),
   );
 
   router.add(
