@@ -26,6 +26,16 @@ test('run-panel --estimate prints the quote JSON and never runs', async () => {
   assert.ok(Array.isArray(quote.perProvider));
 });
 
+test('suggest-prompts prints draft intents with zero keys (starter pack), writes nothing', async () => {
+  const dbPath = tmpDb();
+  const { stdout } = await exec(NODE, ['scripts/suggest-prompts.js', 'Acme', 'acme.example'], {
+    env: { ...process.env, HEARSAY_DB_PATH: dbPath, OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '', PERPLEXITY_API_KEY: '' },
+  });
+  const draft = JSON.parse(stdout);
+  assert.ok(Array.isArray(draft.intents) && draft.intents.length > 0);
+  assert.ok(draft.intents.every((/** @type {*} */ i) => typeof i.label === 'string' && Array.isArray(i.paraphrases)));
+});
+
 test('run-panel --prompt without HEARSAY_LIVE_TEST refuses (no accidental spend)', async () => {
   await assert.rejects(
     exec(NODE, ['scripts/run-panel.js', '--once', '--prompt', 'test'], {
