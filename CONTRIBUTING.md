@@ -17,7 +17,7 @@ installed with `--no-save`; the shipped app never needs `npm install`.
 
 ## Running and testing
 
-- Node.js ≥ 22.5 (built-in `node:sqlite`).
+- Node.js ≥ 22.13 (built-in `node:sqlite`).
 - Run the app: `node server.js` (demo data: `node scripts/seed.js` first).
 - Run the tests: `node --test` — all of them, every PR. No live network in tests:
   providers are exercised through fixtures in `test/fixtures/`.

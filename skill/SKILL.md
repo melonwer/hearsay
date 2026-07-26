@@ -14,7 +14,7 @@ description: Operate and interpret a local Hearsay AI-visibility tracker via its
 Call `hearsay_status` before anything else, then branch:
 
 - **Unreachable** → tell the human to start it: `node server.js` in the hearsay
-  directory (needs Node ≥ 22.5), then retry.
+  directory (needs Node ≥ 22.13), then retry.
 - **`configured: false`** → run the onboarding playbook below.
 - **Configured** → answer the question with the *narrowest* tool that holds the
   answer (summary for headlines, intent_results for per-question, answers_search
