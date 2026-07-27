@@ -180,6 +180,59 @@ test('suggest: zero keys → 200 starter pack, nothing persisted', async () => {
   }
 });
 
+test('suggest: with a key, the first enabled provider drafts — competitors included', async () => {
+  const app = await boot({ OPENAI_API_KEY: 'sk-test-suggest' });
+  try {
+    await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      competitors: [{ name: 'Jotta', domains: ['jotta.example'] }],
+    });
+    /** @type {{url: string, body: string}[]} */
+    const calls = [];
+    const draft = {
+      intents: [{ label: 'best acme-like tool', category: 'general', paraphrases: ['best tool?', 'top tools 2026', 'which tool should I pick?'] }],
+    };
+    _setFetch(async (url, init = {}) => {
+      calls.push({ url: String(url), body: String(init.body ?? '') });
+      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(draft) } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const { status, body } = await api(app.base, 'POST', '/api/prompts/suggest', { category_hint: 'meeting notes' });
+    assert.equal(status, 200);
+    assert.equal(body.source, 'llm');
+    assert.equal(body.intents.length, 1);
+    assert.equal(body.intents[0].label, 'best acme-like tool');
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].url.includes('api.openai.com'));
+    // The §6.7 drafting prompt must carry the tracked competitors, not just the brand.
+    assert.match(String(JSON.parse(calls[0].body).messages[0].content), /Competitors: Jotta/);
+    assert.equal((await api(app.base, 'GET', '/api/prompts')).body.length, 0); // draft only
+  } finally {
+    _setFetch();
+    await app.close();
+  }
+});
+
+test('suggest: provider failure falls back to the starter pack, labeled honestly', async () => {
+  const app = await boot({ OPENAI_API_KEY: 'sk-test-suggest' });
+  try {
+    await api(app.base, 'POST', '/api/setup', { brand: { name: 'Acme' }, competitors: [{ name: 'Jotta' }] });
+    // 401 classifies as auth without a retry, so no backoff sleep in the test.
+    _setFetch(async () => new Response('{"error":{"message":"bad key"}}', { status: 401 }));
+    const { status, body } = await api(app.base, 'POST', '/api/prompts/suggest', {});
+    assert.equal(status, 200);
+    assert.equal(body.source, 'starter-pack');
+    assert.equal(body.reason, 'provider-error');
+    // The fallback pack sees the tracked rival too, not a {Competitor} placeholder.
+    assert.ok(body.intents.some((/** @type {*} */ i) => String(i.label).includes('Jotta')));
+  } finally {
+    _setFetch();
+    await app.close();
+  }
+});
+
 test('setup: happy path creates brand + competitors + intents transactionally', async () => {
   const app = await boot();
   try {

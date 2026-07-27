@@ -20,8 +20,9 @@ import * as metrics from '../core/metrics.js';
 import * as cost from '../core/cost.js';
 import * as suggest from '../core/suggest.js';
 import * as runner from '../core/runner.js';
+import * as providers from '../core/providers/index.js';
 
-export { metrics, cost, suggest, runner };
+export { metrics, cost, suggest, runner, providers };
 
 /** Thrown when a core function this endpoint needs has not been merged yet. */
 export class NotReadyError extends Error {

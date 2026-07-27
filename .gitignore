@@ -1,7 +1,32 @@
+# Local data and secrets
 data/
+.env
+.env.local
+*.log
+
+# SQLite
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
-.env
+
+# Dependencies and build output
 node_modules/
+coverage/
+dist/
+build/
+
+# Locally installed agent skills (third-party, not part of Hearsay)
+.agents/
+.claude/skills/
+skills-lock.json
+
+# Internal planning notes, not for the public repo
+planning/
+
+# Editor and OS cruft
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

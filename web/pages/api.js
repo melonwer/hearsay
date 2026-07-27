@@ -13,7 +13,7 @@
 
 import { get, isoNow, run, transaction, getSetting, setSetting, SETTING_KEYS } from '../../core/db.js';
 import { sendJson, sendError } from '../router.js';
-import { cost, metrics, NotReadyError, runner, soft, strict, suggest } from '../data.js';
+import { cost, metrics, NotReadyError, providers, runner, soft, strict, suggest } from '../data.js';
 import {
   activePromptCount,
   brandEntity,
@@ -507,24 +507,35 @@ const SUGGEST_NAMES = ['suggestIntents', 'suggestPrompts', 'suggest', 'generateI
  */
 async function suggestPrompts({ db, config }, ctx) {
   const body = asObject(ctx.body);
+  // Competitors ride along on every path (§6.7): the drafting model needs them for
+  // comparison intents, and the starter pack needs a rival name for its templates.
   const args = {
     db,
     config,
     categoryHint: str(body.category_hint, 'category_hint', { max: 200 }),
     keywords: str(body.keywords, 'keywords', { max: 500 }),
     brand: brandEntity(db),
+    competitors: listEntities(db).filter((e) => !e.is_self),
   };
-  if (config.enabledProviders.length === 0) {
+  const first = config.enabledProviders[0];
+  const adapter = first === undefined ? null : providers.getAdapter(first.id);
+  if (first === undefined || adapter === null) {
     // SPEC §3.4: never a dead end — same §20.3 pack the wizard uses, still draft-only.
-    const competitors = listEntities(db).filter((e) => !e.is_self);
-    const pack = strict(/** @type {*} */ (suggest), 'starterPack', { ...args, competitors });
-    return { source: 'starter-pack', intents: /** @type {*} */ (pack)?.intents ?? pack };
+    const pack = strict(/** @type {*} */ (suggest), 'starterPack', args);
+    return { source: 'starter-pack', reason: 'no-provider-key', intents: /** @type {*} */ (pack)?.intents ?? pack };
   }
   const name = SUGGEST_NAMES.find((candidate) => typeof (/** @type {*} */ (suggest)[candidate]) === 'function');
   if (name === undefined) throw new NotReadyError('suggest');
-  // Draft only — this never persists anything (§6.7).
-  const result = await Promise.resolve(strict(/** @type {*} */ (suggest), name, args));
-  return { source: 'llm', intents: /** @type {*} */ (result)?.intents ?? result };
+  // Draft with the first enabled provider's own model (§6.7). The key comes from the
+  // injected config, not the adapter's module singleton — they diverge under test
+  // harnesses and any future multi-config embedding. Draft only — never persists.
+  const runPrompt = (/** @type {string} */ text) =>
+    adapter.runPrompt(text, { model: first.model, timeoutMs: config.timeoutMs, apiKey: first.apiKey });
+  const result = await Promise.resolve(strict(/** @type {*} */ (suggest), name, { ...args, runPrompt }));
+  const r = /** @type {*} */ (result);
+  // Provenance as the core reported it (§19.6 #10): 'llm' only when a model drafted.
+  const source = r?.source === undefined || r?.source === 'llm' ? 'llm' : 'starter-pack';
+  return { source, ...(r?.reason ? { reason: r.reason } : {}), intents: r?.intents ?? r };
 }
 
 const SETUP_CATEGORIES = PROMPT_CATEGORIES.includes('branded') ? PROMPT_CATEGORIES : [...PROMPT_CATEGORIES, 'branded'];
