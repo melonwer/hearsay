@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import { config as processConfig } from './core/config.js';
 import { getSetting, openDb, SETTING_KEYS } from './core/db.js';
+import { removePortFile, writePortFile } from './core/port-discovery.js';
 import { recoverStaleRuns } from './core/runner.js';
 import { localDate, startScheduler } from './core/scheduler.js';
 import { seedIfDemoAndEmpty } from './core/seed.js';
@@ -61,6 +62,7 @@ export function buildRouter({ db, config }) {
  * @param {number} [opts.port]
  * @param {string} [opts.host]
  * @param {string} [opts.dbPath]
+ * @param {string} [opts.portFile]
  * @param {import('./core/config.js').Config} [opts.config]
  * @param {(message: string) => void} [opts.log] boot diagnostics; stderr by default
  * @returns {Promise<{server: import('node:http').Server, port: number, db: import('node:sqlite').DatabaseSync, scheduler: import('./core/scheduler.js').Scheduler, close: () => Promise<void>}>}
@@ -70,6 +72,7 @@ export async function startServer(opts = {}) {
   const dbPath = opts.dbPath ?? config.dbPath;
   const port = opts.port ?? config.port;
   const host = opts.host ?? config.host;
+  const portFile = opts.portFile ?? config.portFile;
   const log = opts.log ?? ((/** @type {string} */ message) => process.stderr.write(`${message}\n`));
 
   const db = openDb(dbPath);
@@ -111,6 +114,15 @@ export async function startServer(opts = {}) {
   const address = server.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : port;
 
+  try {
+    writePortFile(portFile, boundPort);
+  } catch (error) {
+    scheduler.stop();
+    await new Promise((done) => server.close(() => done(undefined)));
+    db.close();
+    throw error;
+  }
+
   return {
     server,
     port: boundPort,
@@ -119,6 +131,7 @@ export async function startServer(opts = {}) {
     close: async () => {
       scheduler.stop();
       await new Promise((done) => server.close(() => done(undefined)));
+      removePortFile(portFile, boundPort);
       db.close();
     },
   };

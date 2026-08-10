@@ -8,6 +8,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
+import { resolvePortFilePath } from './port-discovery.js';
+
 /** @typedef {'openai'|'anthropic'|'gemini'|'perplexity'} ProviderId */
 
 /**
@@ -25,6 +27,7 @@ import { dirname, resolve } from 'node:path';
 /**
  * @typedef {Object} Config
  * @property {number} port
+ * @property {string} portFile local HTTP-port discovery file
  * @property {string} host
  * @property {string} dbPath
  * @property {string} runAt local-time HH:MM for the daily panel run
@@ -142,6 +145,21 @@ function intIn(value, fallback, min, max) {
 }
 
 /**
+ * Parse the HTTP port strictly. Unlike the other integer settings, a malformed
+ * port must not partially parse into a different fixed port.
+ *
+ * @param {string|undefined} value
+ * @param {number} fallback
+ * @returns {number}
+ */
+function portIn(value, fallback) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) return fallback;
+  const port = Number(text);
+  return Number.isInteger(port) && port >= 0 && port <= 65535 ? port : fallback;
+}
+
+/**
  * @param {string|undefined} value
  * @param {number} fallback
  * @param {number} min
@@ -228,7 +246,8 @@ export function buildConfig(env) {
   if (codexEnabled) subscriptionSurfaces.push('codex-agent');
   if (claudeEnabled) subscriptionSurfaces.push('claude-code-agent');
   return {
-    port: intIn(env.PORT, 3000, 1, 65535),
+    port: portIn(env.PORT, 0),
+    portFile: resolvePortFilePath(env),
     host: String(env.HOST ?? '').trim() || '127.0.0.1',
     dbPath,
     runAt: timeOfDay(env.HEARSAY_RUN_AT, '07:00'),

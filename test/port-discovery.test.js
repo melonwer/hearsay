@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -12,6 +12,8 @@ import {
   resolvePortFilePath,
   writePortFile,
 } from '../core/port-discovery.js';
+import { buildConfig } from '../core/config.js';
+import { startServer } from '../server.js';
 
 function tempDirectory() {
   return mkdtempSync(join(tmpdir(), 'hearsay-port-'));
@@ -56,4 +58,29 @@ test('port file writes atomically and conditional cleanup preserves another owne
   removePortFile(file, 43128);
   assert.equal(readPortFile(file), null);
   assert.equal(existsSync(file), false);
+});
+
+test('config defaults to automatic binding while explicit positive PORT remains fixed', () => {
+  assert.equal(buildConfig({}).port, 0);
+  assert.equal(buildConfig({ PORT: '0' }).port, 0);
+  assert.equal(buildConfig({ PORT: '3100' }).port, 3100);
+  assert.equal(buildConfig({ PORT: '-1' }).port, 0);
+  assert.equal(buildConfig({ PORT: 'not-a-port' }).port, 0);
+});
+
+test('server writes the actual ephemeral port and removes it on close', async () => {
+  const directory = tempDirectory();
+  const dbPath = join(directory, 'hearsay.db');
+  const portFile = join(directory, 'data', 'hearsay.port');
+  const config = buildConfig({ HEARSAY_DEMO: '1', PORT: '0', HEARSAY_DB_PATH: dbPath });
+  const running = await startServer({ config, dbPath, port: 0, portFile });
+
+  try {
+    assert.ok(running.port > 0);
+    assert.equal(readPortFile(portFile), running.port);
+  } finally {
+    await running.close();
+    assert.equal(readPortFile(portFile), null);
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
