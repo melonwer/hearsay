@@ -35,6 +35,28 @@ Hearsay measures models through their public APIs. That is a deliberate, documen
 
 Treat Hearsay's numbers as **a logged-out discovery baseline, directional only** — a consistent, repeatable measurement of how the underlying models talk about your category, not a replay of any one customer's screen. A paired API-vs-UI comparison study is planned; it will be linked here when published.
 
+## Subscription agent surfaces
+
+Hearsay can also run an explicitly enabled panel through a locally installed,
+already-authenticated Codex or Claude Code CLI. These results are labeled exactly as
+**Codex agent** and **Claude Code agent**. They are not measurements of the ChatGPT web
+app, Claude.ai, Google AI Mode, or a general consumer population; they are
+developer-tool/technical-B2B buyer-angle observations from a particular signed-in
+agent surface.
+
+Subscription prompts require web search before answering. A target is marked
+`web_status=verified` only when Hearsay observes a completed provider-confirmed search
+event. A URL in the final answer, a page fetch without a search, or a started/failed
+search is not enough. Search-result URLs, page-fetch evidence and final-answer
+citations remain separate receipts.
+
+Only completed, tracking-lane, comparable targets with verified web search enter
+subscription trends, rates and alerts. Exploration answers remain discovery evidence
+until a human explicitly promotes the question; API, Codex agent and Claude Code agent
+series are never silently joined. Subscription runs consume the user's plan allowance
+and may incur overage, so Hearsay reports usage metadata when exposed and does not
+invent a dollar price.
+
 ## Deliberate choices
 
 - **No system prompt.** Hearsay sends your prompt and nothing else, so the measurement is of the model's defaults, not of our framing.
@@ -42,6 +64,7 @@ Treat Hearsay's numbers as **a logged-out discovery baseline, directional only**
 - **Gaps are gaps.** Days without valid responses render as missing, never as zero. An interpolated line would be fabricated continuity.
 - **Branded prompts are excluded from share-of-voice denominators.** Share of AI voice is: of all brand mentions across your non-branded panel, the fraction that are yours. A prompt that names your brand ("Is Notewell any good?") measures navigational recall, not discovery, and would inflate the number — so it is tracked but kept out of the denominator by default (a Settings toggle lets you include it, visibly).
 - **Bring your own keys.** Measurement runs on your own provider accounts. Nothing is resold, nothing is metered, and the spend estimate you see before a run comes from a calculator over your actual panel size and current per-token prices — never a flat figure asserted in marketing copy.
+- **Local subscription authentication stays local.** Hearsay invokes the installed CLI, never reads or copies its credential store, never sends subscription credentials through an API, and keeps Codex agent and Claude Code agent observations separate from provider-API measurements.
 
 ## How big this channel really is
 

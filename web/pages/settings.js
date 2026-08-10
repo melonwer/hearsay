@@ -10,10 +10,11 @@
 
 import { statSync } from 'node:fs';
 
-import { html, layout, raw, usd } from '../layout.js';
+import { html, layout, raw, SURFACE_LABEL, usd } from '../layout.js';
 import { cost, metrics, soft } from '../data.js';
 import { activePromptCount } from '../queries.js';
-import { getSetting, SETTING_KEYS } from '../../core/db.js';
+import { get, getSetting, SETTING_KEYS } from '../../core/db.js';
+import { getSubscriptionSchedule } from '../../core/subscription-scheduler.js';
 
 /** Window used for the "actual spend" figure (§4.3). */
 export const SPEND_DAYS = 30;
@@ -70,6 +71,9 @@ function humanSize(bytes) {
  * @property {{totalUsd: number|null, perProvider: {provider: string, usd: number|null, calls: number}[]}|null} spend
  * @property {number} spendDays window the actual-spend figure covers
  * @property {boolean} includeBranded branded prompts count towards SOV denominators (§6.7)
+ * @property {{id:string,label:string,enabled:boolean,optedIn:boolean}[]} subscriptionSurfaces
+ * @property {{id:number,status:string,totalCalls:number,doneCalls:number}|null} subscriptionRun
+ * @property {import('../../core/subscription-scheduler.js').SubscriptionSchedule|null} subscriptionSchedule
  */
 
 /**
@@ -90,6 +94,19 @@ export function buildView({ db, config }) {
   );
   /** @type {{totalUsd: number|null, perProvider: {provider: string, usd: number|null, calls: number}[]}|null} */
   const spend = soft(/** @type {*} */ (metrics), 'actualSpend', { db, now: new Date(), days: SPEND_DAYS }, null);
+  const activeSubscription = get(db, `
+    SELECT id, status, total_calls, done_calls
+      FROM runs
+     WHERE status = 'running'
+       AND trigger = 'manual'
+       AND EXISTS (
+         SELECT 1 FROM responses
+          WHERE responses.run_id = runs.id
+            AND responses.surface IN ('codex-agent', 'claude-code-agent')
+       )
+     ORDER BY id DESC
+     LIMIT 1
+  `);
 
   return {
     providers: Object.values(config.providers).map((provider) => ({
@@ -114,6 +131,21 @@ export function buildView({ db, config }) {
     spend,
     spendDays: SPEND_DAYS,
     includeBranded: Boolean(getSetting(db, SETTING_KEYS.INCLUDE_BRANDED_IN_SOV, false)),
+    subscriptionSurfaces: config.subscriptionSurfaces.map((id) => ({
+      id,
+      label: SURFACE_LABEL[id] ?? id,
+      enabled: true,
+      optedIn: getSetting(db, SETTING_KEYS.SUBSCRIPTION_SURFACE_OPT_IN, /** @type {string[]} */ ([])).includes(id),
+    })),
+    subscriptionRun: activeSubscription
+      ? {
+          id: Number(activeSubscription.id),
+          status: String(activeSubscription.status),
+          totalCalls: Number(activeSubscription.total_calls ?? 0),
+          doneCalls: Number(activeSubscription.done_calls ?? 0),
+        }
+      : null,
+    subscriptionSchedule: getSubscriptionSchedule(db),
   };
 }
 
@@ -172,6 +204,71 @@ function costPanel(view) {
   </section>`;
 }
 
+/** @param {ReturnType<typeof buildView>} view @returns {import('../layout.js').RawHtml} */
+function subscriptionPanel(view) {
+  const surfaces = view.subscriptionSurfaces.map((surface) => html`<tr>
+    <td>${surface.label}</td>
+    <td>${surface.enabled ? 'Available' : 'Disabled'}</td>
+    <td>${surface.optedIn ? 'Allowance consented for on-demand runs' : 'First run asks for allowance consent'}</td>
+  </tr>`);
+  if (surfaces.length === 0) {
+    return html`<section class="card">
+      <h2>Subscription agent surfaces</h2>
+      <p class="muted">No subscription CLI surface is enabled. Set the surface-specific opt-in environment setting and restart Hearsay.</p>
+    </section>`;
+  }
+  const schedule = view.subscriptionSchedule;
+  const targetCeiling = schedule?.targetCeiling ?? Math.max(1, view.activePrompts * view.samples);
+  const onDemand = view.subscriptionRun
+    ? html`<div class="subscription-run" data-subscription-run>
+        <p>On-demand run ${view.subscriptionRun.id} is running · ${view.subscriptionRun.doneCalls}/${view.subscriptionRun.totalCalls} calls.</p>
+        <button type="button" class="btn btn-quiet" data-subscription-cancel="${view.subscriptionRun.id}">Cancel subscription run</button>
+        <p class="form-error" data-form-error hidden></p>
+      </div>`
+    : html`<form class="inline-form" data-api-form="/api/subscription/run" data-subscription-run>
+        <label><span>On-demand surfaces</span><input name="surfaces" data-list value="${view.subscriptionSurfaces.map((surface) => surface.id).join(',')}" required /></label>
+        <input type="hidden" name="lane" value="tracking" />
+        <input type="hidden" name="samples" value="${Math.min(10, Math.max(1, view.samples))}" />
+        <button type="submit" class="btn">Preview on-demand subscription run</button>
+        <p class="muted small">A confirmation prompt appears before this uses signed-in plan allowance.</p>
+        <p class="form-error" data-form-error hidden></p>
+      </form>`;
+  return html`<section class="card">
+    <h2>Subscription agent surfaces</h2>
+    <p class="muted">
+      These are separately labeled authenticated CLI measurements. They are not measurements of the ChatGPT web app or Claude.ai,
+      and they consume the signed-in plan allowance or possible overage.
+    </p>
+    <table class="table">
+      <thead><tr><th>Surface</th><th>Status</th><th>Allowance</th></tr></thead>
+      <tbody>${surfaces}</tbody>
+    </table>
+    ${view.demo ? html`<p class="muted">Demo mode disables subscription calls and scheduling.</p>` : onDemand}
+    ${view.demo
+      ? ''
+      : schedule
+        ? html`<dl class="kv">
+            <dt>Scheduled surface run</dt><dd>Enabled · ${schedule.runAt} (${schedule.timeZone})</dd>
+            <dt>Lane and samples</dt><dd>${schedule.lane} · ${schedule.samples} sample(s)</dd>
+            <dt>Target ceiling</dt><dd>${schedule.targetCeiling}</dd>
+          </dl>
+          <form class="inline-form" data-api-form="/api/subscription/schedule" data-method="DELETE">
+            <button type="submit" class="btn btn-quiet">Disable scheduled subscription run</button>
+          </form>`
+        : html`<form class="inline-form" data-api-form="/api/subscription/schedule" data-method="POST" data-subscription-schedule>
+            <label><span>Run at</span><input name="run_at" value="07:00" maxlength="5" required /></label>
+            <label><span>IANA timezone</span><input name="timezone" value="UTC" maxlength="80" required /></label>
+            <label><span>Surfaces</span><input name="surfaces" data-list value="${view.subscriptionSurfaces.map((surface) => surface.id).join(',')}" required /></label>
+            <input type="hidden" name="lane" value="tracking" />
+            <input type="hidden" name="samples" value="${view.samples}" />
+            <label><span>Maximum targets per occurrence</span><input name="target_ceiling" type="number" min="1" value="${targetCeiling}" required /></label>
+            <button type="submit" class="btn">Preview and enable schedule</button>
+            <p class="muted small">A completed verified on-demand run for each selected surface is required before this persistent consent is saved.</p>
+            <p class="form-error" data-form-error hidden></p>
+          </form>`}
+  </section>`;
+}
+
 /**
  * @param {import('../layout.js').ShellCtx} ctx
  * @param {ReturnType<typeof buildView>} view
@@ -223,6 +320,7 @@ export function render(ctx, view) {
       </dl>
     </section>
     ${costPanel(view)}
+    ${subscriptionPanel(view)}
     <section class="card">
       <h2>Share of voice</h2>
       <label class="check">

@@ -258,12 +258,14 @@ export function openAlertCount(db) {
 
 /**
  * @param {Db} db
- * @returns {{id: number, status: string, total_calls: number, done_calls: number, started_at: string, finished_at: string|null, trigger: string}|null}
+ * @returns {{id: number, status: string, total_calls: number, done_calls: number, started_at: string, finished_at: string|null, trigger: string, surface?: string|null, schedule_key?: string|null, scheduled_for?: string|null, occurrence_local_date?: string|null}|null}
  */
 export function latestRun(db) {
   const row = get(
     db,
-    'SELECT id, status, total_calls, done_calls, started_at, finished_at, trigger FROM runs ORDER BY id DESC LIMIT 1',
+    `SELECT id, status, total_calls, done_calls, started_at, finished_at, trigger,
+            schedule_key, scheduled_for, occurrence_local_date
+       FROM runs ORDER BY id DESC LIMIT 1`,
   );
   if (!row) return null;
   return {
@@ -274,6 +276,9 @@ export function latestRun(db) {
     started_at: String(row.started_at),
     finished_at: row.finished_at === null || row.finished_at === undefined ? null : String(row.finished_at),
     trigger: String(row.trigger),
+    schedule_key: row.schedule_key === null || row.schedule_key === undefined ? null : String(row.schedule_key),
+    scheduled_for: row.scheduled_for === null || row.scheduled_for === undefined ? null : String(row.scheduled_for),
+    occurrence_local_date: row.occurrence_local_date === null || row.occurrence_local_date === undefined ? null : String(row.occurrence_local_date),
   };
 }
 
@@ -316,6 +321,7 @@ export function activePromptCount(db) {
  * @property {string|null} web_status
  * @property {string|null} prompt_text_snapshot
  * @property {string|null} prompt_origin
+ * @property {string|null} cli_executable
  * @property {string|null} artifact_ref
  * @property {{entity_id: number, name: string, first_index: number, occurrences: number, recommended: number, snippet: string, rank: number}[]} mentions
  * @property {{url: string, domain: string, entity_id: number|null, rank: number}[]} citations
@@ -366,8 +372,8 @@ export function queryAnswers(db, filters = {}) {
     db,
     `SELECT r.id, r.provider, r.surface, r.model, r.sample_idx, r.created_at, r.text, r.error, r.prompt_id,
             r.lane, r.target_status, r.comparability_status, r.web_status,
-            r.prompt_text_snapshot, r.prompt_origin, r.artifact_ref,
-            p.text AS prompt
+            r.prompt_text_snapshot, r.prompt_origin, r.cli_executable, r.artifact_ref,
+            COALESCE(r.prompt_text_snapshot, p.text) AS prompt
        FROM responses r
        JOIN prompts p ON p.id = r.prompt_id
        ${where}
@@ -396,6 +402,7 @@ export function queryAnswers(db, filters = {}) {
     prompt_text_snapshot:
       row.prompt_text_snapshot === null || row.prompt_text_snapshot === undefined ? null : String(row.prompt_text_snapshot),
     prompt_origin: row.prompt_origin === null || row.prompt_origin === undefined ? null : String(row.prompt_origin),
+    cli_executable: row.cli_executable === null || row.cli_executable === undefined ? null : String(row.cli_executable),
     artifact_ref: row.artifact_ref === null || row.artifact_ref === undefined ? null : String(row.artifact_ref),
     mentions: [],
     citations: [],

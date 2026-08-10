@@ -221,6 +221,14 @@ test('metrics keep API and verified subscription surfaces separate', () => {
     insert(1, 'openai-api', 'tracking', 'not_applicable');
     insert(2, 'codex-agent', 'tracking', 'verified');
     insert(3, 'codex-agent', 'tracking', 'unverified');
+    run(db, `INSERT INTO responses(
+      id, run_id, prompt_id, provider, surface, model, sample_idx, text, created_at,
+      lane, target_status, comparability_status, web_status, prompt_text_snapshot,
+      prompt_origin, comparison_key
+    ) VALUES(4, 1, 1, 'openai', 'codex-agent', 'new-model', 4, 'Acme',
+      '2026-08-02T00:02:00Z', 'tracking', 'completed', 'comparable', 'verified',
+      'Which notes tool is best?', 'user_authored', 'codex-agent:new-profile')`);
+    run(db, 'INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet) VALUES(?,?,?,?,?,?,?)', [4, 1, 0, 1, 1, 1, 'Acme']);
 
     assert.equal(mentionRate(db, { entityId: 1, days: 30, now: '2026-08-03T00:00:00Z' }).n, 1);
     assert.equal(
@@ -229,12 +237,12 @@ test('metrics keep API and verified subscription surfaces separate', () => {
     );
     assert.equal(
       mentionRate(db, { entityId: 1, surface: 'codex-agent', days: 30, now: '2026-08-03T00:00:00Z' }).mentioned,
-      0,
-      'the test row has no normalized mention, but the verified target is the only eligible sample',
+      1,
+      'an explicit surface defaults to the newest comparison series rather than blending profiles',
     );
     assert.deepEqual(
       shareOfVoice(db, { surface: 'codex-agent', days: 30, now: '2026-08-03T00:00:00Z' }).map((row) => [row.name, row.mentions]),
-      [['Acme', 0]],
+      [['Acme', 1]],
     );
   } finally {
     db.close();

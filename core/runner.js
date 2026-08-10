@@ -56,6 +56,10 @@ export const CIRCUIT_THRESHOLD = 3;
 /** The `responses.error` value written for calls skipped by an open circuit (§8.1 step 4). */
 export const SKIPPED_CIRCUIT = 'skipped:circuit';
 
+/** Stable metadata for the existing provider-API measurement profile. */
+const API_EXECUTION_PROFILE_HASH = 'legacy-api-v1';
+const API_PROMPT_ENVELOPE_VERSION = 'api-v1';
+
 /** In-process mutex. The DB check below covers other processes; this covers this one. */
 /** @type {Promise<RunSummary>|null} */
 let inFlight = null;
@@ -77,12 +81,36 @@ export function recoverStaleRuns(db, opts = {}) {
   const now = opts.now ?? new Date();
   const maxAgeMs = opts.maxAgeMs ?? STALE_RUN_MS;
   const cutoff = isoNow(new Date(now.getTime() - maxAgeMs));
-  const result = dbRun(
-    db,
-    "UPDATE runs SET status = 'failed', finished_at = ?, error = ? WHERE status = 'running' AND started_at < ?",
-    [isoNow(now), 'abandoned: process exited before the run finished', cutoff],
-  );
-  return result.changes;
+  const staleRuns = all(db, "SELECT id FROM runs WHERE status = 'running' AND started_at < ?", [cutoff]);
+  if (staleRuns.length === 0) return 0;
+  transaction(db, () => {
+    dbRun(
+      db,
+      "UPDATE runs SET status = 'failed', finished_at = ?, error = ?, done_calls = total_calls WHERE status = 'running' AND started_at < ?",
+      [isoNow(now), 'abandoned: process exited before the run finished', cutoff],
+    );
+    for (const stale of staleRuns) {
+      dbRun(
+        db,
+        `UPDATE responses
+            SET target_status = 'failed',
+                comparability_status = 'non_comparable',
+                comparability_reason = 'abandoned',
+                web_status = CASE
+                  WHEN surface IN ('codex-agent', 'claude-code-agent') THEN 'failed'
+                  ELSE COALESCE(web_status, 'not_applicable')
+                END,
+                safe_error_code = 'abandoned',
+                error = CASE
+                  WHEN surface IN ('codex-agent', 'claude-code-agent') THEN 'subscription:abandoned'
+                  ELSE 'api:abandoned'
+                END
+          WHERE run_id = ? AND target_status IN ('queued', 'running')`,
+        [Number(stale.id)],
+      );
+    }
+  });
+  return staleRuns.length;
 }
 
 /**
@@ -92,6 +120,7 @@ export function recoverStaleRuns(db, opts = {}) {
  * @property {ProviderId|string} provider
  * @property {string} model
  * @property {number} sampleIdx
+ * @property {string} promptOrigin
  */
 
 /**
@@ -216,7 +245,7 @@ async function executeRun(options) {
   if (existing) throw new RunInProgressError(Number(existing.id));
 
   const providers = config.enabledProviders;
-  const prompts = all(db, 'SELECT id, text FROM prompts WHERE active = 1 ORDER BY id');
+  const prompts = all(db, 'SELECT id, text, origin FROM prompts WHERE active = 1 ORDER BY id');
   const entities = loadEntities(db);
 
   /** @type {Task[]} */
@@ -230,18 +259,25 @@ async function executeRun(options) {
           provider: provider.id,
           model: provider.model,
           sampleIdx,
+          promptOrigin: String(prompt.origin ?? 'legacy'),
         });
       }
     }
   }
 
   const startedAt = isoNow(now());
-  const runId = dbRun(db, 'INSERT INTO runs(started_at, trigger, status, total_calls, done_calls) VALUES(?, ?, ?, ?, 0)', [
-    startedAt,
-    trigger,
-    'running',
-    tasks.length,
-  ]).lastInsertRowid;
+  const inserted = dbRun(
+    db,
+    `INSERT INTO runs(started_at, trigger, status, total_calls, done_calls)
+     SELECT ?, ?, 'running', ?, 0
+      WHERE NOT EXISTS (SELECT 1 FROM runs WHERE status = 'running')`,
+    [startedAt, trigger, tasks.length],
+  );
+  if (inserted.changes === 0) {
+    const running = get(db, "SELECT id FROM runs WHERE status = 'running' ORDER BY id LIMIT 1");
+    throw new RunInProgressError(running ? Number(running.id) : null);
+  }
+  const runId = inserted.lastInsertRowid;
 
   /** @type {Record<string, ProviderTally>} */
   const byProvider = {};
@@ -282,8 +318,29 @@ async function executeRun(options) {
     if (tally.circuitOpen) {
       dbRun(
         db,
-        'INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, error, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)',
-        [runId, task.promptId, task.provider, task.model, task.sampleIdx, SKIPPED_CIRCUIT, isoNow(now())],
+        `INSERT INTO responses(
+          run_id, prompt_id, provider, surface, model, sample_idx, error, created_at,
+          lane, target_status, comparability_status, web_status, prompt_text_snapshot,
+          prompt_origin, execution_profile_hash, prompt_envelope_version, comparison_key,
+          location_control, safe_error_code
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'tracking', 'failed', 'non_comparable',
+          'not_applicable', ?, ?, ?, ?, ?, 'uncontrolled', ?)`,
+        [
+          runId,
+          task.promptId,
+          task.provider,
+          `${task.provider}-api`,
+          task.model,
+          task.sampleIdx,
+          SKIPPED_CIRCUIT,
+          isoNow(now()),
+          task.promptText,
+          task.promptOrigin,
+          API_EXECUTION_PROFILE_HASH,
+          API_PROMPT_ENVELOPE_VERSION,
+          `legacy:${task.provider}:${task.model}`,
+          'skipped_circuit',
+        ],
       );
       tally.skipped += 1;
       skippedCalls += 1;
@@ -311,8 +368,29 @@ async function executeRun(options) {
     if (failure) {
       dbRun(
         db,
-        'INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, error, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)',
-        [runId, task.promptId, task.provider, task.model, task.sampleIdx, failure.toStorage(), isoNow(now())],
+        `INSERT INTO responses(
+          run_id, prompt_id, provider, surface, model, sample_idx, error, created_at,
+          lane, target_status, comparability_status, web_status, prompt_text_snapshot,
+          prompt_origin, execution_profile_hash, prompt_envelope_version, comparison_key,
+          location_control, safe_error_code
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'tracking', 'failed', 'non_comparable',
+          'not_applicable', ?, ?, ?, ?, ?, 'uncontrolled', ?)`,
+        [
+          runId,
+          task.promptId,
+          task.provider,
+          `${task.provider}-api`,
+          task.model,
+          task.sampleIdx,
+          failure.toStorage(),
+          isoNow(now()),
+          task.promptText,
+          task.promptOrigin,
+          API_EXECUTION_PROFILE_HASH,
+          API_PROMPT_ENVELOPE_VERSION,
+          `legacy:${task.provider}:${task.model}`,
+          failure.kind,
+        ],
       );
       tally.errors += 1;
       errorCalls += 1;
@@ -343,6 +421,7 @@ async function executeRun(options) {
       costUsd({ provider: task.provider, model: answer.model, tokensIn, tokensOut }, env) ??
       costUsd({ provider: task.provider, model: task.model, tokensIn, tokensOut }, env);
 
+    const effectiveModel = answer.model || task.model;
     const analysis = analyzeResponse(answer.text, entities, answer.citations ?? []);
     const createdAt = isoNow(now());
 
@@ -351,13 +430,19 @@ async function executeRun(options) {
     transaction(db, () => {
       const responseId = dbRun(
         db,
-        `INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, latency_ms, tokens_in, tokens_out, cost_usd, created_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO responses(
+          run_id, prompt_id, provider, surface, model, sample_idx, text, latency_ms,
+          tokens_in, tokens_out, cost_usd, created_at, lane, target_status,
+          comparability_status, web_status, prompt_text_snapshot, prompt_origin,
+          execution_profile_hash, prompt_envelope_version, comparison_key, location_control
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'tracking', 'completed',
+          'comparable', 'not_applicable', ?, ?, ?, ?, ?, 'uncontrolled')`,
         [
           runId,
           task.promptId,
           task.provider,
-          answer.model || task.model,
+          `${task.provider}-api`,
+          effectiveModel,
           task.sampleIdx,
           answer.text,
           Number.isFinite(answer.latencyMs) ? Math.round(answer.latencyMs) : null,
@@ -365,6 +450,11 @@ async function executeRun(options) {
           tokensOut,
           cost,
           createdAt,
+          task.promptText,
+          task.promptOrigin,
+          API_EXECUTION_PROFILE_HASH,
+          API_PROMPT_ENVELOPE_VERSION,
+          `legacy:${task.provider}:${effectiveModel}`,
         ],
       ).lastInsertRowid;
 

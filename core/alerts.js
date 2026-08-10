@@ -19,7 +19,7 @@
 
 import { all, get, isoNow, run as exec } from './db.js';
 import { shareOfVoice } from './metrics.js';
-import { eligibilitySql } from './subscription-model.js';
+import { eligibilitySql, surfaceLabel } from './subscription-model.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 
@@ -71,9 +71,11 @@ const AGENT_SURFACES = ['codex-agent', 'claude-code-agent'];
 
 /**
  * @param {string} provider
+ * @param {string|null} [surface]
  * @returns {string}
  */
-function label(provider) {
+function label(provider, surface = null) {
+  if (surface !== null && (/** @type {readonly string[]} */ (AGENT_SURFACES)).includes(surface)) return surfaceLabel(surface);
   return PROVIDER_LABELS[provider] ?? provider;
 }
 
@@ -110,11 +112,13 @@ function daysBefore(now, days) {
  *
  * @param {string|null} surface
  * @param {string} alias
+ * @param {string|null} comparisonKey
  * @returns {{sql:string, params:(string|number|null)[]}}
  */
-function alertEligibility(surface, alias = 'r') {
+function alertEligibility(surface, alias = 'r', comparisonKey = null) {
   const common = eligibilitySql(alias, {
     surface: surface ?? undefined,
+    comparisonKey: comparisonKey ?? undefined,
     subscription: surface !== null && AGENT_SURFACES.includes(surface),
   });
   if (surface === null) {
@@ -134,21 +138,23 @@ function alertEligibility(surface, alias = 'r') {
  * @param {Db} db
  * @param {number} runId
  * @param {string|null} surface
+ * @param {string|null} comparisonKey
  * @returns {boolean}
  */
-function completeSurfaceCohort(db, runId, surface) {
+function completeSurfaceCohort(db, runId, surface, comparisonKey = null) {
   const scope = surface === null
     ? { sql: `(r.surface IS NULL OR r.surface IN (${API_SURFACES.map(() => '?').join(', ')}))`, params: API_SURFACES }
     : { sql: 'r.surface = ?', params: [surface] };
   const rows = all(
     db,
-    `SELECT r.error, r.target_status, r.comparability_status, r.web_status
+    `SELECT r.error, r.target_status, r.comparability_status, r.web_status, r.comparison_key
        FROM responses r
       WHERE r.run_id = ? AND (${scope.sql})`,
     [runId, ...scope.params],
   );
   if (rows.length === 0) return false;
   return rows.every((row) => {
+    if (comparisonKey !== null && String(row.comparison_key ?? '') !== comparisonKey) return false;
     if (row.error !== null && row.error !== undefined) return false;
     if (row.target_status === null || row.target_status === undefined) return true;
     if (String(row.target_status) !== 'completed' || String(row.comparability_status) !== 'comparable') return false;
@@ -162,10 +168,11 @@ function completeSurfaceCohort(db, runId, surface) {
  * @param {number} runId
  * @param {number} entityId
  * @param {string|null} surface
+ * @param {string|null} comparisonKey
  * @returns {Map<string, {promptId:number, provider:string, n:number, recommended:number}>}
  */
-function recommendationCounts(db, runId, entityId, surface) {
-  const scope = alertEligibility(surface);
+function recommendationCounts(db, runId, entityId, surface, comparisonKey = null) {
+  const scope = alertEligibility(surface, 'r', comparisonKey);
   const rows = all(
     db,
     `SELECT r.prompt_id AS prompt_id, r.provider AS provider, COUNT(*) AS n,
@@ -199,10 +206,11 @@ function recommendationCounts(db, runId, entityId, surface) {
  * @param {number} runId
  * @param {number} entityId
  * @param {string|null} surface
+ * @param {string|null} comparisonKey
  * @returns {Map<string, {n:number, mentioned:number, p:number}>}
  */
-function providerMentionCounts(db, runId, entityId, surface) {
-  const scope = alertEligibility(surface);
+function providerMentionCounts(db, runId, entityId, surface, comparisonKey = null) {
+  const scope = alertEligibility(surface, 'r', comparisonKey);
   const rows = all(
     db,
     `SELECT r.provider AS provider, COUNT(*) AS n,
@@ -284,7 +292,7 @@ function alreadyReported(db, key, since) {
  *
  * @param {Db|number} dbOrRunId
  * @param {number|Db} runIdOrDb
- * @param {{now?: string|Date, surface?: string}} [opts] `now` is the evaluation timestamp;
+ * @param {{now?: string|Date, surface?: string, comparisonKey?: string}} [opts] `now` is the evaluation timestamp;
  *   defaults to the current UTC time, and `surface` selects one comparable cohort.
  * @returns {CreatedAlert[]} alerts actually written, in rule order
  */
@@ -297,6 +305,18 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
   }
   const now = opts.now === undefined ? isoNow() : isoNow(opts.now instanceof Date ? opts.now : new Date(String(opts.now)));
   const surface = opts.surface === undefined ? null : String(opts.surface);
+  const comparisonKey = opts.comparisonKey === undefined
+    ? (surface === null
+      ? null
+      : (() => {
+        const row = get(db, `SELECT comparison_key FROM responses
+                             WHERE run_id = ? AND surface = ? AND comparison_key IS NOT NULL
+                             ORDER BY id LIMIT 1`, [Number(runId), surface]);
+        return row?.comparison_key === null || row?.comparison_key === undefined
+          ? null
+          : String(row.comparison_key);
+      })())
+    : String(opts.comparisonKey);
 
   const runRow = get(db, 'SELECT id, trigger FROM runs WHERE id = ?', [Number(runId)]);
   if (!runRow) return [];
@@ -305,7 +325,7 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
   const brandRow = get(db, 'SELECT id, name FROM entities WHERE is_self = 1 AND archived_at IS NULL ORDER BY id LIMIT 1');
   if (!brandRow) return [];
   const brand = { id: Number(brandRow.id), name: String(brandRow.name) };
-  if (!completeSurfaceCohort(db, Number(runId), surface)) return [];
+  if (!completeSurfaceCohort(db, Number(runId), surface, comparisonKey)) return [];
 
   // Compare like with like: live runs against live runs, seeded runs against seeded runs.
   const kindClause = trigger === 'seed' ? "trigger = 'seed'" : "trigger <> 'seed'";
@@ -323,9 +343,9 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
   /** @type {Candidate[]} */
   const candidates = [];
 
-  const current = recommendationCounts(db, Number(runId), brand.id, surface);
-  const prev1 = priorRuns[0] ? recommendationCounts(db, priorRuns[0].id, brand.id, surface) : null;
-  const prev2 = priorRuns[1] ? recommendationCounts(db, priorRuns[1].id, brand.id, surface) : null;
+  const current = recommendationCounts(db, Number(runId), brand.id, surface, comparisonKey);
+  const prev1 = priorRuns[0] ? recommendationCounts(db, priorRuns[0].id, brand.id, surface, comparisonKey) : null;
+  const prev2 = priorRuns[1] ? recommendationCounts(db, priorRuns[1].id, brand.id, surface, comparisonKey) : null;
 
   // --- LOST_RECOMMENDATION / GAINED_RECOMMENDATION (need 2 prior runs) ----------------
   if (prev1 && prev2) {
@@ -346,8 +366,8 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
           entityId: brand.id,
           promptId: cur.promptId,
           provider: cur.provider,
-          title: truncate(`Lost recommendation on ${label(cur.provider)} for “${prompt}”`, TITLE_MAX),
-          detail: `${brand.name} was recommended in each of the two previous runs and in none of this run's samples (${history}) on ${label(cur.provider)}.`,
+          title: truncate(`Lost recommendation on ${label(cur.provider, surface)} for “${prompt}”`, TITLE_MAX),
+          detail: `${brand.name} was recommended in each of the two previous runs and in none of this run's samples (${history}) on ${label(cur.provider, surface)}.`,
         });
       } else if (one.recommended === 0 && two.recommended === 0 && cur.recommended >= 1) {
         candidates.push({
@@ -356,8 +376,8 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
           entityId: brand.id,
           promptId: cur.promptId,
           provider: cur.provider,
-          title: truncate(`Now recommended on ${label(cur.provider)} for “${prompt}”`, TITLE_MAX),
-          detail: `${brand.name} was not recommended in either of the two previous runs and is now (${history}) on ${label(cur.provider)}.`,
+          title: truncate(`Now recommended on ${label(cur.provider, surface)} for “${prompt}”`, TITLE_MAX),
+          detail: `${brand.name} was not recommended in either of the two previous runs and is now (${history}) on ${label(cur.provider, surface)}.`,
         });
       }
     }
@@ -365,8 +385,8 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
 
   // --- MENTION_DROP (needs 1 prior run, n ≥ 3 on both sides) -------------------------
   if (priorRuns[0]) {
-    const curByProvider = providerMentionCounts(db, Number(runId), brand.id, surface);
-    const prevByProvider = providerMentionCounts(db, priorRuns[0].id, brand.id, surface);
+    const curByProvider = providerMentionCounts(db, Number(runId), brand.id, surface, comparisonKey);
+    const prevByProvider = providerMentionCounts(db, priorRuns[0].id, brand.id, surface, comparisonKey);
     for (const [provider, cur] of curByProvider) {
       const prev = prevByProvider.get(provider);
       if (!prev) continue;
@@ -380,16 +400,16 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
         entityId: brand.id,
         promptId: null,
         provider,
-        title: truncate(`Mentions down ${delta} pts on ${label(provider)}`, TITLE_MAX),
-        detail: `${brand.name} was mentioned in ${prev.mentioned}/${prev.n} valid answers on ${label(provider)} last run and ${cur.mentioned}/${cur.n} this run (${pct(prev.p)} → ${pct(cur.p)}, ${delta} pts).`,
+        title: truncate(`Mentions down ${delta} pts on ${label(provider, surface)}`, TITLE_MAX),
+        detail: `${brand.name} was mentioned in ${prev.mentioned}/${prev.n} valid answers on ${label(provider, surface)} last run and ${cur.mentioned}/${cur.n} this run (${pct(prev.p)} → ${pct(cur.p)}, ${delta} pts).`,
       });
     }
   }
 
   // --- OVERTAKEN (needs 1 prior run to have something to compare against) ------------
   if (priorRuns[0]) {
-    const recent = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now, ...(surface === null ? {} : { surface }) });
-    const prior = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now: priorRuns[0].at, ...(surface === null ? {} : { surface }) });
+    const recent = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now, ...(surface === null ? {} : { surface }), ...(comparisonKey === null ? {} : { comparisonKey }) });
+    const prior = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now: priorRuns[0].at, ...(surface === null ? {} : { surface }), ...(comparisonKey === null ? {} : { comparisonKey }) });
     const recentTotal = recent.reduce((sum, row) => sum + row.mentions, 0);
     const priorTotal = prior.reduce((sum, row) => sum + row.mentions, 0);
 
@@ -408,8 +428,8 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
           entityId: competitor.entityId,
           promptId: null,
           provider: null,
-          title: truncate(`${competitor.name} passed you in share of AI voice`, TITLE_MAX),
-          detail: `${competitor.name} went ${pct(competitorPrior.sov)} → ${pct(competitor.sov)} of share of AI voice against your ${pct(brandPrior)} → ${pct(brandNow)}, over the last ${SOV_WINDOW_DAYS} days (n=${recentTotal} mentions).`,
+          title: truncate(`${competitor.name} passed you in share of AI voice${surface === null ? '' : ` on ${surfaceLabel(surface)}`}`, TITLE_MAX),
+          detail: `${competitor.name} went ${pct(competitorPrior.sov)} → ${pct(competitor.sov)} of share of AI voice against your ${pct(brandPrior)} → ${pct(brandNow)}, over the last ${SOV_WINDOW_DAYS} days (n=${recentTotal} mentions)${surface === null ? '' : ` on ${surfaceLabel(surface)}`}.`,
         });
       }
     }

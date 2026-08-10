@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"session-1"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"search-1","name":"WebSearch","input":{"query":"best project tracker for a small team"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"search-1","content":"Search results: https://acme.example/guide"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"fetch-1","name":"WebFetch","input":{"url":"https://acme.example/guide"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"fetch-1","content":"Acme guide content"}]}}
+{"type":"result","subtype":"success","result":"Acme is a strong choice for a small team.","usage":{"input_tokens":140,"output_tokens":72}}

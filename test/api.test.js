@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { startServer } from '../server.js';
 import { buildConfig } from '../core/config.js';
-import { run as dbRun } from '../core/db.js';
+import { get, run as dbRun } from '../core/db.js';
 import { _setFetch } from '../core/providers/shared.js';
 
 after(() => {
@@ -464,6 +464,27 @@ test('answers page: a legacy non-http citation never renders as a clickable href
   }
 });
 
+test('answer history keeps the response prompt snapshot after the tracked prompt is edited', async () => {
+  const app = await boot();
+  try {
+    await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'Which notes tool did buyers ask about?' })).body;
+    const responseId = seedResponse(app.db, prompt.id, 'The historical answer.');
+    dbRun(app.db, 'UPDATE responses SET prompt_text_snapshot = ? WHERE id = ?', ['Which notes tool did buyers ask about?', responseId]);
+    dbRun(app.db, 'UPDATE prompts SET text = ? WHERE id = ?', ['Which calendar tool is current?', prompt.id]);
+
+    const answers = await api(app.base, 'GET', '/api/answers?days=365');
+    assert.equal(answers.status, 200);
+    assert.equal(answers.body.items[0].prompt, 'Which notes tool did buyers ask about?');
+
+    const page = await (await fetch(`${app.base}/answers?days=365`)).text();
+    const answerPrompt = page.match(/<p class="answer-prompt">([^<]+)<\/p>/)?.[1];
+    assert.equal(answerPrompt, 'Which notes tool did buyers ask about?');
+  } finally {
+    await app.close();
+  }
+});
+
 test('setup: non-array competitors/intents → 422 validation envelope, not 500', async () => {
   const app = await boot();
   try {
@@ -539,4 +560,177 @@ test('config: HEARSAY_CONFIRM_USD parses as float >= 0, default 1', () => {
   assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: '2.5' }).confirmUsd, 2.5);
   assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: 'garbage' }).confirmUsd, 1);
   assert.equal(buildConfig({ HEARSAY_CONFIRM_USD: '-3' }).confirmUsd, 1);
+});
+
+test('subscription preview and run quote expose exact agent surface without API keys', async () => {
+  const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
+  try {
+    const setup = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
+    });
+    assert.equal(setup.status, 200);
+    const preview = await api(app.base, 'POST', '/api/subscription/preview', { surfaces: ['codex-agent'], samples: 2 });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.totalTargets, 2);
+    assert.equal(preview.body.perSurface[0].surface, 'codex-agent');
+    assert.equal(preview.body.usageModel, 'included_plan_allowance_or_overage');
+    const quote = await api(app.base, 'POST', '/api/subscription/run', { surfaces: ['codex-agent'] });
+    assert.equal(quote.status, 200);
+    assert.equal(quote.body.status, 'quote_required');
+    assert.equal(quote.body.firstUseSurfaces[0], 'codex-agent');
+  } finally {
+    await app.close();
+  }
+});
+
+test('subscription cancellation is available through HTTP and the settings UI', async () => {
+  const app = await boot({
+    HEARSAY_CODEX_ENABLED: '1',
+    HEARSAY_CODEX_PATH: join(process.cwd(), 'test-support', 'fake-subscription-cli.mjs'),
+    HEARSAY_SUBSCRIPTION_TIMEOUT_MS: '5000',
+    HEARSAY_SUBSCRIPTION_IDLE_TIMEOUT_MS: '5000',
+  });
+  try {
+    const setup = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
+    });
+    assert.equal(setup.status, 200);
+
+    const started = await api(app.base, 'POST', '/api/subscription/run', {
+      surfaces: ['codex-agent'],
+      confirm: true,
+    });
+    assert.equal(started.status, 202);
+    assert.equal(typeof started.body.runId, 'number');
+
+    const settings = await fetch(`${app.base}/settings`).then((response) => response.text());
+    assert.match(settings, new RegExp(`data-subscription-cancel="${started.body.runId}"`));
+
+    const cancelled = await api(app.base, 'POST', `/api/subscription/runs/${started.body.runId}/cancel`, {});
+    assert.equal(cancelled.status, 202);
+    assert.equal(cancelled.body.status, 'cancellation_requested');
+
+    let latest;
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      latest = await api(app.base, 'GET', '/api/runs/latest');
+      if (latest.body?.status !== 'running') break;
+      await sleep(20);
+    }
+    assert.equal(latest.body.status, 'cancelled');
+  } finally {
+    await app.close();
+  }
+});
+
+test('exploration prompts are persisted separately and promote explicitly', async () => {
+  const app = await boot();
+  try {
+    const setup = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
+    });
+    assert.equal(setup.status, 200);
+    const exploration = await api(app.base, 'POST', '/api/prompts/exploration', { text: 'What should a small team compare?', origin: 'user_authored' });
+    assert.equal(exploration.status, 201);
+    assert.equal(exploration.body.tracking_state, 'exploration');
+    assert.equal(exploration.body.active, 0);
+    const intentId = Number(get(app.db, 'SELECT id FROM intents WHERE label = ?', ['best tracker'])?.id);
+    const promoted = await api(app.base, 'POST', `/api/prompts/${exploration.body.id}/promote`, { intent_id: intentId });
+    assert.equal(promoted.status, 200);
+    assert.equal(promoted.body.tracking_state, 'tracking');
+    assert.equal(promoted.body.active, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test('subscription schedule requires separate consent and stores the local-time ceiling', async () => {
+  const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
+  try {
+    const setup = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
+    });
+    assert.equal(setup.status, 200);
+    const promptId = Number(get(app.db, 'SELECT id FROM prompts LIMIT 1')?.id);
+    const preview = await api(app.base, 'POST', '/api/subscription/schedule', {
+      run_at: '07:00',
+      timezone: 'Europe/Berlin',
+      surfaces: ['codex-agent'],
+      lane: 'tracking',
+      prompt_ids: [promptId],
+      samples: 1,
+      target_ceiling: 1,
+    });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.status, 'schedule_confirmation_required');
+    assert.equal((await api(app.base, 'GET', '/api/subscription/schedule')).body, null);
+
+    const runId = Number(dbRun(app.db, "INSERT INTO runs(started_at, trigger, status, total_calls, done_calls) VALUES(?,?,?,?,?)", ['2026-08-09T00:00:00Z', 'manual', 'done', 1, 1]).lastInsertRowid);
+    dbRun(app.db, `INSERT INTO responses(
+      run_id, prompt_id, provider, surface, model, sample_idx, text, created_at,
+      lane, target_status, comparability_status, web_status
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      runId, promptId, 'openai', 'codex-agent', 'default', 0, 'Acme', '2026-08-09T00:00:00Z',
+      'tracking', 'completed', 'comparable', 'verified',
+    ]);
+    const saved = await api(app.base, 'POST', '/api/subscription/schedule', {
+      run_at: '07:00',
+      timezone: 'Europe/Berlin',
+      surfaces: ['codex-agent'],
+      lane: 'tracking',
+      prompt_ids: [promptId],
+      samples: 1,
+      target_ceiling: 1,
+      confirm: true,
+    });
+    assert.equal(saved.status, 201);
+    assert.equal(saved.body.timeZone, 'Europe/Berlin');
+    assert.equal(saved.body.targetCeiling, 1);
+    assert.match(saved.body.revisionHash, /^[a-f0-9]{64}$/);
+    const deleted = await api(app.base, 'DELETE', '/api/subscription/schedule');
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.disabled, true);
+  } finally {
+    await app.close();
+  }
+});
+
+test('subscription scheduling does not accept verified results from a cron run', async () => {
+  const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
+  try {
+    const setup = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
+    });
+    assert.equal(setup.status, 200);
+    const promptId = Number(get(app.db, 'SELECT id FROM prompts LIMIT 1')?.id);
+    const runId = Number(dbRun(app.db, "INSERT INTO runs(started_at, trigger, status, total_calls, done_calls) VALUES(?,?,?,?,?)", [
+      '2026-08-09T00:00:00Z', 'cron', 'done', 1, 1,
+    ]).lastInsertRowid);
+    dbRun(app.db, `INSERT INTO responses(
+      run_id, prompt_id, provider, surface, model, sample_idx, text, created_at,
+      lane, target_status, comparability_status, web_status
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      runId, promptId, 'openai', 'codex-agent', 'default', 0, 'Acme', '2026-08-09T00:00:00Z',
+      'tracking', 'completed', 'comparable', 'verified',
+    ]);
+
+    const rejected = await api(app.base, 'POST', '/api/subscription/schedule', {
+      run_at: '07:00',
+      timezone: 'Europe/Berlin',
+      surfaces: ['codex-agent'],
+      lane: 'tracking',
+      prompt_ids: [promptId],
+      samples: 1,
+      target_ceiling: 1,
+      confirm: true,
+    });
+    assert.equal(rejected.status, 409);
+    assert.equal(rejected.body.error.code, 'schedule_prerequisite_missing');
+  } finally {
+    await app.close();
+  }
 });

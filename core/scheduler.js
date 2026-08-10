@@ -17,6 +17,8 @@
 import { config as processConfig } from './config.js';
 import { SETTING_KEYS, getSetting, setSetting } from './db.js';
 import { runPanel as defaultRunPanel } from './runner.js';
+import { runSubscriptionPanel as defaultRunSubscriptionPanel } from './subscription-runner.js';
+import { getSubscriptionSchedule, subscriptionScheduleTick } from './subscription-scheduler.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('./config.js').Config} Config */
@@ -77,6 +79,7 @@ export function shouldRun({ now, runAt, lastRunDate }) {
  * @param {Db} options.db
  * @param {Config} [options.config]
  * @param {(opts: {db: Db, trigger: 'cron'}) => Promise<unknown>} [options.runPanel]
+ * @param {(opts: Record<string, unknown>) => Promise<unknown>} [options.runSubscription]
  * @param {() => Date} [options.now]
  * @param {number} [options.intervalMs]
  * @param {(message: string) => void} [options.log]
@@ -87,49 +90,67 @@ export function startScheduler(options) {
     db,
     config = processConfig,
     runPanel = (opts) => defaultRunPanel({ ...opts, config }),
+    runSubscription = (opts) => defaultRunSubscriptionPanel({ ...(/** @type {*} */ (opts)), config }),
     now = () => new Date(),
     intervalMs = TICK_MS,
     log = (message) => process.stderr.write(`${message}\n`),
   } = options;
 
+  const apiEnabled = !config.demo && config.enabledProviders.length > 0;
+  const subscriptionEnabled = !config.demo && config.subscriptionSurfaces.length > 0 && getSubscriptionSchedule(db) !== null;
   // §8.2: disabled when demo mode (demo instances must never spend money) or when
-  // zero providers are enabled — a keyless install firing daily would only write
-  // empty status='done' runs that later shadow real prior runs in alert evaluation.
-  if (config.demo || config.enabledProviders.length === 0) {
+  // neither an API panel nor an explicitly consented subscription schedule exists.
+  if (!apiEnabled && !subscriptionEnabled) {
     return { enabled: false, tick: async () => false, stop: () => {} };
   }
 
-  // Startup guard: if today's scheduled time has already passed when we boot and we have
-  // no record for today, claim the day rather than firing immediately. Restarting the
-  // server at 23:00 should not spend a panel run's worth of API credit on the spot; the
-  // next run happens at tomorrow's `runAt`. Booting *before* runAt still runs today.
-  const bootedAt = now();
-  if (getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, null) === null && localHm(bootedAt) >= config.runAt) {
-    setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(bootedAt));
+  if (apiEnabled) {
+    // Startup guard: if today's scheduled time has already passed when we boot and we have
+    // no record for today, claim the day rather than firing immediately. Restarting the
+    // server at 23:00 should not spend a panel run's worth of API credit on the spot; the
+    // next run happens at tomorrow's `runAt`. Booting *before* runAt still runs today.
+    const bootedAt = now();
+    if (getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, null) === null && localHm(bootedAt) >= config.runAt) {
+      setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(bootedAt));
+    }
   }
 
   let busy = false;
+  let subscriptionBusy = false;
 
   /** @returns {Promise<boolean>} */
   async function tick() {
-    if (busy) return false;
-    const at = now();
-    const lastRunDate = getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, /** @type {string|null} */ (null));
-    if (!shouldRun({ now: at, runAt: config.runAt, lastRunDate })) return false;
-
-    busy = true;
-    // Claim the day before running, not after: a run that crashes half way should not be
-    // retried in 60 seconds, and a run that takes an hour should not start twice.
-    setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(at));
-    try {
-      await runPanel({ db, trigger: 'cron' });
-      return true;
-    } catch (err) {
-      log(`hearsay: scheduled run failed: ${err instanceof Error ? err.message : String(err)}`);
-      return false;
-    } finally {
-      busy = false;
+    let started = false;
+    if (apiEnabled && !busy) {
+      const at = now();
+      const lastRunDate = getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, /** @type {string|null} */ (null));
+      if (shouldRun({ now: at, runAt: config.runAt, lastRunDate })) {
+        busy = true;
+        // Claim the day before running, not after: a run that crashes half way should not be
+        // retried in 60 seconds, and a run that takes an hour should not start twice.
+        setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(at));
+        try {
+          await runPanel({ db, trigger: 'cron' });
+          started = true;
+        } catch (err) {
+          log(`hearsay: scheduled run failed: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          busy = false;
+        }
+      }
     }
+    if (subscriptionEnabled && !subscriptionBusy) {
+      subscriptionBusy = true;
+      try {
+        const changed = await subscriptionScheduleTick({ db, config, now: now(), runSubscription, log });
+        started ||= changed;
+      } catch (err) {
+        log(`hearsay: subscription scheduler failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        subscriptionBusy = false;
+      }
+    }
+    return started;
   }
 
   const timer = setInterval(() => {
@@ -137,6 +158,9 @@ export function startScheduler(options) {
   }, intervalMs);
   // Never hold the process open on the scheduler's account; the HTTP server does that.
   timer.unref?.();
+  // A subscription schedule must inspect the current and prior local dates at boot so
+  // an offline machine records a missed occurrence instead of silently replaying it.
+  if (subscriptionEnabled) void tick();
 
   return {
     enabled: true,

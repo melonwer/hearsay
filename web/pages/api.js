@@ -29,10 +29,44 @@ import {
 } from '../queries.js';
 import { aliasesFor, MIN_ALIAS_LENGTH } from '../../core/analyze.js';
 import { PROVIDER_IDS } from '../../core/config.js';
-import { SURFACES } from '../../core/subscription-model.js';
+import {
+  createExplorationPrompt,
+  promotePrompt,
+  surfaceLabel,
+  SubscriptionModelError,
+  SURFACES,
+} from '../../core/subscription-model.js';
 import { PROMPT_CATEGORIES } from '../../core/suggest.js';
+import {
+  SubscriptionConfirmationError,
+  SubscriptionRunError,
+  subscriptionPreview,
+  runSubscriptionPanel,
+} from '../../core/subscription-runner.js';
+import { DemoModeError } from '../../core/runner.js';
+import {
+  DEFAULT_SUBSCRIPTION_GRACE_MINUTES,
+  SCHEDULE_CONSENT_VERSION,
+  SubscriptionScheduleError,
+  disableSubscriptionSchedule,
+  getSubscriptionSchedule,
+  saveSubscriptionSchedule,
+} from '../../core/subscription-scheduler.js';
 
 const SURFACE_IDS = /** @type {string[]} */ ([...SURFACES]);
+
+/** @type {WeakMap<import('node:sqlite').DatabaseSync, Map<number, AbortController>>} */
+const subscriptionControllers = new WeakMap();
+
+/** @param {import('node:sqlite').DatabaseSync} db @returns {Map<number, AbortController>} */
+function controllersFor(db) {
+  let controllers = subscriptionControllers.get(db);
+  if (!controllers) {
+    controllers = new Map();
+    subscriptionControllers.set(db, controllers);
+  }
+  return controllers;
+}
 
 /** Default reporting window (§7). */
 export const DEFAULT_DAYS = 30;
@@ -396,10 +430,13 @@ function createPrompt({ db }, ctx) {
         ? Number(existing.id)
         : run(db, 'INSERT INTO intents(label, created_at) VALUES(?, ?)', [text, isoNow()]).lastInsertRowid;
     }
-    return run(db, 'INSERT INTO prompts(intent_id, text, category, active, created_at) VALUES(?, ?, ?, 1, ?)', [
+    return run(db, `INSERT INTO prompts(
+      intent_id, text, category, active, created_at, tracking_state, origin, approved_at
+    ) VALUES(?, ?, ?, 1, ?, 'tracking', 'user_authored', ?)`, [
       target,
       text,
       category,
+      isoNow(),
       isoNow(),
     ]).lastInsertRowid;
   });
@@ -423,6 +460,10 @@ function patchPrompt({ db }, ctx) {
   const active = bool(body.active, 'active');
   const intentId = body.intent_id === undefined || body.intent_id === null ? undefined : idParam(String(body.intent_id));
 
+  if (existing.tracking_state === 'exploration' && (active === true || intentId !== undefined)) {
+    throw new ApiError(409, 'promotion_required', 'Exploration prompts must be promoted explicitly before activation or assignment');
+  }
+
   if (text !== undefined && text !== existing.text && get(db, 'SELECT id FROM prompts WHERE text = ?', [text])) {
     throw new ApiError(409, 'conflict', 'That prompt text already exists');
   }
@@ -438,6 +479,386 @@ function patchPrompt({ db }, ctx) {
   });
 
   return listPrompts(db).find((prompt) => prompt.id === id) ?? null;
+}
+
+/**
+ * Create an inactive exploration question. Exploration is deliberately a separate
+ * endpoint so the ordinary prompt CRUD path cannot accidentally add discovery
+ * evidence to the approved tracking panel.
+ *
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {WithStatus|Record<string, unknown>}
+ */
+function createExploration({ db }, ctx) {
+  const body = asObject(ctx.body);
+  const text = /** @type {string} */ (str(body.text, 'text', { max: 300, required: true }));
+  const category = str(body.category, 'category', { max: 40 }) ?? 'general';
+  const origin = str(body.origin, 'origin', { max: 30 }) ?? 'user_authored';
+  if (!['user_authored', 'suggested', 'imported'].includes(origin)) {
+    throw new ApiError(422, 'unprocessable', 'origin must be user_authored, suggested, or imported');
+  }
+  try {
+    return new WithStatus(
+      201,
+      explorationApiView(
+        createExplorationPrompt(db, {
+          text,
+          category,
+          origin: /** @type {'user_authored'|'suggested'|'imported'} */ (origin),
+        }),
+      ),
+    );
+  } catch (error) {
+    if (error instanceof SubscriptionModelError) {
+      const conflict = error.message.includes('already exists');
+      throw new ApiError(conflict ? 409 : 422, conflict ? 'conflict' : 'unprocessable', error.message);
+    }
+    throw error;
+  }
+}
+
+/** @param {Record<string, unknown>} prompt @returns {Record<string, unknown>} */
+function explorationApiView(prompt) {
+  return {
+    id: Number(prompt.id),
+    intent_id: prompt.intentId === null || prompt.intentId === undefined ? null : Number(prompt.intentId),
+    text: String(prompt.text),
+    category: String(prompt.category),
+    active: prompt.active ? 1 : 0,
+    tracking_state: String(prompt.trackingState),
+    origin: String(prompt.origin),
+    approved_at: prompt.approvedAt ?? null,
+    promoted_at: prompt.promotedAt ?? null,
+  };
+}
+
+/**
+ * Promote an inactive exploration question into a tracked intent. This is the only
+ * API path that changes an exploration prompt's lane/state.
+ *
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {Record<string, unknown>}
+ */
+function promoteExploration({ db }, ctx) {
+  const promptId = idParam(ctx.params.id);
+  const body = asObject(ctx.body);
+  const intentId = body.intent_id === undefined || body.intent_id === null ? null : idParam(String(body.intent_id));
+  if (intentId === null) throw new ApiError(422, 'unprocessable', 'intent_id is required to promote an exploration prompt');
+  try {
+    return explorationApiView(promotePrompt(db, promptId, intentId));
+  } catch (error) {
+    if (error instanceof SubscriptionModelError) {
+      const missing = error.message === 'No such prompt' || error.message === 'No such intent';
+      throw new ApiError(missing ? 404 : 409, missing ? 'not_found' : 'conflict', error.message);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Parse the shared subscription run selection fields. This keeps preview and run
+ * requests byte-for-byte aligned so the quote cannot describe a different target set
+ * from the confirmed request.
+ *
+ * @param {Record<string, unknown>} body
+ * @returns {{surfaces?:string[], lane?:'tracking'|'exploration', promptIds?:number[], samples?:number, targetCeiling?:number}}
+ */
+function subscriptionSelection(body) {
+  const rawSurfaces = strList(body.surfaces, 'surfaces');
+  const surfaces = rawSurfaces === undefined ? undefined : rawSurfaces.filter((surface) => surface !== '');
+  const laneValue = str(body.lane, 'lane', { max: 20 });
+  if (laneValue !== undefined && laneValue !== 'tracking' && laneValue !== 'exploration') {
+    throw new ApiError(422, 'unprocessable', 'lane must be tracking or exploration');
+  }
+  const rawPromptIds = body.prompt_ids;
+  let promptIds;
+  if (rawPromptIds !== undefined && rawPromptIds !== null) {
+    if (!Array.isArray(rawPromptIds)) throw new ApiError(422, 'unprocessable', 'prompt_ids must be an array of positive integers');
+    promptIds = rawPromptIds.map((value, index) => {
+      const id = Number(value);
+      if (!Number.isInteger(id) || id <= 0) throw new ApiError(422, 'unprocessable', `prompt_ids[${index}] must be a positive integer`);
+      return id;
+    });
+  }
+  const sampleValue = body.samples;
+  let samples;
+  if (sampleValue !== undefined && sampleValue !== null) {
+    const number = Number(sampleValue);
+    if (!Number.isInteger(number) || number < 1 || number > 10) throw new ApiError(422, 'unprocessable', 'samples must be an integer between 1 and 10');
+    samples = number;
+  }
+  const ceilingValue = body.target_ceiling;
+  let targetCeiling;
+  if (ceilingValue !== undefined && ceilingValue !== null) {
+    const number = Number(ceilingValue);
+    if (!Number.isInteger(number) || number < 1 || number > 100000) throw new ApiError(422, 'unprocessable', 'target_ceiling must be an integer between 1 and 100000');
+    targetCeiling = number;
+  }
+  return {
+    surfaces,
+    lane: /** @type {'tracking'|'exploration'|undefined} */ (laneValue),
+    promptIds,
+    samples,
+    targetCeiling,
+  };
+}
+
+/** @param {ReturnType<typeof subscriptionPreview>} preview */
+function previewBody(preview) {
+  return {
+    lane: preview.lane,
+    surfaces: preview.surfaces,
+    prompts: preview.prompts.map((prompt) => ({
+      id: prompt.promptId,
+      text: prompt.promptText,
+      origin: prompt.promptOrigin,
+      lane: prompt.lane,
+    })),
+    samples: preview.samples,
+    totalTargets: preview.totalTargets,
+    perSurface: preview.perSurface,
+    firstUseSurfaces: preview.firstUseSurfaces,
+    estimatedCost: preview.estimatedCost,
+    usageModel: preview.usageModel,
+  };
+}
+
+/** @param {unknown} error @returns {never} */
+function mapSubscriptionError(error) {
+  if (error instanceof DemoModeError) throw new ApiError(400, 'demo_mode', error.message);
+  if (error instanceof SubscriptionConfirmationError) {
+    throw new ApiError(409, 'subscription_confirmation_required', error.message);
+  }
+  if (error instanceof SubscriptionRunError) {
+    throw new ApiError(error.code === 'already_running' ? 409 : 400, error.code, error.message);
+  }
+  throw error;
+}
+
+/**
+ * `POST /api/subscription/preview` — allowance-only preview. It never probes a CLI
+ * or starts a model request.
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {unknown}
+ */
+function previewSubscription({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on — subscription agent calls are disabled.');
+  try {
+    return previewBody(subscriptionPreview({ db, config, ...subscriptionSelection(asObject(ctx.body)) }));
+  } catch (error) {
+    return mapSubscriptionError(error);
+  }
+}
+
+/**
+ * `POST /api/subscription/run` — quote until first-use allowance consent, then accept
+ * the run asynchronously. The CLI never receives provider API keys from this layer.
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {Promise<WithStatus>}
+ */
+async function startSubscription({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on — subscription agent calls are disabled.');
+  const body = asObject(ctx.body);
+  const selection = subscriptionSelection(body);
+  let preview;
+  try {
+    preview = subscriptionPreview({ db, config, ...selection });
+  } catch (error) {
+    return mapSubscriptionError(error);
+  }
+  const needsConfirmation = preview.firstUseSurfaces.length > 0 && body.confirm !== true;
+  if (needsConfirmation) {
+    return new WithStatus(200, { status: 'quote_required', ...previewBody(preview), confirmHint: 'POST /api/subscription/run with the same selection and {"confirm":true} to start' });
+  }
+  const running = get(db, "SELECT id, done_calls, total_calls FROM runs WHERE status = 'running' ORDER BY id DESC LIMIT 1");
+  if (running) throw new ApiError(409, 'already_running', `Run ${running.id} in progress: ${running.done_calls}/${running.total_calls} calls done`);
+  /** @type {number|null} */
+  let runId = null;
+  /** @type {(runId:number)=>void} */
+  let resolveRunCreated;
+  /** @type {(error:unknown)=>void} */
+  let rejectRunCreated;
+  const runCreated = new Promise((resolve, reject) => {
+    resolveRunCreated = resolve;
+    rejectRunCreated = reject;
+  });
+  const promise = runSubscriptionPanel({
+    db,
+    config,
+    ...selection,
+    confirm: body.confirm === true,
+    trigger: 'manual',
+    onRunCreated: (createdRunId, controller) => {
+      runId = createdRunId;
+      controllersFor(db).set(createdRunId, controller);
+      resolveRunCreated(createdRunId);
+    },
+  });
+  const cleanupController = () => {
+    if (runId === null) return;
+    const controllers = subscriptionControllers.get(db);
+    controllers?.delete(runId);
+  };
+  promise.then(
+    cleanupController,
+    (error) => {
+      cleanupController();
+      if (runId === null) {
+        rejectRunCreated(error);
+        return;
+      }
+      if (error instanceof SubscriptionConfirmationError || error instanceof SubscriptionRunError || error instanceof DemoModeError) return;
+      process.stderr.write(`[hearsay] subscription run failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    },
+  );
+  let started;
+  try {
+    started = await runCreated;
+  } catch (error) {
+    mapSubscriptionError(error);
+  }
+  return new WithStatus(202, {
+    runId: Number(started),
+    ...previewBody(preview),
+  });
+}
+
+/**
+ * Request cancellation of an accepted in-process subscription run. API runs and
+ * scheduled worker runs are intentionally outside this handle map.
+ *
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {WithStatus}
+ */
+function cancelSubscription({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on — subscription agent calls are disabled.');
+  const runId = idParam(ctx.params.id);
+  const row = get(
+    db,
+    `SELECT r.id, r.status
+       FROM runs r
+      WHERE r.id = ?
+        AND r.trigger = 'manual'
+        AND EXISTS (SELECT 1 FROM responses s WHERE s.run_id = r.id AND s.surface IN ('codex-agent', 'claude-code-agent'))`,
+    [runId],
+  );
+  if (!row) throw new ApiError(404, 'not_found', 'No such subscription run');
+  if (String(row.status) !== 'running') throw new ApiError(409, 'run_not_running', `Subscription run ${runId} is already ${row.status}`);
+  const controller = subscriptionControllers.get(db)?.get(runId);
+  if (!controller) throw new ApiError(409, 'not_cancellable', 'This subscription run is not controlled by the current Hearsay process');
+  controller.abort();
+  return new WithStatus(202, { status: 'cancellation_requested', runId });
+}
+
+/**
+ * @param {Record<string, unknown>} body
+ * @returns {{runAt:string,timeZone:string,graceMinutes:number}}
+ */
+function subscriptionScheduleFields(body) {
+  const runAt = str(body.run_at ?? body.runAt, 'run_at', { max: 5, required: true });
+  const timeZone = str(body.timezone ?? body.time_zone ?? body.timeZone, 'timezone', { max: 80, required: true });
+  const rawGrace = body.grace_minutes ?? body.graceMinutes;
+  const graceMinutes = rawGrace === undefined || rawGrace === null ? DEFAULT_SUBSCRIPTION_GRACE_MINUTES : Number(rawGrace);
+  if (!Number.isInteger(graceMinutes) || graceMinutes < 0 || graceMinutes > 1440) {
+    throw new ApiError(422, 'unprocessable', 'grace_minutes must be an integer between 0 and 1440');
+  }
+  return {
+    runAt: /** @type {string} */ (runAt),
+    timeZone: /** @type {string} */ (timeZone),
+    graceMinutes,
+  };
+}
+
+/** @param {string[]} surfaces @param {import('node:sqlite').DatabaseSync} db */
+function requireVerifiedSubscriptionSurfaces(surfaces, db) {
+  for (const surface of surfaces) {
+    const row = get(
+      db,
+      `SELECT 1 AS hit
+         FROM responses r
+         JOIN runs run ON run.id = r.run_id
+        WHERE r.surface = ?
+          AND run.trigger = 'manual'
+          AND r.target_status = 'completed'
+          AND r.comparability_status = 'comparable'
+          AND r.web_status = 'verified'
+       LIMIT 1`,
+      [surface],
+    );
+    if (!row) throw new ApiError(409, 'schedule_prerequisite_missing', `${surface} needs one completed verified on-demand run before scheduling`);
+  }
+}
+
+/**
+ * `POST /api/subscription/schedule` — explicit persistent schedule consent. The
+ * first response is a quote; only the confirmed response writes the schedule.
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ * @returns {WithStatus|Record<string, unknown>}
+ */
+function configureSubscriptionSchedule({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on — subscription agent calls are disabled.');
+  const body = asObject(ctx.body);
+  const selection = subscriptionSelection(body);
+  if (selection.surfaces === undefined || selection.surfaces.length === 0) {
+    throw new ApiError(422, 'unprocessable', 'surfaces is required for a subscription schedule');
+  }
+  const fields = subscriptionScheduleFields(body);
+  let preview;
+  try {
+    preview = subscriptionPreview({ db, config, ...selection });
+  } catch (error) {
+    return mapSubscriptionError(error);
+  }
+  if (selection.targetCeiling === undefined) {
+    throw new ApiError(422, 'unprocessable', 'target_ceiling is required for a subscription schedule');
+  }
+  if (selection.targetCeiling < preview.totalTargets) {
+    throw new ApiError(422, 'schedule_budget_exceeded', `target_ceiling ${selection.targetCeiling} is below the current ${preview.totalTargets} targets`);
+  }
+  if (body.confirm !== true) {
+    return new WithStatus(200, {
+      status: 'schedule_confirmation_required',
+      ...previewBody(preview),
+      runAt: fields.runAt,
+      timeZone: fields.timeZone,
+      targetCeiling: selection.targetCeiling,
+      graceMinutes: fields.graceMinutes,
+      consentVersion: SCHEDULE_CONSENT_VERSION,
+      confirmHint: 'POST /api/subscription/schedule with the same selection and {"confirm":true} to enable persistent scheduled allowance use',
+    });
+  }
+  requireVerifiedSubscriptionSurfaces(selection.surfaces, db);
+  try {
+    const schedule = saveSubscriptionSchedule(db, {
+      ...fields,
+      surfaces: selection.surfaces,
+      lane: selection.lane ?? 'tracking',
+      promptIds: selection.promptIds ?? [],
+      samples: selection.samples ?? config.subscriptionSamples,
+      targetCeiling: selection.targetCeiling,
+      consentVersion: SCHEDULE_CONSENT_VERSION,
+    });
+    return new WithStatus(201, schedule);
+  } catch (error) {
+    if (error instanceof SubscriptionScheduleError) throw new ApiError(422, 'unprocessable', error.message);
+    throw error;
+  }
+}
+
+/** @param {ApiDeps} deps @returns {Record<string, unknown>|null} */
+function readSubscriptionSchedule({ db }) {
+  return getSubscriptionSchedule(db);
+}
+
+/** @param {ApiDeps} deps @returns {Record<string, boolean>} */
+function deleteSubscriptionSchedule({ db }) {
+  return { disabled: disableSubscriptionSchedule(db) };
 }
 
 /**
@@ -690,10 +1111,13 @@ function setupTracking({ db, config }, ctx) {
         // SOV-denominator invariant (SPEC §3.2): brand-name prompts are always 'branded'.
         const isBranded = brandAliases.length > 0 && mentionsBrandWord(text, brandAliases);
         if (isBranded && category !== 'branded') retagged.push(text);
-        run(db, 'INSERT INTO prompts(intent_id, text, category, active, created_at) VALUES(?, ?, ?, 1, ?)', [
+        run(db, `INSERT INTO prompts(
+          intent_id, text, category, active, created_at, tracking_state, origin, approved_at
+        ) VALUES(?, ?, ?, 1, ?, 'tracking', 'user_authored', ?)`, [
           intentId,
           text,
           isBranded ? 'branded' : category,
+          isoNow(),
           isoNow(),
         ]);
         created.prompts += 1;
@@ -789,12 +1213,42 @@ function statusReport({ db, config, version }) {
       const p = config.providers[id];
       return { id: p.id, label: p.label, model: p.model, enabled: p.enabled };
     }),
+    surfaces: SURFACE_IDS.map((surface) => {
+      const isAgent = surface.endsWith('-agent');
+      const providerId = surface.replace(/-api$/, '');
+      const provider = isAgent ? null : config.providers[/** @type {import('../../core/config.js').ProviderId} */ (providerId)];
+      return {
+        id: surface,
+        label: surfaceLabel(surface),
+        kind: isAgent ? 'subscription' : 'api',
+        enabled: isAgent
+          ? config.subscriptionSurfaces.includes(
+              /** @type {'codex-agent'|'claude-code-agent'} */ (surface),
+            )
+          : Boolean(provider?.enabled),
+      };
+    }),
     counts: {
       entities: listEntities(db).length,
       intents: Number(get(db, 'SELECT COUNT(*) AS n FROM intents')?.n ?? 0),
       activePrompts,
     },
-    schedule: { runAt: config.runAt, schedulerEnabled: !config.demo && config.enabledProviders.length > 0 },
+    schedule: {
+      runAt: config.runAt,
+      schedulerEnabled: !config.demo && (config.enabledProviders.length > 0 || getSubscriptionSchedule(db) !== null),
+      subscription: getSubscriptionSchedule(db),
+    },
+    subscription: {
+      surfaces: config.subscriptionSurfaces.map((surface) => ({
+        id: surface,
+        label: surfaceLabel(surface),
+        enabled: true,
+        optedIn: getSetting(db, SETTING_KEYS.SUBSCRIPTION_SURFACE_OPT_IN, /** @type {string[]} */ ([])).includes(surface),
+      })),
+      samples: config.subscriptionSamples,
+      concurrency: config.subscriptionConcurrency,
+      usageModel: 'included_plan_allowance_or_overage',
+    },
     lastRun: latestRun(db),
     spend30dUsd: Number(soft(/** @type {*} */ (metrics), 'actualSpend', { db, days: 30, now: isoNow() }, null)?.totalUsd ?? 0),
   };
@@ -941,8 +1395,18 @@ export function registerApiRoutes(router, deps) {
   );
   router.add(
     'POST',
+    '/api/prompts/exploration',
+    json((ctx) => createExploration(deps, ctx), 201),
+  );
+  router.add(
+    'POST',
     '/api/prompts/suggest',
     json((ctx) => suggestPrompts(deps, ctx)),
+  );
+  router.add(
+    'POST',
+    '/api/prompts/:id/promote',
+    json((ctx) => promoteExploration(deps, ctx)),
   );
   router.add(
     'PATCH',
@@ -1020,6 +1484,36 @@ export function registerApiRoutes(router, deps) {
   );
   router.add(
     'POST',
+    '/api/subscription/preview',
+    json((ctx) => previewSubscription(deps, ctx)),
+  );
+  router.add(
+    'POST',
+    '/api/subscription/run',
+    json((ctx) => startSubscription(deps, ctx)),
+  );
+  router.add(
+    'POST',
+    '/api/subscription/runs/:id/cancel',
+    json((ctx) => cancelSubscription(deps, ctx)),
+  );
+  router.add(
+    'GET',
+    '/api/subscription/schedule',
+    json(() => readSubscriptionSchedule(deps)),
+  );
+  router.add(
+    'POST',
+    '/api/subscription/schedule',
+    json((ctx) => configureSubscriptionSchedule(deps, ctx)),
+  );
+  router.add(
+    'DELETE',
+    '/api/subscription/schedule',
+    json(() => deleteSubscriptionSchedule(deps)),
+  );
+  router.add(
+    'POST',
     '/api/setup',
     json((ctx) => setupTracking(deps, ctx)),
   );
@@ -1063,6 +1557,7 @@ export function registerApiRoutes(router, deps) {
           id: item.id,
           provider: item.provider,
           surface: item.surface,
+          surface_label: surfaceLabel(item.surface ?? `${item.provider}-api`),
           model: item.model,
           created_at: item.created_at,
           prompt: item.prompt,
@@ -1074,6 +1569,7 @@ export function registerApiRoutes(router, deps) {
           web_status: item.web_status,
           prompt_text_snapshot: item.prompt_text_snapshot,
           prompt_origin: item.prompt_origin,
+          cli_executable: item.cli_executable,
           artifact_ref: item.artifact_ref,
           mentions: item.mentions.map((mention) => ({
             name: mention.name,

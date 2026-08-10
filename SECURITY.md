@@ -4,8 +4,10 @@
 
 Hearsay is a single-user, self-hosted tool that binds to localhost by default and
 holds two kinds of secrets: your LLM provider API keys (environment only) and your
-measurement data (one SQLite file). There are no accounts, no sessions and no
-authentication in v1 — the security boundary is *who can reach the port*.
+measurement data (one SQLite file). A subscription-agent run also uses the local
+operating-system credential stores of the installed Codex/Claude Code CLIs, but Hearsay
+does not read or copy those credentials. There are no Hearsay accounts or sessions —
+the security boundary is *who can reach the port and the local process account*.
 
 ## Deployment
 
@@ -32,12 +34,21 @@ authentication in v1 — the security boundary is *who can reach the port*.
 - **The database contains no key material.** `data/hearsay.db` holds entities, prompts,
   stored answers and metrics. Back it up freely; it is safe to share with anyone you
   would show your dashboard to.
+- **Subscription authentication is delegated to the CLI.** Hearsay launches an
+  explicitly selected Codex or Claude Code executable with a restricted, read-only,
+  web-search-only profile. It never reads OAuth tokens, keychain contents, account
+  identifiers or credential files, and it never exposes them through an API, MCP
+  response, artifact or error message.
+- **Provider event artifacts are redacted first.** Output is size-bounded, identity and
+  secret-like fields are removed before the event artifact is persisted, and the
+  normalized answer/search/citation records remain usable if the artifact expires.
 
 ## Outbound traffic
 
-The only outbound requests Hearsay ever makes are the measurement calls to the
-provider APIs you configured (OpenAI, Anthropic, Gemini, Perplexity). No telemetry,
-no update checks, no phone-home of any kind.
+The API lane makes measurement calls to the provider APIs you configured (OpenAI,
+Anthropic, Gemini, Perplexity). The optional subscription lane delegates web requests
+to the locally authenticated Codex/Claude Code CLI; Hearsay itself does not proxy or
+export those credentials. There is no telemetry, update check or other phone-home.
 
 ## Reporting a vulnerability
 

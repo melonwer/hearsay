@@ -548,6 +548,44 @@ describe('runner (§8.1)', () => {
     assert.match(String(runRow?.finished_at), /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
 
+  it('persists explicit API surface metadata for every response target', async () => {
+    dbRun(db, "UPDATE prompts SET origin = 'user_authored' WHERE id = 1");
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
+    const summary = await runPanel({
+      db,
+      config,
+      adapters: { openai: fakeAdapter() },
+      analyzeResponse: fakeAnalyze,
+      evaluateAlerts: () => {},
+      env: {},
+    });
+
+    const rows = all(db, `SELECT provider, model, surface, lane, target_status,
+      comparability_status, comparability_reason, web_status, prompt_text_snapshot,
+      prompt_origin, execution_profile_hash, prompt_envelope_version, comparison_key,
+      location_control, artifact_ref, safe_error_code
+      FROM responses WHERE run_id = ? ORDER BY prompt_id`, [summary.runId]);
+    assert.equal(rows.length, 2);
+    assert.deepEqual({ ...rows[0] }, {
+      provider: 'openai',
+      model: 'gpt-5.6-luna',
+      surface: 'openai-api',
+      lane: 'tracking',
+      target_status: 'completed',
+      comparability_status: 'comparable',
+      comparability_reason: null,
+      web_status: 'not_applicable',
+      prompt_text_snapshot: 'paraphrase 0',
+      prompt_origin: 'user_authored',
+      execution_profile_hash: 'legacy-api-v1',
+      prompt_envelope_version: 'api-v1',
+      comparison_key: 'legacy:openai:gpt-5.6-luna',
+      location_control: 'uncontrolled',
+      artifact_ref: null,
+      safe_error_code: null,
+    });
+  });
+
   it('computes cost_usd at insert from the priced model, and leaves it null otherwise', async () => {
     const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
     const summary = await runPanel({
@@ -717,6 +755,27 @@ describe('runner (§8.1)', () => {
     );
   });
 
+  it('atomically refuses a run claimed after the preliminary database check', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
+    const provider = config.providers.openai;
+    let injected = false;
+    Object.defineProperty(config, 'enabledProviders', {
+      configurable: true,
+      get() {
+        if (!injected) {
+          injected = true;
+          dbRun(db, "INSERT INTO runs(started_at, trigger, status, total_calls, done_calls) VALUES(?, 'cron', 'running', 1, 0)", [isoNow(new Date())]);
+        }
+        return [provider];
+      },
+    });
+    await assert.rejects(
+      () => runPanel({ db, config, adapters: { openai: fakeAdapter() }, analyzeResponse: fakeAnalyze, env: {} }),
+      (error) => error instanceof RunInProgressError && error.runId === 1,
+    );
+    assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM runs')?.n), 1);
+  });
+
   it('recovers a stale running row older than two hours, then proceeds', async () => {
     const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
     const threeHoursAgo = isoNow(new Date(Date.now() - 3 * 60 * 60 * 1000));
@@ -740,6 +799,33 @@ describe('runner (§8.1)', () => {
     dbRun(db, "INSERT INTO runs(started_at, trigger, status) VALUES(?, 'cron', 'running')", [isoNow(new Date())]);
     assert.equal(recoverStaleRuns(db), 0);
     assert.equal(get(db, 'SELECT status FROM runs WHERE id = 1')?.status, 'running');
+  });
+
+  it('marks queued subscription targets from an orphaned run as abandoned failures', () => {
+    const runId = Number(dbRun(db, "INSERT INTO runs(started_at, trigger, status, total_calls, done_calls) VALUES(?, 'manual', 'running', 1, 0)", [
+      '2026-07-26T00:00:00Z',
+    ]).lastInsertRowid);
+    dbRun(db, `INSERT INTO responses(
+      run_id, prompt_id, provider, surface, model, sample_idx, created_at,
+      lane, target_status, comparability_status, web_status, prompt_text_snapshot,
+      prompt_origin, location_control
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      runId, 1, 'openai', 'codex-agent', 'default', 0, '2026-07-26T00:00:00Z',
+      'tracking', 'queued', 'non_comparable', 'unavailable', 'paraphrase 0',
+      'user_authored', 'uncontrolled',
+    ]);
+
+    assert.equal(recoverStaleRuns(db, { now: new Date('2026-07-26T03:00:00Z') }), 1);
+    assert.deepEqual({ ...get(db, `SELECT target_status, comparability_status,
+      comparability_reason, web_status, safe_error_code, error
+      FROM responses WHERE run_id = ?`, [runId]) }, {
+      target_status: 'failed',
+      comparability_status: 'non_comparable',
+      comparability_reason: 'abandoned',
+      web_status: 'failed',
+      safe_error_code: 'abandoned',
+      error: 'subscription:abandoned',
+    });
   });
 
   it('refuses to run in demo mode', async () => {

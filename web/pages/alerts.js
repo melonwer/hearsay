@@ -6,7 +6,7 @@
  * house style.
  */
 
-import { emptyState, html, layout, PROVIDER_LABEL, relTime, severityChip, truncate } from '../layout.js';
+import { emptyState, html, layout, PROVIDER_LABEL, relTime, severityChip, SURFACE_LABEL, truncate } from '../layout.js';
 import { listAlerts } from '../queries.js';
 
 /**
@@ -57,7 +57,7 @@ export function render(ctx, view) {
         <p class="alert-title">${alert.title}</p>
         <p class="alert-detail muted">${alert.detail}</p>
         <p class="alert-meta muted small">
-          ${alert.type}${alert.provider ? html` · ${PROVIDER_LABEL[String(alert.provider)] ?? alert.provider}` : ''}
+          ${alert.type}${alert.surface || alert.provider ? html` · ${SURFACE_LABEL[String(alert.surface)] ?? PROVIDER_LABEL[String(alert.provider)] ?? alert.provider ?? alert.surface}` : ''}
           ${alert.promptText ? html` · ${truncate(String(alert.promptText), 60)}` : ''}
         </p>
       </div>

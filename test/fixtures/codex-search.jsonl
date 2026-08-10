@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-1"}
+{"type":"item.completed","item":{"type":"web_search_call","action":{"type":"search","query":"best project tracker for a small team"},"results":[{"url":"https://acme.example/guide","title":"Acme guide"}]}}
+{"type":"item.completed","item":{"type":"agent_message","text":"Acme is a strong choice for a small team."}}
+{"type":"turn.completed","usage":{"input_tokens":120,"output_tokens":64}}

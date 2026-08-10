@@ -1,0 +1,2 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"search-1","name":"WebSearch","input":{"query":"best project tracker for a small team"}}]}}
+{"type":"result","subtype":"success","result":"I cannot verify that answer.","usage":{"input_tokens":20,"output_tokens":12}}

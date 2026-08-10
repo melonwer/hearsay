@@ -6,7 +6,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 
 /** @typedef {'openai'|'anthropic'|'gemini'|'perplexity'} ProviderId */
 
@@ -35,6 +35,22 @@ import { resolve } from 'node:path';
  * @property {number} confirmUsd Run-cost confirm threshold in USD (SPEC §3.3); 0 = every run quotes first.
  * @property {Record<ProviderId, ProviderConfig>} providers
  * @property {ProviderConfig[]} enabledProviders
+ * @property {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} subscription
+ * @property {('codex-agent'|'claude-code-agent')[]} subscriptionSurfaces
+ * @property {number} subscriptionSamples
+ * @property {number} subscriptionConcurrency
+ * @property {number} subscriptionTimeoutMs
+ * @property {number} subscriptionIdleTimeoutMs
+ * @property {number} subscriptionMaxOutputBytes
+ * @property {string} subscriptionDataDir
+ */
+
+/**
+ * @typedef {Object} SubscriptionConfig
+ * @property {'codex-agent'|'claude-code-agent'} surface
+ * @property {string} label
+ * @property {string} executable
+ * @property {boolean} enabled
  */
 
 /**
@@ -190,10 +206,31 @@ export function buildConfig(env) {
   }
   const registry = /** @type {Record<ProviderId, ProviderConfig>} */ (providers);
 
+  const dbPath = String(env.HEARSAY_DB_PATH ?? '').trim() || './data/hearsay.db';
+  const subscriptionDataDir = String(env.HEARSAY_DATA_DIR ?? '').trim() || dirname(resolve(dbPath));
+  const codexEnabled = String(env.HEARSAY_CODEX_ENABLED ?? '').trim() === '1';
+  const claudeEnabled = String(env.HEARSAY_CLAUDE_CODE_ENABLED ?? '').trim() === '1';
+  const subscription = /** @type {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} */ ({
+    codex: {
+      surface: 'codex-agent',
+      label: 'Codex agent',
+      executable: String(env.HEARSAY_CODEX_PATH ?? '').trim() || 'codex',
+      enabled: codexEnabled,
+    },
+    claudeCode: {
+      surface: 'claude-code-agent',
+      label: 'Claude Code agent',
+      executable: String(env.HEARSAY_CLAUDE_CODE_PATH ?? '').trim() || 'claude',
+      enabled: claudeEnabled,
+    },
+  });
+  const subscriptionSurfaces = /** @type {('codex-agent'|'claude-code-agent')[]} */ ([]);
+  if (codexEnabled) subscriptionSurfaces.push('codex-agent');
+  if (claudeEnabled) subscriptionSurfaces.push('claude-code-agent');
   return {
     port: intIn(env.PORT, 3000, 1, 65535),
     host: String(env.HOST ?? '').trim() || '127.0.0.1',
-    dbPath: String(env.HEARSAY_DB_PATH ?? '').trim() || './data/hearsay.db',
+    dbPath,
     runAt: timeOfDay(env.HEARSAY_RUN_AT, '07:00'),
     samples: intIn(env.HEARSAY_SAMPLES, 3, 1, 10),
     concurrency: intIn(env.HEARSAY_CONCURRENCY, 2, 1, 16),
@@ -202,6 +239,14 @@ export function buildConfig(env) {
     confirmUsd: floatIn(env.HEARSAY_CONFIRM_USD, 1, 0),
     providers: registry,
     enabledProviders: PROVIDER_IDS.map((id) => registry[id]).filter((p) => p.enabled),
+    subscription,
+    subscriptionSurfaces,
+    subscriptionSamples: intIn(env.HEARSAY_SUBSCRIPTION_SAMPLES, 1, 1, 10),
+    subscriptionConcurrency: intIn(env.HEARSAY_SUBSCRIPTION_CONCURRENCY, 1, 1, 2),
+    subscriptionTimeoutMs: intIn(env.HEARSAY_SUBSCRIPTION_TIMEOUT_MS, 120000, 1000, 600000),
+    subscriptionIdleTimeoutMs: intIn(env.HEARSAY_SUBSCRIPTION_IDLE_TIMEOUT_MS, 30000, 1000, 120000),
+    subscriptionMaxOutputBytes: intIn(env.HEARSAY_SUBSCRIPTION_MAX_OUTPUT_BYTES, 2 * 1024 * 1024, 1024, 20 * 1024 * 1024),
+    subscriptionDataDir,
   };
 }
 

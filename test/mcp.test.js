@@ -91,19 +91,20 @@ test('mcp: initialize handshake, ping, unknown method, notification silence', as
   await backend.close();
 });
 
-test('mcp tools/list: exactly 13 tools, schemas, read-only annotations', async () => {
+test('mcp tools/list: subscription surfaces and exploration tools have schemas and read-only annotations', async () => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
   await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
   const list = await rpc(mcp, 'tools/list', {}, 2);
   const tools = list.result.tools;
-  assert.equal(tools.length, 13);
+  assert.equal(tools.length, 18);
   const names = tools.map((/** @type {*} */ t) => t.name);
   for (const name of [
     'hearsay_status', 'hearsay_summary', 'hearsay_intent_results', 'hearsay_prompt_results',
     'hearsay_answers_search', 'hearsay_citation_gap', 'hearsay_alerts', 'hearsay_cost_estimate',
     'hearsay_suggest_prompts', 'hearsay_setup_tracking', 'hearsay_run_panel', 'hearsay_run_status',
-    'hearsay_ack_alert',
+    'hearsay_ack_alert', 'hearsay_subscription_preview', 'hearsay_subscription_run',
+    'hearsay_subscription_schedule', 'hearsay_exploration_create', 'hearsay_exploration_promote',
   ]) assert.ok(names.includes(name), `missing ${name}`);
   for (const t of tools) {
     assert.equal(t.inputSchema.type, 'object');
@@ -113,7 +114,7 @@ test('mcp tools/list: exactly 13 tools, schemas, read-only annotations', async (
   assert.deepEqual(readOnly, [
     'hearsay_alerts', 'hearsay_answers_search', 'hearsay_citation_gap', 'hearsay_cost_estimate',
     'hearsay_intent_results', 'hearsay_prompt_results', 'hearsay_run_status', 'hearsay_status',
-    'hearsay_summary',
+    'hearsay_subscription_preview', 'hearsay_summary',
   ]);
   assert.equal(tools.find((/** @type {*} */ t) => t.name === 'hearsay_ack_alert').inputSchema.required?.includes('id'), true);
   mcp.kill();
@@ -150,6 +151,10 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
   assert.notEqual(quote.result.isError, true); // a quote is a successful outcome
   assert.equal(JSON.parse(quote.result.content[0].text).status, 'quote_required');
   assert.equal(JSON.parse(backend.seen.at(-1).body).confirm, false);
+
+  await call(8, 'hearsay_subscription_preview', { surfaces: ['codex-agent'], samples: 1 });
+  assert.equal(backend.seen.at(-1).url, '/api/subscription/preview');
+  assert.deepEqual(JSON.parse(backend.seen.at(-1).body), { surfaces: ['codex-agent'], samples: 1 });
 
   await call(6, 'hearsay_ack_alert', { id: 7 });
   assert.equal(backend.seen.at(-1).url, '/api/alerts/7/ack');

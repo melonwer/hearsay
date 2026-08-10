@@ -7,9 +7,12 @@
  * highlighted and what was counted can never disagree.
  */
 
-import { emptyState, html, layout, PROVIDER_LABEL, providerBadge, raw, relTime, truncate } from '../layout.js';
+import { emptyState, html, layout, PROVIDER_LABEL, providerBadge, raw, relTime, SURFACE_LABEL, truncate } from '../layout.js';
 import { highlightAnswer } from '../highlight.js';
 import { colorIndexFor, listEntities, listPrompts, PROVIDERS, queryAnswers } from '../queries.js';
+import { SURFACES } from '../../core/subscription-model.js';
+
+const ALL_SURFACES = /** @type {readonly string[]} */ ([...SURFACES]);
 
 /** Date-range presets in the filter row (§11.4). */
 export const RANGES = /** @type {readonly {days: number, label: string}[]} */ ([
@@ -37,6 +40,7 @@ function intParam(query, key) {
  *
  * @typedef {Object} AnswerFilterState
  * @property {string|null} provider
+ * @property {string|null} surface
  * @property {number|null} promptId
  * @property {number|null} entityId
  * @property {number} days
@@ -63,8 +67,10 @@ export function buildView({ db }, query) {
   const entities = listEntities(db);
   const prompts = listPrompts(db);
   const provider = query.get('provider');
+  const surface = query.get('surface');
   const filters = {
     provider: provider !== null && PROVIDERS.includes(provider) ? provider : null,
+    surface: surface !== null && ALL_SURFACES.includes(surface) ? surface : null,
     promptId: intParam(query, 'prompt_id'),
     entityId: intParam(query, 'entity_id'),
     days: intParam(query, 'days') ?? 30,
@@ -85,7 +91,7 @@ export function buildView({ db }, query) {
  * Rebuild the query string with one value changed — how the range presets and the
  * pager keep every other filter intact.
  *
- * @param {{provider: string|null, promptId: number|null, entityId: number|null, days: number, page: number}} filters
+ * @param {{provider: string|null, surface: string|null, promptId: number|null, entityId: number|null, days: number, page: number}} filters
  * @param {Record<string, string|number|null>} [patch]
  * @returns {string}
  */
@@ -93,6 +99,7 @@ export function queryString(filters, patch = {}) {
   /** @type {Record<string, string|number|null>} */
   const merged = {
     provider: filters.provider,
+    surface: filters.surface,
     prompt_id: filters.promptId,
     entity_id: filters.entityId,
     days: filters.days,
@@ -118,6 +125,9 @@ function filterRow(view) {
   const providerOptions = PROVIDERS.map(
     (id) =>
       html`<option value="${id}"${filters.provider === id ? raw(' selected') : ''}>${PROVIDER_LABEL[id] ?? id}</option>`,
+  );
+  const surfaceOptions = ALL_SURFACES.map(
+    (surface) => html`<option value="${surface}"${filters.surface === surface ? raw(' selected') : ''}>${SURFACE_LABEL[surface] ?? surface}</option>`,
   );
   const promptOptions = view.prompts.map(
     (prompt) =>
@@ -151,6 +161,13 @@ function filterRow(view) {
       <select name="prompt_id">
         <option value="">All prompts</option>
         ${promptOptions}
+      </select>
+    </label>
+    <label>
+      <span>Surface</span>
+      <select name="surface">
+        <option value="">All surfaces</option>
+        ${surfaceOptions}
       </select>
     </label>
     <label>
@@ -199,8 +216,10 @@ function pager(view) {
  * @returns {import('../layout.js').RawHtml}
  */
 function answerCard(view, item) {
+  const surface = item.surface ?? `${item.provider}-api`;
   const head = html`<header class="answer-head">
-    ${providerBadge(item.provider)}
+    ${providerBadge(item.provider, item.surface)}
+    <span class="muted answer-surface">${SURFACE_LABEL[surface] ?? surface}</span>
     <span class="muted answer-model">${item.model}</span>
     <span class="muted">${relTime(item.created_at, view.nowMs)}</span>
     <span class="muted">sample #${item.sample_idx + 1}</span>
@@ -238,12 +257,34 @@ function answerCard(view, item) {
     >`;
   });
 
+  const evidence = item.surface === 'codex-agent' || item.surface === 'claude-code-agent'
+    ? html`<details class="answer-evidence">
+        <summary>Measurement evidence</summary>
+        <dl class="kv">
+          <dt>Web search</dt>
+          <dd>${item.web_status ?? 'unknown'}</dd>
+          <dt>Comparable</dt>
+          <dd>${item.comparability_status ?? 'unknown'}</dd>
+          <dt>Search/fetch events</dt>
+          <dd>${item.search_events.length}</dd>
+          <dt>Final-answer citations</dt>
+          <dd>${item.citations.length}</dd>
+          <dt>Redacted event artifact</dt>
+          <dd>${item.artifact_ref ?? 'not retained'}</dd>
+        </dl>
+        ${item.search_events.length > 0
+          ? html`<ul class="evidence-list">${item.search_events.map((event) => html`<li>${event.event_type} · ${event.status}${event.query ? html` · ${event.query}` : ''}${event.url ? html` · ${event.url}` : ''}</li>`)}</ul>`
+          : ''}
+      </details>`
+    : '';
+
   return html`<article class="card answer">
     ${head}
     <p class="answer-prompt">${item.prompt}</p>
     <div class="answer-text">${raw(highlightAnswer(item.text ?? '', view.entities, view.colorIndex))}</div>
     ${recommended ? html`<p><span class="pill pill-good">recommended</span></p>` : ''}
     ${citations.length > 0 ? html`<p class="cite-row">${citations}</p>` : ''}
+    ${evidence}
   </article>`;
 }
 

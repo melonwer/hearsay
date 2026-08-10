@@ -25,6 +25,21 @@ export const SURFACES = /** @type {const} */ ([
   'codex-agent',
   'claude-code-agent',
 ]);
+export const AGENT_SURFACES = /** @type {const} */ (['codex-agent', 'claude-code-agent']);
+export const SURFACE_LABELS = /** @type {const} */ ({
+  'openai-api': 'OpenAI API',
+  'anthropic-api': 'Anthropic API',
+  'gemini-api': 'Gemini API',
+  'perplexity-api': 'Perplexity API',
+  'codex-agent': 'Codex agent',
+  'claude-code-agent': 'Claude Code agent',
+});
+
+/** @param {string|null|undefined} surface @returns {string} */
+export function surfaceLabel(surface) {
+  const labels = /** @type {Record<string, string>} */ (SURFACE_LABELS);
+  return labels[String(surface ?? '')] ?? String(surface ?? 'Unknown surface');
+}
 
 /** @typedef {'tracking'|'exploration'} PromptLane */
 /** @typedef {'user_authored'|'suggested'|'imported'|'legacy'} PromptOrigin */

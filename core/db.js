@@ -246,6 +246,20 @@ function migrateV2(db) {
 export const MIGRATIONS = [
   { version: 1, sql: SCHEMA_V1 },
   { version: 2, apply: migrateV2 },
+  {
+    version: 3,
+    sql: `
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_schedule_occurrence_unique
+      ON runs(schedule_key, occurrence_local_date)
+      WHERE trigger = 'cron' AND schedule_key IS NOT NULL AND occurrence_local_date IS NOT NULL;
+    `,
+  },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE responses ADD COLUMN cli_executable TEXT;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */
@@ -299,6 +313,10 @@ export const SETTING_KEYS = /** @type {const} */ ({
   INCLUDE_BRANDED_IN_SOV: 'include_branded_in_sov',
   /** UTC ISO-8601 timestamp of the last demo seed (§12). */
   SEEDED_AT: 'seeded_at',
+  /** JSON array of surfaces whose subscription allowance use has been confirmed. */
+  SUBSCRIPTION_SURFACE_OPT_IN: 'subscription_surface_opt_in',
+  /** JSON-encoded persistent subscription schedule and consent metadata. */
+  SUBSCRIPTION_SCHEDULE: 'subscription_schedule',
 });
 
 /** @type {WeakMap<Db, Map<string, Stmt>>} */

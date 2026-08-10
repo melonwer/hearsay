@@ -343,6 +343,16 @@ const PROVIDER_LETTER = /** @type {Record<string, string>} */ ({
   perplexity: 'P',
 });
 
+/** Exact measurement-surface labels. Agent surfaces are never aliased to consumer products. */
+export const SURFACE_LABEL = /** @type {Record<string, string>} */ ({
+  'openai-api': 'OpenAI API',
+  'anthropic-api': 'Anthropic API',
+  'gemini-api': 'Gemini API',
+  'perplexity-api': 'Perplexity API',
+  'codex-agent': 'Codex agent',
+  'claude-code-agent': 'Claude Code agent',
+});
+
 /** Consumer-product names, so the UI never shows a bare API slug. */
 export const PROVIDER_LABEL = /** @type {Record<string, string>} */ ({
   openai: 'ChatGPT',
@@ -353,10 +363,13 @@ export const PROVIDER_LABEL = /** @type {Record<string, string>} */ ({
 
 /**
  * @param {string} provider
+ * @param {string|null} [surface]
  * @returns {RawHtml}
  */
-export function providerBadge(provider) {
-  const label = PROVIDER_LABEL[provider] ?? provider;
+export function providerBadge(provider, surface = null) {
+  const label = surface && (surface === 'codex-agent' || surface === 'claude-code-agent')
+    ? SURFACE_LABEL[surface]
+    : PROVIDER_LABEL[provider] ?? provider;
   return html`<span class="pbadge"
     ><span class="pbadge-mark" aria-hidden="true">${PROVIDER_LETTER[provider] ?? '?'}</span>${label}</span
   >`;

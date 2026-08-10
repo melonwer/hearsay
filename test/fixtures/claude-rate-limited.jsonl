@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"search-rate-limited","name":"WebSearch","input":{"query":"best project tracker for a small team"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"search-rate-limited","status":"rate_limited","content":"Search access was rate-limited."}]}}
+{"type":"result","subtype":"success","result":"Search access was rate-limited, so this answer is not verified."}

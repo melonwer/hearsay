@@ -190,7 +190,7 @@ function validResponses(w) {
     comparisonKey: w.comparisonKey ?? undefined,
     subscription: w.subscription,
   });
-  const clauses = [eligibility.sql, 'r.error IS NULL', 'r.created_at >= ?', 'r.created_at <= ?'];
+  const clauses = [eligibility.sql, 'r.error IS NULL'];
   /** @type {SqlValue[]} */
   const params = [...eligibility.params];
   if (w.surface === null && !w.subscription) {
@@ -201,6 +201,25 @@ function validResponses(w) {
     clauses.push(`r.surface IN (${SUBSCRIPTION_SURFACES.map(() => '?').join(', ')})`);
     params.push(...SUBSCRIPTION_SURFACES);
   }
+  // A surface can legitimately have adjacent series after a model/profile/envelope change.
+  // Without an explicit key, report only the newest comparable series for that surface so
+  // a dashboard window never joins incompatible observations into one trend.
+  if (w.surface !== null && w.comparisonKey === null) {
+    clauses.push(`r.comparison_key = (
+      SELECT latest.comparison_key
+        FROM responses latest
+       WHERE latest.surface = ?
+         AND latest.comparison_key IS NOT NULL
+         AND latest.lane = 'tracking'
+         AND latest.target_status = 'completed'
+         AND latest.comparability_status = 'comparable'
+         ${w.subscription ? "AND latest.web_status = 'verified'" : ''}
+       ORDER BY latest.created_at DESC, latest.id DESC
+       LIMIT 1
+    )`);
+    params.push(w.surface);
+  }
+  clauses.push('r.created_at >= ?', 'r.created_at <= ?');
   params.push(w.start, w.end);
   if (w.provider) {
     clauses.push('r.provider = ?');

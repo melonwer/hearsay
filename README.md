@@ -2,7 +2,9 @@
 
 **AI visibility tracker for humans and agents.** See how ChatGPT, Claude, Gemini and
 Perplexity talk about your brand versus your competitors, with honest statistics, on
-your own machine, with your own API keys.
+your own machine, with your own API keys. Optionally measure the separately labeled
+**Codex agent** and **Claude Code agent** surfaces through locally authenticated CLI
+subscriptions.
 
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -25,6 +27,12 @@ schedule, several times each, and counts how often you get mentioned and recomme
 Every rate comes with a margin of error and the number of answers behind it, and it
 keeps every answer so you can read the exact text any figure came from. It runs on your
 computer.
+
+For developer-tool and technical B2B buyer questions, an explicitly enabled local
+Codex agent or Claude Code agent can run the same panel through a signed-in CLI. Those
+measurements retain final answers, provider-confirmed web-search events, citations and
+redacted event artifacts. They are sibling evidence to API runs, never a blended score,
+and they consume the signed-in plan allowance or possible overage.
 
 Hearsay itself is free, but the AI engines are not. You bring your own API key for each
 engine you want to measure. An API key is a long password-like string you get by making
@@ -148,8 +156,9 @@ everything. Quit Claude Desktop completely and reopen it afterwards.
 ```
 
 Now ask it "how's our AI visibility this week?" and it answers from your own
-measurements. Thirteen tools cover the whole job: setup, drafting questions, cost
-quotes, runs, results and alerts. Your assistant uses its own model to talk to you, so
+measurements. Eighteen tools cover setup, exploration questions, exact-surface
+subscription previews/runs, scheduling, cost quotes, results and alerts. Your
+assistant uses its own model to talk to you, so
 reading your results does not spend the API keys you gave Hearsay.
 
 There is an optional skill that teaches an assistant the full playbook, including how to

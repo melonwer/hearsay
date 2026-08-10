@@ -378,9 +378,33 @@ function initApiForms() {
       event.preventDefault();
       const url = form.getAttribute('data-api-form') ?? '';
       const method = form.getAttribute('data-method') ?? 'POST';
-      const { ok, data } = await api(url, method, formPayload(form));
-      if (ok) window.location.reload();
-      else showError(form, data);
+      const payload = formPayload(form);
+      const first = await api(url, method, payload);
+      if (!first.ok) {
+        showError(form, first.data);
+        return;
+      }
+      if (form.hasAttribute('data-subscription-schedule') && first.data?.status === 'schedule_confirmation_required') {
+        const targets = Number(first.data.totalTargets ?? 0);
+        const surfaces = Array.isArray(first.data.surfaces) ? first.data.surfaces.join(', ') : 'selected surfaces';
+        if (!window.confirm(`Enable ${surfaces} at ${first.data.runAt} for up to ${targets} current targets per occurrence? This uses subscription allowance.`)) return;
+        const confirmed = await api(url, method, { ...payload, confirm: true });
+        if (!confirmed.ok) {
+          showError(form, confirmed.data);
+          return;
+        }
+      }
+      if (form.hasAttribute('data-subscription-run') && first.data?.status === 'quote_required') {
+        const targets = Number(first.data.totalTargets ?? 0);
+        const surfaces = Array.isArray(first.data.surfaces) ? first.data.surfaces.join(', ') : 'selected surfaces';
+        if (!window.confirm(`Run ${surfaces} for ${targets} target(s)? This uses subscription allowance.`)) return;
+        const confirmed = await api(url, method, { ...payload, confirm: true });
+        if (!confirmed.ok) {
+          showError(form, confirmed.data);
+          return;
+        }
+      }
+      window.location.reload();
     });
   }
 }
@@ -389,6 +413,20 @@ function initRowActions() {
   document.addEventListener('click', async (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
+
+    const subscriptionCancel = target.getAttribute('data-subscription-cancel');
+    if (subscriptionCancel !== null) {
+      target.setAttribute('disabled', 'disabled');
+      const { ok, data } = await api(`/api/subscription/runs/${subscriptionCancel}/cancel`, 'POST', {});
+      if (!ok) {
+        target.removeAttribute('disabled');
+        showError(target, data);
+      } else {
+        await pollRun();
+        startPolling();
+      }
+      return;
+    }
 
     const ack = target.getAttribute('data-ack');
     if (ack !== null) {

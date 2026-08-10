@@ -24,6 +24,17 @@ const VERSION = (() => {
 })();
 
 const DAYS = { type: 'integer', minimum: 1, maximum: 365, description: 'Reporting window in days (default 30)' };
+const SURFACE = {
+  type: 'string',
+  enum: ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api', 'codex-agent', 'claude-code-agent'],
+  description: 'Exact measurement surface; API and subscription-agent surfaces are never blended',
+};
+const SUBSCRIPTION_SURFACES = {
+  type: 'array',
+  items: { type: 'string', enum: ['codex-agent', 'claude-code-agent'] },
+  minItems: 1,
+};
+const SUBSCRIPTION_LANE = { type: 'string', enum: ['tracking', 'exploration'], default: 'tracking' };
 const ENTITY_FIELDS = {
   name: { type: 'string', description: 'Entity name, e.g. "Acme"' },
   aliases: { type: 'array', items: { type: 'string' }, description: 'Other names it goes by (≥3 chars each)' },
@@ -66,24 +77,24 @@ const TOOLS = [
     readOnly: true,
     description:
       'Headline AI-visibility numbers for the tracked brand: share of AI voice vs competitors, brand mention rate with 95% confidence interval and n, recommendation rate, per-provider breakdown across ChatGPT, Claude, Gemini and Perplexity, open alert count, last run.',
-    inputSchema: obj({ days: DAYS }),
-    call: (a) => ({ method: 'GET', path: `/api/summary${query(a, ['days'])}` }),
+    inputSchema: obj({ days: DAYS, surface: SURFACE }),
+    call: (a) => ({ method: 'GET', path: `/api/summary${query(a, ['days', 'surface'])}` }),
   },
   {
     name: 'hearsay_intent_results',
     readOnly: true,
     description:
       'Phrasing-robust results per tracked intent (question), pooled across its paraphrases: mention rate with Wilson CI, rerun spread vs phrasing spread (variance decomposition). The most honest per-question number Hearsay has — prefer it over per-prompt results when both exist.',
-    inputSchema: obj({ days: DAYS }),
-    call: (a) => ({ method: 'GET', path: `/api/intents/results${query(a, ['days'])}` }),
+    inputSchema: obj({ days: DAYS, surface: SURFACE }),
+    call: (a) => ({ method: 'GET', path: `/api/intents/results${query(a, ['days', 'surface'])}` }),
   },
   {
     name: 'hearsay_prompt_results',
     readOnly: true,
     description:
       'Per-prompt (single paraphrase) results, broken down per provider: brand mention rate, whether the brand is recommended, and which entity leads each prompt. Use for drill-down after hearsay_intent_results, or to inspect competitor prompt-space.',
-    inputSchema: obj({ days: DAYS }),
-    call: (a) => ({ method: 'GET', path: `/api/prompts/results${query(a, ['days'])}` }),
+    inputSchema: obj({ days: DAYS, surface: SURFACE }),
+    call: (a) => ({ method: 'GET', path: `/api/prompts/results${query(a, ['days', 'surface'])}` }),
   },
   {
     name: 'hearsay_answers_search',
@@ -92,21 +103,22 @@ const TOOLS = [
       'Fetch the raw stored AI answers (the receipts): full text with detected brand/competitor mentions, recommendation flags and cited URLs. Filter by provider (openai|anthropic|gemini|perplexity), entity_id, prompt_id, days. Paged; limit ≤ 50.',
     inputSchema: obj({
       provider: { type: 'string', enum: ['openai', 'anthropic', 'gemini', 'perplexity'] },
+      surface: SURFACE,
       entity_id: { type: 'integer', minimum: 1 },
       prompt_id: { type: 'integer', minimum: 1 },
       days: DAYS,
       page: { type: 'integer', minimum: 1 },
       limit: { type: 'integer', minimum: 1, maximum: 50 },
     }),
-    call: (a) => ({ method: 'GET', path: `/api/answers${query(a, ['provider', 'entity_id', 'prompt_id', 'days', 'page', 'limit'], { limit: 'per' })}` }),
+    call: (a) => ({ method: 'GET', path: `/api/answers${query(a, ['provider', 'surface', 'entity_id', 'prompt_id', 'days', 'page', 'limit'], { limit: 'per' })}` }),
   },
   {
     name: 'hearsay_citation_gap',
     readOnly: true,
     description:
       'The action list: domains that AI answers cite in answers where the tracked brand is NOT mentioned — who gets cited instead of you, ranked by frequency. The shortlist of places to earn citations for GEO / AI SEO work.',
-    inputSchema: obj({ days: DAYS }),
-    call: (a) => ({ method: 'GET', path: `/api/gap${query(a, ['days'])}` }),
+    inputSchema: obj({ days: DAYS, surface: SURFACE }),
+    call: (a) => ({ method: 'GET', path: `/api/gap${query(a, ['days', 'surface'])}` }),
   },
   {
     name: 'hearsay_alerts',
@@ -161,6 +173,65 @@ const TOOLS = [
       'Start a measurement panel run (every active prompt × enabled provider × samples) using the user’s own API keys. Above the cost threshold this returns a quote_required estimate instead of running — relay the estimate to the human and only retry with confirm:true after they explicitly approve the spend.',
     inputSchema: obj({ confirm: { type: 'boolean', description: 'true = the human approved the quoted cost in this conversation' } }),
     call: (a) => ({ method: 'POST', path: '/api/run', body: { confirm: a?.confirm === true } }),
+  },
+  {
+    name: 'hearsay_subscription_preview',
+    readOnly: true,
+    description:
+      'Preview an explicitly selected Codex agent or Claude Code agent measurement: prompts, samples, exact target count, first-use allowance consent, and included-plan/overage usage model. This never starts a CLI or model request.',
+    inputSchema: obj({ surfaces: SUBSCRIPTION_SURFACES, lane: SUBSCRIPTION_LANE, prompt_ids: { type: 'array', items: { type: 'integer', minimum: 1 } }, samples: { type: 'integer', minimum: 1, maximum: 10 } }),
+    call: (a) => ({ method: 'POST', path: '/api/subscription/preview', body: { surfaces: a?.surfaces, lane: a?.lane, prompt_ids: a?.prompt_ids, samples: a?.samples } }),
+  },
+  {
+    name: 'hearsay_subscription_run',
+    description:
+      'Run explicitly selected Codex agent or Claude Code agent buyer-angle prompts through the user’s authenticated subscription CLI. It first returns an allowance quote; only pass confirm:true after the human approves. Results retain final answer, verified web-search events, citations, redacted artifact metadata, and comparability status separately from API runs.',
+    inputSchema: obj({ surfaces: SUBSCRIPTION_SURFACES, lane: SUBSCRIPTION_LANE, prompt_ids: { type: 'array', items: { type: 'integer', minimum: 1 } }, samples: { type: 'integer', minimum: 1, maximum: 10 }, confirm: { type: 'boolean' } }),
+    call: (a) => ({ method: 'POST', path: '/api/subscription/run', body: { surfaces: a?.surfaces, lane: a?.lane, prompt_ids: a?.prompt_ids, samples: a?.samples, confirm: a?.confirm === true } }),
+  },
+  {
+    name: 'hearsay_subscription_schedule',
+    description:
+      'Preview, enable, or disable the persistent local-time subscription-agent schedule. Enabling is a separate consent from an on-demand run, requires a target ceiling and a completed verified on-demand run for each selected surface, and records missed occurrences instead of silently replaying them after downtime.',
+    inputSchema: obj({
+      action: { type: 'string', enum: ['preview', 'enable', 'disable'] },
+      run_at: { type: 'string', description: 'Local HH:MM' },
+      timezone: { type: 'string', description: 'IANA timezone, e.g. Europe/Berlin' },
+      surfaces: SUBSCRIPTION_SURFACES,
+      lane: SUBSCRIPTION_LANE,
+      prompt_ids: { type: 'array', items: { type: 'integer', minimum: 1 } },
+      samples: { type: 'integer', minimum: 1, maximum: 10 },
+      target_ceiling: { type: 'integer', minimum: 1 },
+      grace_minutes: { type: 'integer', minimum: 0, maximum: 1440 },
+      confirm: { type: 'boolean' },
+    }, ['action']),
+    call: (a) => a?.action === 'disable'
+      ? ({ method: 'DELETE', path: '/api/subscription/schedule' })
+      : ({ method: 'POST', path: '/api/subscription/schedule', body: {
+          run_at: a?.run_at,
+          timezone: a?.timezone,
+          surfaces: a?.surfaces,
+          lane: a?.lane,
+          prompt_ids: a?.prompt_ids,
+          samples: a?.samples,
+          target_ceiling: a?.target_ceiling,
+          grace_minutes: a?.grace_minutes,
+          confirm: a?.action === 'enable' && a?.confirm === true,
+        } }),
+  },
+  {
+    name: 'hearsay_exploration_create',
+    description:
+      'Persist one buyer-angle exploration question as inactive discovery evidence. The question is not added to the approved tracking panel until a human explicitly promotes it.',
+    inputSchema: obj({ text: { type: 'string', minLength: 1, maxLength: 300 }, category: { type: 'string' }, origin: { type: 'string', enum: ['user_authored', 'suggested', 'imported'] } }, ['text']),
+    call: (a) => ({ method: 'POST', path: '/api/prompts/exploration', body: { text: a?.text, category: a?.category, origin: a?.origin ?? 'user_authored' } }),
+  },
+  {
+    name: 'hearsay_exploration_promote',
+    description:
+      'Explicitly promote one inactive exploration question into an approved tracking intent. Historical responses keep their original exploration lane, prompt snapshot, and provenance.',
+    inputSchema: obj({ prompt_id: { type: 'integer', minimum: 1 }, intent_id: { type: 'integer', minimum: 1 } }, ['prompt_id', 'intent_id']),
+    call: (a) => ({ method: 'POST', path: `/api/prompts/${Number(a?.prompt_id)}/promote`, body: { intent_id: Number(a?.intent_id) } }),
   },
   {
     name: 'hearsay_run_status',
