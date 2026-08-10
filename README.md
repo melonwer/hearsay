@@ -72,7 +72,7 @@ node scripts/seed.js
 
 cp .env.example .env                  # then put one API key in .env
 node server.js > hearsay.log 2>&1 &   # redirect, or a backgrounded server hangs the shell
-curl -s http://127.0.0.1:3000/api/status   # repeat until this returns JSON
+curl -s "http://127.0.0.1:$(tr -d '\\n' < data/hearsay.port)/api/status"   # repeat until this returns JSON
 
 # -s user registers Hearsay for every session, not just this folder
 claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
@@ -108,8 +108,9 @@ node scripts/seed.js && node server.js
 ```
 
 The window will look like it has frozen. That is Hearsay running. Leave it open and
-visit **http://127.0.0.1:3000** in your browser, which is an address on your own
-computer, published nowhere. To stop it, click the terminal window and press Ctrl+C.
+visit the URL printed by Hearsay, which is an address on your own computer, published
+nowhere. The selected port is also kept in `data/hearsay.port`. To stop it, click the
+terminal window and press Ctrl+C.
 
 You are now looking at a fictional demo brand called Notewell, so you can click through
 every screen before spending anything.
@@ -121,8 +122,9 @@ every screen before spending anything.
 [nodejs.org](https://nodejs.org). `command not found: git` means Git is missing; on Mac
 run `xcode-select --install`, on Windows use [git-scm.com](https://git-scm.com/downloads).
 `ERR_UNKNOWN_BUILTIN_MODULE` means your Node is older than 22.13. `EADDRINUSE` means
-something else is already using port 3000; run `PORT=3100 node server.js` and use
-http://127.0.0.1:3100 instead.
+you explicitly selected a fixed `PORT` that another process is using; remove that
+setting or use `PORT=0` for automatic selection. If a reverse proxy needs a fixed
+port, choose an available one with `PORT=3100 node server.js`.
 </details>
 
 ### Track your own brand
@@ -133,7 +135,8 @@ http://127.0.0.1:3100 instead.
    (`cp .env.example .env` in the terminal).
 3. Open `.env` in any text editor and paste your key after the matching name, for
    example `OPENAI_API_KEY=sk-...`. One key is enough.
-4. Run `node server.js` again and open **http://127.0.0.1:3000/setup** in your browser.
+4. Run `node server.js` again and open the printed local URL with `/setup` appended in
+   your browser. The port is also available with `tr -d '\\n' < data/hearsay.port`.
    Type that address in; there is no link to it in the menu.
 
 ### Connect an AI assistant
@@ -144,6 +147,10 @@ you, so there is nothing to edit:
 ```sh
 claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
 ```
+
+When Hearsay uses the default `PORT=0`, this MCP server discovers the selected local
+port from `data/hearsay.port`; no port argument is needed. For a fixed or remote
+deployment, set `HEARSAY_URL` in the MCP server environment instead.
 
 For Claude Desktop, open Settings → Developer → **Edit Config**, which opens
 `claude_desktop_config.json` for you. Run `pwd` inside the `hearsay` folder to print its
@@ -277,8 +284,8 @@ several times higher. Hearsay's costs are built for a channel that size.
 > Hearsay collects nothing about you and sends nothing anywhere: the only things it ever
 > contacts are the AI engines you gave it keys for. Your data is a single file at
 > `data/hearsay.db` that you can back up by copying it, and opening
-> **http://127.0.0.1:3000/api/export** downloads all of it, questions, runs, answers and
-> metrics, as one JSON file.
+> `http://127.0.0.1:<the-port-in-data/hearsay.port>/api/export` downloads all of it,
+> questions, runs, answers and metrics, as one JSON file.
 
 ## Roadmap
 
