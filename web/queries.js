@@ -114,10 +114,14 @@ export function colorIndexFor(entities) {
 /**
  * @typedef {Object} Prompt
  * @property {number} id
- * @property {number} intent_id
+ * @property {number|null} intent_id
  * @property {string} text
  * @property {string} category
  * @property {number} active 0|1
+ * @property {'tracking'|'exploration'} tracking_state
+ * @property {'user_authored'|'suggested'|'imported'|'legacy'} origin
+ * @property {string|null} approved_at
+ * @property {string|null} promoted_at
  */
 
 /**
@@ -125,13 +129,17 @@ export function colorIndexFor(entities) {
  * @returns {Prompt[]}
  */
 export function listPrompts(db) {
-  return all(db, 'SELECT id, intent_id, text, category, active FROM prompts ORDER BY intent_id ASC, id ASC').map(
+  return all(db, 'SELECT id, intent_id, text, category, active, tracking_state, origin, approved_at, promoted_at FROM prompts ORDER BY intent_id ASC, id ASC').map(
     (row) => ({
       id: Number(row.id),
-      intent_id: Number(row.intent_id),
+      intent_id: row.intent_id === null || row.intent_id === undefined ? null : Number(row.intent_id),
       text: String(row.text),
       category: String(row.category),
       active: Number(row.active) === 1 ? 1 : 0,
+      tracking_state: /** @type {'tracking'|'exploration'} */ (String(row.tracking_state ?? 'tracking')),
+      origin: /** @type {'user_authored'|'suggested'|'imported'|'legacy'} */ (String(row.origin ?? 'legacy')),
+      approved_at: row.approved_at === null || row.approved_at === undefined ? null : String(row.approved_at),
+      promoted_at: row.promoted_at === null || row.promoted_at === undefined ? null : String(row.promoted_at),
     }),
   );
 }
@@ -168,6 +176,7 @@ export function listIntents(db) {
   /** @type {Map<number, typeof intents[0]>} */
   const byId = new Map(intents.map((i) => [i.id, i]));
   for (const prompt of listPrompts(db)) {
+    if (prompt.intent_id === null) continue;
     const intent = byId.get(prompt.intent_id);
     if (!intent) continue;
     intent.paraphrases.push({
@@ -192,6 +201,7 @@ export function listIntents(db) {
  * @property {number|null} entity_id
  * @property {number|null} prompt_id
  * @property {string|null} provider
+ * @property {string|null} surface
  * @property {string} title
  * @property {string} detail
  * @property {number} acknowledged 0|1
@@ -208,7 +218,7 @@ export function listAlerts(db, { open = true, limit = 200 } = {}) {
   const where = open ? 'WHERE a.acknowledged = 0' : '';
   const rows = all(
     db,
-    `SELECT a.id, a.created_at, a.run_id, a.severity, a.type, a.entity_id, a.prompt_id, a.provider,
+    `SELECT a.id, a.created_at, a.run_id, a.severity, a.type, a.entity_id, a.prompt_id, a.provider, a.surface,
             a.title, a.detail, a.acknowledged,
             e.name AS entityName, p.text AS promptText
        FROM alerts a
@@ -228,6 +238,7 @@ export function listAlerts(db, { open = true, limit = 200 } = {}) {
     entity_id: row.entity_id === null ? null : Number(row.entity_id),
     prompt_id: row.prompt_id === null ? null : Number(row.prompt_id),
     provider: row.provider === null ? null : String(row.provider),
+    surface: row.surface === null || row.surface === undefined ? null : String(row.surface),
     title: String(row.title),
     detail: String(row.detail),
     acknowledged: Number(row.acknowledged) === 1 ? 1 : 0,
@@ -278,6 +289,7 @@ export function activePromptCount(db) {
 /**
  * @typedef {Object} AnswerFilters
  * @property {string|null} [provider]
+ * @property {string|null} [surface]
  * @property {number|null} [promptId]
  * @property {number|null} [entityId]
  * @property {number} [days]
@@ -290,6 +302,7 @@ export function activePromptCount(db) {
  * @typedef {Object} AnswerItem
  * @property {number} id
  * @property {string} provider
+ * @property {string|null} surface
  * @property {string} model
  * @property {number} sample_idx
  * @property {string} created_at
@@ -297,8 +310,16 @@ export function activePromptCount(db) {
  * @property {number} prompt_id
  * @property {string|null} text
  * @property {string|null} error
+ * @property {string|null} lane
+ * @property {string|null} target_status
+ * @property {string|null} comparability_status
+ * @property {string|null} web_status
+ * @property {string|null} prompt_text_snapshot
+ * @property {string|null} prompt_origin
+ * @property {string|null} artifact_ref
  * @property {{entity_id: number, name: string, first_index: number, occurrences: number, recommended: number, snippet: string, rank: number}[]} mentions
  * @property {{url: string, domain: string, entity_id: number|null, rank: number}[]} citations
+ * @property {{event_type:string, status:string, query:string|null, url:string|null, title:string|null, domain:string|null, observed_at:string, rank:number|null}[]} search_events
  */
 
 /**
@@ -323,6 +344,10 @@ export function queryAnswers(db, filters = {}) {
     clauses.push('r.provider = ?');
     params.push(String(filters.provider));
   }
+  if (filters.surface) {
+    clauses.push('r.surface = ?');
+    params.push(String(filters.surface));
+  }
   if (filters.promptId) {
     clauses.push('r.prompt_id = ?');
     params.push(Number(filters.promptId));
@@ -339,7 +364,9 @@ export function queryAnswers(db, filters = {}) {
 
   const rows = all(
     db,
-    `SELECT r.id, r.provider, r.model, r.sample_idx, r.created_at, r.text, r.error, r.prompt_id,
+    `SELECT r.id, r.provider, r.surface, r.model, r.sample_idx, r.created_at, r.text, r.error, r.prompt_id,
+            r.lane, r.target_status, r.comparability_status, r.web_status,
+            r.prompt_text_snapshot, r.prompt_origin, r.artifact_ref,
             p.text AS prompt
        FROM responses r
        JOIN prompts p ON p.id = r.prompt_id
@@ -353,6 +380,7 @@ export function queryAnswers(db, filters = {}) {
   const items = rows.map((row) => ({
     id: Number(row.id),
     provider: String(row.provider),
+    surface: row.surface === null || row.surface === undefined ? null : String(row.surface),
     model: String(row.model),
     sample_idx: Number(row.sample_idx ?? 0),
     created_at: String(row.created_at),
@@ -360,8 +388,18 @@ export function queryAnswers(db, filters = {}) {
     prompt_id: Number(row.prompt_id),
     text: row.text === null || row.text === undefined ? null : String(row.text),
     error: row.error === null || row.error === undefined ? null : String(row.error),
+    lane: row.lane === null || row.lane === undefined ? null : String(row.lane),
+    target_status: row.target_status === null || row.target_status === undefined ? null : String(row.target_status),
+    comparability_status:
+      row.comparability_status === null || row.comparability_status === undefined ? null : String(row.comparability_status),
+    web_status: row.web_status === null || row.web_status === undefined ? null : String(row.web_status),
+    prompt_text_snapshot:
+      row.prompt_text_snapshot === null || row.prompt_text_snapshot === undefined ? null : String(row.prompt_text_snapshot),
+    prompt_origin: row.prompt_origin === null || row.prompt_origin === undefined ? null : String(row.prompt_origin),
+    artifact_ref: row.artifact_ref === null || row.artifact_ref === undefined ? null : String(row.artifact_ref),
     mentions: [],
     citations: [],
+    search_events: [],
   }));
 
   if (items.length === 0) return { total, page, per, pages, items };
@@ -387,6 +425,26 @@ export function queryAnswers(db, filters = {}) {
       rank: Number(row.rank ?? 1),
       recommended: Number(row.recommended) === 1 ? 1 : 0,
       snippet: String(row.snippet ?? ''),
+    });
+  }
+
+  for (const row of all(
+    db,
+    `SELECT response_id, event_type, status, query, url, title, domain, observed_at, rank
+       FROM search_events
+      WHERE response_id IN (${placeholders})
+      ORDER BY response_id ASC, id ASC`,
+    ids,
+  )) {
+    byId.get(Number(row.response_id))?.search_events.push({
+      event_type: String(row.event_type),
+      status: String(row.status),
+      query: row.query === null || row.query === undefined ? null : String(row.query),
+      url: row.url === null || row.url === undefined ? null : String(row.url),
+      title: row.title === null || row.title === undefined ? null : String(row.title),
+      domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
+      observed_at: String(row.observed_at),
+      rank: row.rank === null || row.rank === undefined ? null : Number(row.rank),
     });
   }
 
@@ -447,7 +505,7 @@ export function latestReceipts(db, brandId, { limit = 2, days = 30, now } = {}) 
  * @returns {Record<string, unknown>}
  */
 export function exportAll(db) {
-  const tables = ['settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions', 'citations', 'alerts'];
+  const tables = ['settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions', 'citations', 'search_events', 'alerts'];
   /** @type {Record<string, unknown>} */
   const out = { exportedAt: `${new Date().toISOString().slice(0, 19)}Z`, tables: {} };
   const bucket = /** @type {Record<string, unknown[]>} */ (out.tables);

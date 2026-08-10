@@ -19,6 +19,7 @@
 
 import { all, get, isoNow, run as exec } from './db.js';
 import { shareOfVoice } from './metrics.js';
+import { eligibilitySql } from './subscription-model.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 
@@ -30,6 +31,7 @@ import { shareOfVoice } from './metrics.js';
  * @property {number|null} entityId
  * @property {number|null} promptId
  * @property {string|null} provider
+ * @property {string|null} [surface]
  * @property {string} title
  * @property {string} detail
  */
@@ -63,6 +65,9 @@ const PROVIDER_LABELS = {
   gemini: 'Gemini',
   perplexity: 'Perplexity',
 };
+
+const API_SURFACES = ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api'];
+const AGENT_SURFACES = ['codex-agent', 'claude-code-agent'];
 
 /**
  * @param {string} provider
@@ -100,13 +105,67 @@ function daysBefore(now, days) {
 }
 
 /**
+ * Eligibility for alert comparisons. The null-surface branch is the API-only legacy
+ * compatibility path; an explicit agent surface always requires verified web evidence.
+ *
+ * @param {string|null} surface
+ * @param {string} alias
+ * @returns {{sql:string, params:(string|number|null)[]}}
+ */
+function alertEligibility(surface, alias = 'r') {
+  const common = eligibilitySql(alias, {
+    surface: surface ?? undefined,
+    subscription: surface !== null && AGENT_SURFACES.includes(surface),
+  });
+  if (surface === null) {
+    return {
+      sql: `(((${common.sql}) AND (${alias}.surface IS NULL OR ${alias}.surface IN (${API_SURFACES.map(() => '?').join(', ')})))
+        OR (${alias}.surface IS NULL AND ${alias}.lane IS NULL AND ${alias}.target_status IS NULL
+            AND ${alias}.comparability_status IS NULL AND ${alias}.error IS NULL))`,
+      params: [...common.params, ...API_SURFACES],
+    };
+  }
+  return common;
+}
+
+/**
+ * All targets for one run/surface must be complete before comparative alerts are valid.
+ *
+ * @param {Db} db
+ * @param {number} runId
+ * @param {string|null} surface
+ * @returns {boolean}
+ */
+function completeSurfaceCohort(db, runId, surface) {
+  const scope = surface === null
+    ? { sql: `(r.surface IS NULL OR r.surface IN (${API_SURFACES.map(() => '?').join(', ')}))`, params: API_SURFACES }
+    : { sql: 'r.surface = ?', params: [surface] };
+  const rows = all(
+    db,
+    `SELECT r.error, r.target_status, r.comparability_status, r.web_status
+       FROM responses r
+      WHERE r.run_id = ? AND (${scope.sql})`,
+    [runId, ...scope.params],
+  );
+  if (rows.length === 0) return false;
+  return rows.every((row) => {
+    if (row.error !== null && row.error !== undefined) return false;
+    if (row.target_status === null || row.target_status === undefined) return true;
+    if (String(row.target_status) !== 'completed' || String(row.comparability_status) !== 'comparable') return false;
+    return surface === null || !AGENT_SURFACES.includes(surface) || String(row.web_status) === 'verified';
+  });
+}
+
+/**
  * Per-(prompt, provider) recommendation counts for one run, over its valid responses.
  * @param {Db} db
  * @param {number} runId
  * @param {number} entityId
+ * @param {string|null} surface
  * @returns {Map<string, {promptId:number, provider:string, n:number, recommended:number}>}
  */
-function recommendationCounts(db, runId, entityId) {
+function recommendationCounts(db, runId, entityId, surface) {
+  const scope = alertEligibility(surface);
   const rows = all(
     db,
     `SELECT r.prompt_id AS prompt_id, r.provider AS provider, COUNT(*) AS n,
@@ -114,9 +173,9 @@ function recommendationCounts(db, runId, entityId) {
                                    WHERE m.response_id = r.id AND m.entity_id = ? AND m.recommended = 1)
                      THEN 1 ELSE 0 END) AS recommended
        FROM responses r
-      WHERE r.run_id = ? AND r.error IS NULL
+      WHERE r.run_id = ? AND r.error IS NULL AND (${scope.sql})
       GROUP BY r.prompt_id, r.provider`,
-    [entityId, runId],
+    [entityId, runId, ...scope.params],
   );
   /** @type {Map<string, {promptId:number, provider:string, n:number, recommended:number}>} */
   const map = new Map();
@@ -139,18 +198,20 @@ function recommendationCounts(db, runId, entityId) {
  * @param {Db} db
  * @param {number} runId
  * @param {number} entityId
+ * @param {string|null} surface
  * @returns {Map<string, {n:number, mentioned:number, p:number}>}
  */
-function providerMentionCounts(db, runId, entityId) {
+function providerMentionCounts(db, runId, entityId, surface) {
+  const scope = alertEligibility(surface);
   const rows = all(
     db,
     `SELECT r.provider AS provider, COUNT(*) AS n,
             SUM(CASE WHEN EXISTS (SELECT 1 FROM mentions m WHERE m.response_id = r.id AND m.entity_id = ?)
                      THEN 1 ELSE 0 END) AS mentioned
        FROM responses r JOIN prompts p ON p.id = r.prompt_id
-      WHERE r.run_id = ? AND r.error IS NULL AND p.category <> 'branded'
+      WHERE r.run_id = ? AND r.error IS NULL AND p.category <> 'branded' AND (${scope.sql})
       GROUP BY r.provider`,
-    [entityId, runId],
+    [entityId, runId, ...scope.params],
   );
   /** @type {Map<string, {n:number, mentioned:number, p:number}>} */
   const map = new Map();
@@ -184,7 +245,7 @@ function promptTexts(db, promptIds) {
  * `IS` rather than `=` so NULL entity/prompt/provider columns compare properly.
  *
  * @param {Db} db
- * @param {{type:string, entityId:number|null, promptId:number|null, provider:string|null}} key
+ * @param {{type:string, entityId:number|null, promptId:number|null, provider:string|null, surface:string|null}} key
  * @param {string} since ISO-8601 UTC
  * @returns {boolean}
  */
@@ -192,9 +253,9 @@ function alreadyReported(db, key, since) {
   const row = get(
     db,
     `SELECT 1 AS hit FROM alerts
-      WHERE type = ? AND entity_id IS ? AND prompt_id IS ? AND provider IS ? AND created_at >= ?
+      WHERE type = ? AND entity_id IS ? AND prompt_id IS ? AND provider IS ? AND surface IS ? AND created_at >= ?
       LIMIT 1`,
-    [key.type, key.entityId, key.promptId, key.provider, since],
+    [key.type, key.entityId, key.promptId, key.provider, key.surface, since],
   );
   return row !== undefined;
 }
@@ -207,6 +268,7 @@ function alreadyReported(db, key, since) {
  * @property {number|null} entityId
  * @property {number|null} promptId
  * @property {string|null} provider
+ * @property {string|null} [surface]
  * @property {string} title
  * @property {string} detail
  */
@@ -222,8 +284,8 @@ function alreadyReported(db, key, since) {
  *
  * @param {Db|number} dbOrRunId
  * @param {number|Db} runIdOrDb
- * @param {{now?: string|Date}} [opts] `now` is the evaluation timestamp; defaults to the
- *   current UTC time, and is passed in by tests and the seeder for determinism.
+ * @param {{now?: string|Date, surface?: string}} [opts] `now` is the evaluation timestamp;
+ *   defaults to the current UTC time, and `surface` selects one comparable cohort.
  * @returns {CreatedAlert[]} alerts actually written, in rule order
  */
 export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
@@ -234,6 +296,7 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
     throw new TypeError('alerts.evaluate: pass the open database and the run id');
   }
   const now = opts.now === undefined ? isoNow() : isoNow(opts.now instanceof Date ? opts.now : new Date(String(opts.now)));
+  const surface = opts.surface === undefined ? null : String(opts.surface);
 
   const runRow = get(db, 'SELECT id, trigger FROM runs WHERE id = ?', [Number(runId)]);
   if (!runRow) return [];
@@ -242,6 +305,7 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
   const brandRow = get(db, 'SELECT id, name FROM entities WHERE is_self = 1 AND archived_at IS NULL ORDER BY id LIMIT 1');
   if (!brandRow) return [];
   const brand = { id: Number(brandRow.id), name: String(brandRow.name) };
+  if (!completeSurfaceCohort(db, Number(runId), surface)) return [];
 
   // Compare like with like: live runs against live runs, seeded runs against seeded runs.
   const kindClause = trigger === 'seed' ? "trigger = 'seed'" : "trigger <> 'seed'";
@@ -259,9 +323,9 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
   /** @type {Candidate[]} */
   const candidates = [];
 
-  const current = recommendationCounts(db, Number(runId), brand.id);
-  const prev1 = priorRuns[0] ? recommendationCounts(db, priorRuns[0].id, brand.id) : null;
-  const prev2 = priorRuns[1] ? recommendationCounts(db, priorRuns[1].id, brand.id) : null;
+  const current = recommendationCounts(db, Number(runId), brand.id, surface);
+  const prev1 = priorRuns[0] ? recommendationCounts(db, priorRuns[0].id, brand.id, surface) : null;
+  const prev2 = priorRuns[1] ? recommendationCounts(db, priorRuns[1].id, brand.id, surface) : null;
 
   // --- LOST_RECOMMENDATION / GAINED_RECOMMENDATION (need 2 prior runs) ----------------
   if (prev1 && prev2) {
@@ -301,8 +365,8 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
 
   // --- MENTION_DROP (needs 1 prior run, n ≥ 3 on both sides) -------------------------
   if (priorRuns[0]) {
-    const curByProvider = providerMentionCounts(db, Number(runId), brand.id);
-    const prevByProvider = providerMentionCounts(db, priorRuns[0].id, brand.id);
+    const curByProvider = providerMentionCounts(db, Number(runId), brand.id, surface);
+    const prevByProvider = providerMentionCounts(db, priorRuns[0].id, brand.id, surface);
     for (const [provider, cur] of curByProvider) {
       const prev = prevByProvider.get(provider);
       if (!prev) continue;
@@ -324,8 +388,8 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
 
   // --- OVERTAKEN (needs 1 prior run to have something to compare against) ------------
   if (priorRuns[0]) {
-    const recent = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now });
-    const prior = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now: priorRuns[0].at });
+    const recent = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now, ...(surface === null ? {} : { surface }) });
+    const prior = shareOfVoice(db, { days: SOV_WINDOW_DAYS, now: priorRuns[0].at, ...(surface === null ? {} : { surface }) });
     const recentTotal = recent.reduce((sum, row) => sum + row.mentions, 0);
     const priorTotal = prior.reduce((sum, row) => sum + row.mentions, 0);
 
@@ -361,12 +425,13 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
       entityId: candidate.entityId,
       promptId: candidate.promptId,
       provider: candidate.provider,
+      surface,
     };
     if (alreadyReported(db, key, since)) continue;
     const result = exec(
       db,
-      `INSERT INTO alerts(created_at, run_id, severity, type, entity_id, prompt_id, provider, title, detail, acknowledged)
-       VALUES(?,?,?,?,?,?,?,?,?,0)`,
+      `INSERT INTO alerts(created_at, run_id, severity, type, entity_id, prompt_id, provider, surface, title, detail, acknowledged)
+       VALUES(?,?,?,?,?,?,?,?,?,?,0)`,
       [
         now,
         Number(runId),
@@ -375,11 +440,12 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
         candidate.entityId,
         candidate.promptId,
         candidate.provider,
+        surface,
         candidate.title,
         candidate.detail,
       ],
     );
-    created.push({ id: result.lastInsertRowid, ...candidate });
+    created.push({ id: result.lastInsertRowid, ...candidate, surface });
   }
   return created;
 }

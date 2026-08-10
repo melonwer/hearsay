@@ -7,8 +7,9 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { basename, dirname, join, resolve } from 'node:path';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('node:sqlite').StatementSync} Stmt */
@@ -121,13 +122,174 @@ CREATE INDEX idx_alerts_open ON alerts(acknowledged, created_at);
 `;
 
 /**
- * Ordered migrations. Append only — never edit a shipped migration.
- * @type {{version: number, sql: string}[]}
+ * Run the v2 storage migration. SQLite cannot alter a CHECK constraint or make an
+ * existing NOT NULL foreign key nullable, so the two affected tables are rebuilt while
+ * foreign-key enforcement is temporarily disabled inside this one migration transaction.
+ *
+ * @param {Db} db
+ * @returns {void}
  */
-export const MIGRATIONS = [{ version: 1, sql: SCHEMA_V1 }];
+function migrateV2(db) {
+  db.exec(`
+    ALTER TABLE alerts ADD COLUMN surface TEXT;
+    ALTER TABLE responses ADD COLUMN surface TEXT;
+    ALTER TABLE responses ADD COLUMN lane TEXT;
+    ALTER TABLE responses ADD COLUMN target_status TEXT;
+    ALTER TABLE responses ADD COLUMN comparability_status TEXT;
+    ALTER TABLE responses ADD COLUMN comparability_reason TEXT;
+    ALTER TABLE responses ADD COLUMN web_status TEXT;
+    ALTER TABLE responses ADD COLUMN prompt_text_snapshot TEXT;
+    ALTER TABLE responses ADD COLUMN prompt_origin TEXT;
+    ALTER TABLE responses ADD COLUMN cli_version TEXT;
+    ALTER TABLE responses ADD COLUMN execution_profile_hash TEXT;
+    ALTER TABLE responses ADD COLUMN prompt_envelope_version TEXT;
+    ALTER TABLE responses ADD COLUMN comparison_key TEXT;
+    ALTER TABLE responses ADD COLUMN location_control TEXT;
+    ALTER TABLE responses ADD COLUMN artifact_ref TEXT;
+    ALTER TABLE responses ADD COLUMN safe_error_code TEXT;
+  `);
+
+  db.exec(`
+    CREATE TABLE prompts_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      intent_id INTEGER REFERENCES intents(id) ON DELETE CASCADE,
+      text TEXT NOT NULL UNIQUE,
+      category TEXT NOT NULL DEFAULT 'general',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      tracking_state TEXT NOT NULL DEFAULT 'tracking'
+        CHECK (tracking_state IN ('tracking','exploration')),
+      origin TEXT NOT NULL DEFAULT 'legacy'
+        CHECK (origin IN ('user_authored','suggested','imported','legacy')),
+      approved_at TEXT,
+      promoted_at TEXT,
+      CHECK (tracking_state = 'tracking' OR (intent_id IS NULL AND active = 0))
+    );
+    INSERT INTO prompts_v2(id, intent_id, text, category, active, created_at, tracking_state, origin)
+      SELECT id, intent_id, text, category, active, created_at, 'tracking', 'legacy'
+        FROM prompts;
+    DROP TABLE prompts;
+    ALTER TABLE prompts_v2 RENAME TO prompts;
+    CREATE INDEX idx_prompts_intent ON prompts(intent_id);
+    CREATE INDEX idx_prompts_state ON prompts(tracking_state, active);
+  `);
+
+  db.exec(`
+    CREATE TABLE runs_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      trigger TEXT NOT NULL CHECK (trigger IN ('cron','manual','api','seed')),
+      status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running','done','partial','failed','cancelled','missed')),
+      total_calls INTEGER NOT NULL DEFAULT 0,
+      done_calls INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      schedule_key TEXT,
+      schedule_revision_hash TEXT,
+      scheduled_for TEXT,
+      occurrence_local_date TEXT,
+      retry_of_run_id INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+      target_ceiling INTEGER
+    );
+    INSERT INTO runs_v2(id, started_at, finished_at, trigger, status, total_calls, done_calls, error)
+      SELECT id, started_at, finished_at, trigger, status, total_calls, done_calls, error
+        FROM runs;
+    DROP TABLE runs;
+    ALTER TABLE runs_v2 RENAME TO runs;
+    CREATE INDEX idx_runs_schedule_occurrence ON runs(schedule_key, occurrence_local_date);
+  `);
+
+  db.exec(`
+    CREATE TABLE search_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL CHECK (event_type IN ('search','fetch')),
+      status TEXT NOT NULL CHECK (status IN ('started','completed','failed','denied','unavailable')),
+      query TEXT,
+      url TEXT,
+      title TEXT,
+      domain TEXT,
+      observed_at TEXT NOT NULL,
+      rank INTEGER,
+      provider_event_type TEXT,
+      metadata TEXT
+    );
+    CREATE INDEX idx_search_events_response ON search_events(response_id, event_type, status);
+    CREATE INDEX idx_responses_surface ON responses(surface, comparison_key, created_at);
+    CREATE INDEX idx_responses_lane ON responses(lane, target_status, comparability_status);
+  `);
+
+  const legacyProfileHash = createHash('sha256').update('legacy-api-v1').digest('hex');
+  db.exec(`
+    UPDATE responses
+       SET surface = provider || '-api',
+           lane = 'tracking',
+           target_status = CASE WHEN error IS NULL THEN 'completed' ELSE 'failed' END,
+           comparability_status = 'comparable',
+           comparability_reason = NULL,
+           web_status = 'not_applicable',
+           prompt_text_snapshot = (SELECT text FROM prompts WHERE prompts.id = responses.prompt_id),
+           prompt_origin = 'legacy',
+           cli_version = NULL,
+           execution_profile_hash = '${legacyProfileHash}',
+           prompt_envelope_version = 'api-v1',
+           comparison_key = 'legacy:' || provider || ':' || model,
+           location_control = 'uncontrolled',
+           artifact_ref = NULL,
+           safe_error_code = CASE WHEN error IS NULL THEN NULL ELSE 'legacy_error' END
+     WHERE surface IS NULL;
+  `);
+}
+
+/** Ordered migrations. Append only — never edit a shipped migration. */
+export const MIGRATIONS = [
+  { version: 1, sql: SCHEMA_V1 },
+  { version: 2, apply: migrateV2 },
+];
 
 /** Latest schema version this build knows how to produce. */
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
+
+/**
+ * Create and verify a SQLite-consistent pre-migration backup.
+ *
+ * @param {Db} db
+ * @param {string} dbPath
+ * @param {Date} [now]
+ * @param {number} [fromVersion]
+ * @returns {string|null}
+ */
+export function createMigrationBackup(db, dbPath, now = new Date(), fromVersion = userVersion(db)) {
+  if (dbPath === ':memory:') return null;
+  const absolute = resolve(dbPath);
+  const dir = dirname(absolute);
+  mkdirSync(dir, { recursive: true });
+  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const stem = basename(absolute);
+  let backupPath = join(dir, `${stem}.migration-${stamp}.v${fromVersion}.db`);
+  let suffix = 1;
+  while (existsSync(backupPath)) {
+    backupPath = join(dir, `${stem}.migration-${stamp}.v${fromVersion}.${suffix}.db`);
+    suffix += 1;
+  }
+  const escaped = backupPath.replaceAll("'", "''");
+  db.exec(`VACUUM INTO '${escaped}'`);
+  try {
+    chmodSync(backupPath, 0o600);
+  } catch {
+    // Windows uses user-scoped ACLs; POSIX mode bits are best-effort there.
+  }
+  const backup = new DatabaseSync(backupPath);
+  try {
+    const version = Number(backup.prepare('PRAGMA user_version').get()?.user_version ?? 0);
+    if (version !== fromVersion) throw new Error(`Migration backup has schema version ${version}, expected ${fromVersion}`);
+    backup.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+  } finally {
+    backup.close();
+  }
+  return backupPath;
+}
 
 /** Setting keys used in v1 (§3). Values are JSON-encoded. */
 export const SETTING_KEYS = /** @type {const} */ ({
@@ -229,16 +391,21 @@ export function migrate(db) {
   let current = userVersion(db);
   for (const migration of MIGRATIONS) {
     if (migration.version <= current) continue;
+    const rebuildsTables = migration.version === 2;
+    if (rebuildsTables) db.exec('PRAGMA foreign_keys = OFF');
     db.exec('BEGIN');
     try {
-      db.exec(migration.sql);
+      if (typeof migration.apply === 'function') migration.apply(db);
+      else db.exec(migration.sql);
       // Not parameterisable; the value is an integer literal from MIGRATIONS.
       db.exec(`PRAGMA user_version = ${migration.version}`);
       db.exec('COMMIT');
     } catch (err) {
       db.exec('ROLLBACK');
+      if (rebuildsTables) db.exec('PRAGMA foreign_keys = ON');
       throw err;
     }
+    if (rebuildsTables) db.exec('PRAGMA foreign_keys = ON');
     current = migration.version;
   }
   return current;
@@ -255,6 +422,8 @@ export function openDb(dbPath) {
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
+  const current = userVersion(db);
+  if (current > 0 && current < SCHEMA_VERSION) createMigrationBackup(db, dbPath, new Date(), current);
   migrate(db);
   return db;
 }

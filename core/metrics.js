@@ -20,6 +20,7 @@
  */
 
 import { all, get } from './db.js';
+import { eligibilitySql } from './subscription-model.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {string|number|bigint|null} SqlValue */
@@ -53,6 +54,8 @@ const DAY_MS = 86_400_000;
  * Providers found in the data but missing from this list sort after it, alphabetically.
  */
 const PROVIDER_ORDER = ['openai', 'anthropic', 'gemini', 'perplexity'];
+const API_SURFACES = ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api'];
+const SUBSCRIPTION_SURFACES = ['codex-agent', 'claude-code-agent'];
 
 /**
  * Wilson 95% score interval (§7, embedded exactly).
@@ -120,6 +123,9 @@ export function windowStart(now, days) {
  * @property {number} [days]
  * @property {string|Date} [now]
  * @property {ProviderId} [provider]
+ * @property {string} [surface]
+ * @property {string} [comparisonKey]
+ * @property {boolean} [subscription]
  * @property {boolean} [includeBranded]
  */
 
@@ -151,16 +157,21 @@ function args(a, b) {
  * Resolve the shared window options once per call.
  * @param {MetricsOpts} opts
  * @param {string} fn
- * @returns {{start:string, end:string, days:number, provider:ProviderId|null, includeBranded:boolean}}
+ * @returns {{start:string, end:string, days:number, provider:ProviderId|null, surface:string|null,
+ *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean}}
  */
 function resolveWindow(opts, fn) {
   const end = requireNow(opts.now, fn);
   const days = Number.isFinite(opts.days) ? Number(opts.days) : DEFAULT_DAYS;
+  const surface = opts.surface ? String(opts.surface) : null;
   return {
     start: windowStart(end, days),
     end,
     days,
     provider: opts.provider ? String(opts.provider) : null,
+    surface,
+    comparisonKey: opts.comparisonKey ? String(opts.comparisonKey) : null,
+    subscription: opts.subscription === true || SUBSCRIPTION_SURFACES.includes(surface ?? ''),
     includeBranded: opts.includeBranded === true,
   };
 }
@@ -169,13 +180,28 @@ function resolveWindow(opts, fn) {
  * SQL fragment + params selecting valid responses inside the window. Always used with
  * `FROM responses r JOIN prompts p ON p.id = r.prompt_id`.
  *
- * @param {{start:string, end:string, provider:ProviderId|null, includeBranded:boolean}} w
+ * @param {{start:string, end:string, provider:ProviderId|null, surface:string|null,
+ *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean}} w
  * @returns {{sql:string, params:SqlValue[]}}
  */
 function validResponses(w) {
-  const clauses = ['r.error IS NULL', 'r.created_at >= ?', 'r.created_at <= ?'];
+  const eligibility = eligibilitySql('r', {
+    surface: w.surface ?? undefined,
+    comparisonKey: w.comparisonKey ?? undefined,
+    subscription: w.subscription,
+  });
+  const clauses = [eligibility.sql, 'r.error IS NULL', 'r.created_at >= ?', 'r.created_at <= ?'];
   /** @type {SqlValue[]} */
-  const params = [w.start, w.end];
+  const params = [...eligibility.params];
+  if (w.surface === null && !w.subscription) {
+    clauses[0] = `(((${eligibility.sql}) AND (r.surface IS NULL OR r.surface IN (${API_SURFACES.map(() => '?').join(', ')})))
+      OR (r.surface IS NULL AND r.lane IS NULL AND r.target_status IS NULL AND r.comparability_status IS NULL AND r.error IS NULL))`;
+    params.push(...API_SURFACES);
+  } else if (w.surface === null && w.subscription) {
+    clauses.push(`r.surface IN (${SUBSCRIPTION_SURFACES.map(() => '?').join(', ')})`);
+    params.push(...SUBSCRIPTION_SURFACES);
+  }
+  params.push(w.start, w.end);
   if (w.provider) {
     clauses.push('r.provider = ?');
     params.push(w.provider);
@@ -279,7 +305,8 @@ export function avgRank(dbOrOpts, maybeOpts) {
  * delta in `summary`.
  *
  * @param {Db} db
- * @param {{start:string, end:string, provider:ProviderId|null, includeBranded:boolean}} w
+ * @param {{start:string, end:string, provider:ProviderId|null, surface:string|null,
+ *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean}} w
  * @returns {{entityId:number, name:string, isSelf:boolean, mentions:number, sov:number}[]}
  */
 function sovRows(db, w) {
@@ -456,13 +483,16 @@ export function providerBreakdown(dbOrOpts, maybeOpts) {
   const [db, opts] = args(dbOrOpts, maybeOpts);
   const w = resolveWindow({ ...opts, provider: undefined }, 'providerBreakdown');
   const brand = brandEntity(db);
+  const surfaceClause = w.surface === null ? `(r.surface IS NULL OR r.surface IN (${API_SURFACES.map(() => '?').join(', ')}))` : 'r.surface = ?';
+  const surfaceParams = w.surface === null ? API_SURFACES : [w.surface];
 
   const providerRows = all(
     db,
     `SELECT DISTINCT r.provider AS provider
        FROM responses r
-      WHERE r.created_at >= ? AND r.created_at <= ?`,
-    [w.start, w.end],
+      WHERE r.created_at >= ? AND r.created_at <= ?
+        AND ${surfaceClause}`,
+    [w.start, w.end, ...surfaceParams],
   ).map((row) => String(row.provider));
   providerRows.sort(byProviderOrder);
 
@@ -472,13 +502,15 @@ export function providerBreakdown(dbOrOpts, maybeOpts) {
       db,
       `SELECT error FROM responses
         WHERE provider = ? AND error IS NOT NULL AND created_at >= ? AND created_at <= ?
+          AND ${w.surface === null ? `(surface IS NULL OR surface IN (${API_SURFACES.map(() => '?').join(', ')}))` : 'surface = ?'}
         ORDER BY created_at DESC, id DESC LIMIT 1`,
-      [provider, w.start, w.end],
+      [provider, w.start, w.end, ...surfaceParams],
     );
     const rate = brand ? mentionRate(db, { ...scoped, entityId: brand.id }) : wilson(0, 0);
     const citations = brand ? citationShare(db, { ...scoped, entityId: brand.id }) : null;
     return {
       provider,
+      surface: w.surface,
       n: rate.n,
       brandMentionRate: rate,
       avgRank: brand ? avgRank(db, { ...scoped, entityId: brand.id }) : null,
@@ -733,15 +765,16 @@ export function citationGap(dbOrOpts, maybeOpts) {
 export function actualSpend(dbOrOpts, maybeOpts) {
   const [db, opts] = args(dbOrOpts, maybeOpts);
   const w = resolveWindow(opts, 'actualSpend');
+  const filter = validResponses(w);
   const rows = all(
     db,
     `SELECT provider,
             SUM(COALESCE(cost_usd, 0)) AS usd,
             SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS calls
-       FROM responses
-      WHERE created_at >= ? AND created_at <= ? AND error IS NULL
+       FROM responses r JOIN prompts p ON p.id = r.prompt_id
+      WHERE ${filter.sql}
       GROUP BY provider`,
-    [w.start, w.end],
+    filter.params,
   );
 
   const perProvider = rows

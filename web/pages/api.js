@@ -29,7 +29,10 @@ import {
 } from '../queries.js';
 import { aliasesFor, MIN_ALIAS_LENGTH } from '../../core/analyze.js';
 import { PROVIDER_IDS } from '../../core/config.js';
+import { SURFACES } from '../../core/subscription-model.js';
 import { PROMPT_CATEGORIES } from '../../core/suggest.js';
+
+const SURFACE_IDS = /** @type {string[]} */ ([...SURFACES]);
 
 /** Default reporting window (§7). */
 export const DEFAULT_DAYS = 30;
@@ -165,6 +168,18 @@ function intQuery(url, key, fallback, min, max) {
     throw new ApiError(400, 'bad_request', `${key} must be an integer between ${min} and ${max}`);
   }
   return n;
+}
+
+/**
+ * Optional surface query shared by metric and answer routes.
+ * @param {URL} url
+ * @returns {string|undefined}
+ */
+function surfaceQuery(url) {
+  const value = url.searchParams.get('surface');
+  if (value === null || value.trim() === '') return undefined;
+  if (!SURFACE_IDS.includes(value)) throw new ApiError(400, 'bad_request', `surface must be one of: ${SURFACE_IDS.join(', ')}`);
+  return value;
 }
 
 /**
@@ -792,16 +807,17 @@ function statusReport({ db, config, version }) {
 /**
  * @param {ApiDeps} deps
  * @param {number} days
+ * @param {string|undefined} [surface]
  * @returns {unknown}
  */
-export function summary({ db, config }, days) {
+export function summary({ db, config }, days, surface) {
   const brand = brandEntity(db);
   const brandId = brand?.id ?? null;
   // One clock for the whole summary — §7 refuses to default it (§19.6 #6), and every
   // window in one response has to be measured from the same instant to be comparable.
   const now = isoNow();
   /** @param {string} name @param {Record<string, unknown>} args */
-  const need = (name, args) => strict(/** @type {*} */ (metrics), name, { db, now, ...args });
+  const need = (name, args) => strict(/** @type {*} */ (metrics), name, { db, now, ...(surface ? { surface } : {}), ...args });
 
   const current = /** @type {{entityId:number,name:string,isSelf:boolean,mentions:number,sov:number}[]} */ (
     need('shareOfVoice', { days })
@@ -889,7 +905,7 @@ export function registerApiRoutes(router, deps) {
   router.add(
     'GET',
     '/api/summary',
-    json((ctx) => summary(deps, intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365))),
+    json((ctx) => summary(deps, intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365), surfaceQuery(ctx.url))),
   );
 
   router.add(
@@ -955,6 +971,7 @@ export function registerApiRoutes(router, deps) {
         db,
         now: isoNow(),
         days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
+        surface: surfaceQuery(ctx.url),
       }),
     ),
   );
@@ -966,6 +983,7 @@ export function registerApiRoutes(router, deps) {
         db,
         now: isoNow(),
         days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
+        surface: surfaceQuery(ctx.url),
       }),
     ),
   );
@@ -990,6 +1008,7 @@ export function registerApiRoutes(router, deps) {
         now: isoNow(),
         days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
         limit: intQuery(ctx.url, 'limit', 20, 1, 100),
+        surface: surfaceQuery(ctx.url),
       }),
     ),
   );
@@ -1030,6 +1049,7 @@ export function registerApiRoutes(router, deps) {
       }
       const result = queryAnswers(db, {
         provider: providerParam === '' ? null : providerParam,
+        surface: surfaceQuery(ctx.url) ?? null,
         promptId: intQuery(ctx.url, 'prompt_id', 0, 1, Number.MAX_SAFE_INTEGER) || null,
         entityId: intQuery(ctx.url, 'entity_id', 0, 1, Number.MAX_SAFE_INTEGER) || null,
         days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 3650),
@@ -1042,11 +1062,19 @@ export function registerApiRoutes(router, deps) {
         items: result.items.map((item) => ({
           id: item.id,
           provider: item.provider,
+          surface: item.surface,
           model: item.model,
           created_at: item.created_at,
           prompt: item.prompt,
           text: item.text,
           error: item.error,
+          lane: item.lane,
+          target_status: item.target_status,
+          comparability_status: item.comparability_status,
+          web_status: item.web_status,
+          prompt_text_snapshot: item.prompt_text_snapshot,
+          prompt_origin: item.prompt_origin,
+          artifact_ref: item.artifact_ref,
           mentions: item.mentions.map((mention) => ({
             name: mention.name,
             first_index: mention.first_index,
@@ -1057,6 +1085,7 @@ export function registerApiRoutes(router, deps) {
             domain: citation.domain,
             entity_id: citation.entity_id,
           })),
+          search_events: item.search_events,
         })),
       };
     }),
