@@ -6,7 +6,7 @@
  */
 import { readFileSync } from 'node:fs';
 
-const HEARSAY_URL = (process.env.HEARSAY_URL ?? 'http://127.0.0.1:3000').replace(/\/+$/, '');
+import { resolveHearsayUrl } from '../core/port-discovery.js';
 // [VERIFY-AT-BUILD]: verified 2026-07-26 against modelcontextprotocol.io/specification/versioning
 // — current revision is 2025-11-25; earlier revisions remain valid to echo.
 const KNOWN_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -299,13 +299,18 @@ async function dispatch(msg) {
         /** @param {boolean} isError @param {string} text */
         const content = (isError, text) =>
           reply(id, { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
+        const backend = resolveHearsayUrl();
+        if (backend.url === null) {
+          content(true, JSON.stringify({ error: { code: 'unreachable', message: backend.message } }));
+          return;
+        }
         const controller = new AbortController();
         // Armed until the BODY is read, not just the headers — a backend that stalls
         // mid-stream must abort res.text(), not hang the reply (and the drain-on-end
         // exit) forever. Cleared in finally so a rejected fetch cannot leak the timer.
         const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
         try {
-          const res = await fetch(HEARSAY_URL + req.path, {
+          const res = await fetch(backend.url + req.path, {
             method: req.method,
             headers: req.body === undefined ? {} : { 'content-type': 'application/json' },
             body: req.body === undefined ? undefined : JSON.stringify(req.body),
@@ -319,8 +324,8 @@ async function dispatch(msg) {
             true,
             JSON.stringify({
               error: timedOut
-                ? { code: 'timeout', message: `Hearsay at ${HEARSAY_URL} did not answer within ${TIMEOUT_MS}ms` }
-                : { code: 'unreachable', message: `Hearsay not reachable at ${HEARSAY_URL} — is \`node server.js\` running?` },
+                ? { code: 'timeout', message: `Hearsay at ${backend.url} did not answer within ${TIMEOUT_MS}ms` }
+                : { code: 'unreachable', message: `Hearsay not reachable at ${backend.url} — is \`node server.js\` running?` },
             }),
           );
         } finally {

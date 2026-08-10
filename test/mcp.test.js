@@ -8,6 +8,11 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { writePortFile } from '../core/port-discovery.js';
 
 /** Stub Hearsay: routes = { 'GET /api/status': {status, body}, … }. Records requests. */
 export async function stubBackend(routes) {
@@ -28,9 +33,16 @@ export async function stubBackend(routes) {
 }
 
 /** Spawn mcp/server.mjs; returns send/next/lines/kill. Every stdout line must parse. */
-export function startMcp(hearsayUrl) {
+export function startMcp(hearsayUrlOrEnv) {
+  const env = { ...process.env };
+  if (typeof hearsayUrlOrEnv === 'string') {
+    env.HEARSAY_URL = hearsayUrlOrEnv;
+  } else {
+    Object.assign(env, hearsayUrlOrEnv);
+    if (!Object.prototype.hasOwnProperty.call(hearsayUrlOrEnv, 'HEARSAY_URL')) delete env.HEARSAY_URL;
+  }
   const child = spawn(process.execPath, ['mcp/server.mjs'], {
-    env: { ...process.env, HEARSAY_URL: hearsayUrl },
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   /** @type {unknown[]} */
@@ -174,6 +186,62 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
   const pong = await rpc(dead, 'ping', {}, 3);
   assert.deepEqual(pong.result, {}); // still alive
   dead.kill();
+});
+
+test('mcp follows a discovery file created after the process starts', async () => {
+  const backend = await stubBackend({
+    'GET /api/status': { status: 200, body: { ok: true } },
+  });
+  const directory = mkdtempSync(join(tmpdir(), 'hearsay-mcp-port-'));
+  const portFile = join(directory, 'hearsay.port');
+  const mcp = startMcp({ HEARSAY_PORT_FILE: portFile });
+
+  try {
+    await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
+    writePortFile(portFile, Number(new URL(backend.url).port));
+    const reply = await rpc(mcp, 'tools/call', { name: 'hearsay_status', arguments: {} }, 2);
+    assert.equal(JSON.parse(reply.result.content[0].text).ok, true);
+  } finally {
+    mcp.kill();
+    await backend.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('mcp reports missing discovery instead of contacting port 3000', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'hearsay-mcp-port-'));
+  const missingFile = join(directory, 'missing.port');
+  const mcp = startMcp({ HEARSAY_PORT_FILE: missingFile });
+
+  try {
+    await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
+    const reply = await rpc(mcp, 'tools/call', { name: 'hearsay_status', arguments: {} }, 2);
+    assert.equal(reply.result.isError, true);
+    assert.match(reply.result.content[0].text, /not.*started|discovery/i);
+    assert.doesNotMatch(reply.result.content[0].text, /127\.0\.0\.1:3000/);
+  } finally {
+    mcp.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('explicit HEARSAY_URL overrides the discovery file', async () => {
+  const backend = await stubBackend({
+    'GET /api/status': { status: 200, body: { ok: true } },
+  });
+  const directory = mkdtempSync(join(tmpdir(), 'hearsay-mcp-port-'));
+  const badFile = join(directory, 'bad.port');
+  const mcp = startMcp({ HEARSAY_URL: backend.url, HEARSAY_PORT_FILE: badFile });
+
+  try {
+    await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
+    const reply = await rpc(mcp, 'tools/call', { name: 'hearsay_status', arguments: {} }, 2);
+    assert.equal(JSON.parse(reply.result.content[0].text).ok, true);
+  } finally {
+    mcp.kill();
+    await backend.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('mcp: piped stdin — replies to all requests land before exit (drain on end)', async () => {
