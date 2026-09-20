@@ -19,7 +19,7 @@ import { buildConfig } from '../core/config.js';
 import { run as exec, isoNow } from '../core/db.js';
 import { esc, html, raw } from '../web/layout.js';
 import { MAX_BODY_BYTES, resolveStatic, sendError } from '../web/router.js';
-import { startServer } from '../server.js';
+import { startServer, startupGuidance } from '../server.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(HERE, '../public');
@@ -379,7 +379,7 @@ const PAGES = [
   ['/prompts', '<h1>Prompts</h1>', '<h2>Add a prompt</h2>'],
   ['/entities', '<h1>Entities</h1>', '<h2>Add an entity</h2>'],
   ['/alerts', '<h1>Alerts</h1>', '<h2>Open alerts</h2>'],
-  ['/settings', '<h1>Settings</h1>', '<h2>Providers</h2>'],
+  ['/settings', '<h1>Settings</h1>', '<h2>API providers</h2>'],
   ['/methodology', '<h1>Methodology</h1>', '<h2>Methodology</h2>'],
   ['/setup', '<h1>Setup</h1>', '<h2>1 · Your brand</h2>'],
 ];
@@ -415,6 +415,95 @@ test('a cold database redirects to the wizard (§11.8)', async (t) => {
     await res.text();
     assert.equal(res.status, 200, `${path} did not render on a cold database`);
   }
+});
+
+test('setup presents subscription and optional API routes in each configuration state', async (t) => {
+  const states = [
+    {
+      name: 'subscription-only',
+      env: { HEARSAY_CODEX_ENABLED: '1' },
+      expectForm: true,
+      expectApiButton: false,
+      expectGuidance: false,
+    },
+    {
+      name: 'API-only',
+      env: { OPENAI_API_KEY: 'test-key' },
+      expectForm: false,
+      expectApiButton: true,
+      expectGuidance: true,
+    },
+    {
+      name: 'mixed',
+      env: { HEARSAY_CODEX_ENABLED: '1', OPENAI_API_KEY: 'test-key' },
+      expectForm: true,
+      expectApiButton: true,
+      expectGuidance: false,
+    },
+    {
+      name: 'fully unconfigured',
+      env: {},
+      expectForm: false,
+      expectApiButton: false,
+      expectGuidance: true,
+    },
+  ];
+
+  for (const state of states) {
+    const app = await newApp(t, { env: state.env });
+    const res = await fetch(`${app.base}/setup?step=3`);
+    const body = await res.text();
+    assert.equal(res.status, 200, `${state.name} setup did not render`);
+    assert.ok(body.includes('Configured subscription surfaces') || body.includes('Subscription surfaces'));
+    assert.ok(body.includes('Optional API providers'));
+    assert.equal(body.includes('data-api-form="/api/subscription/run"'), state.expectForm, `${state.name} subscription form`);
+    assert.equal(body.includes('data-subscription-run'), state.expectForm, `${state.name} subscription marker`);
+    assert.equal(body.includes('id="run-panel-setup"'), state.expectApiButton, `${state.name} API run button`);
+    if (state.expectForm) {
+      assert.ok(body.includes('value="codex-agent"'), `${state.name} should list Codex surface`);
+      assert.ok(body.includes('name="lane" value="tracking"'), `${state.name} should use tracking lane`);
+      assert.ok(body.includes('name="samples" value="1"'), `${state.name} should use subscription samples`);
+      assert.ok(body.includes('Codex agent'), `${state.name} should use the exact Codex label`);
+    }
+    if (state.expectGuidance) {
+      assert.ok(body.includes('HEARSAY_CODEX_ENABLED=1'), `${state.name} should show Codex enablement guidance`);
+      assert.ok(body.includes('HEARSAY_CLAUDE_CODE_ENABLED=1'), `${state.name} should show Claude Code enablement guidance`);
+    }
+  }
+});
+
+test('settings puts subscription surfaces before API panels and distinguishes allowance from API spend', async (t) => {
+  const app = await newApp(t, { env: { HEARSAY_CODEX_ENABLED: '1', OPENAI_API_KEY: 'test-key' } });
+  const res = await fetch(`${app.base}/settings`);
+  const body = await res.text();
+  assert.equal(res.status, 200);
+  const subscriptionAt = body.indexOf('Subscription agent surfaces');
+  const providersAt = body.indexOf('API providers');
+  const costAt = body.indexOf('API usage &amp; cost');
+  assert.ok(subscriptionAt >= 0, 'subscription panel should render');
+  assert.ok(providersAt > subscriptionAt, 'subscription panel should precede API providers');
+  assert.ok(costAt > providersAt, 'API providers should precede API cost');
+  assert.match(body, /plan allowance|Allowance consented/);
+  assert.match(body, /possible overage/);
+  assert.match(body, /Actual API spend/);
+  assert.match(body, /direct API usage only/);
+});
+
+test('startup guidance names configured subscription routes and offers both routes when unconfigured', () => {
+  const subscriptionOnly = startupGuidance(buildConfig({ HEARSAY_CODEX_ENABLED: '1', HEARSAY_CLAUDE_CODE_ENABLED: '1' }));
+  assert.ok(subscriptionOnly);
+  assert.match(subscriptionOnly, /Codex agent/);
+  assert.match(subscriptionOnly, /Claude Code agent/);
+  assert.doesNotMatch(subscriptionOnly, /cannot run|No provider API keys found/);
+
+  const unconfigured = startupGuidance(buildConfig({}));
+  assert.ok(unconfigured);
+  assert.match(unconfigured, /HEARSAY_CODEX_ENABLED=1/);
+  assert.match(unconfigured, /HEARSAY_CLAUDE_CODE_ENABLED=1/);
+  assert.match(unconfigured, /optional API key/);
+
+  const demo = startupGuidance(buildConfig({ HEARSAY_DEMO: '1' }));
+  assert.equal(demo, 'Demo mode: live provider calls and the scheduler are disabled.');
 });
 
 test('fixture data reaches the answers page, marked up as it was counted (§11.4)', async (t) => {

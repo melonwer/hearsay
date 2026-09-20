@@ -1,10 +1,10 @@
 # Hearsay
 
-**AI visibility tracker for humans and agents.** See how ChatGPT, Claude, Gemini and
-Perplexity talk about your brand versus your competitors, with honest statistics, on
-your own machine, with your own API keys. Optionally measure the separately labeled
-**Codex agent** and **Claude Code agent** surfaces through locally authenticated CLI
-subscriptions.
+**AI visibility tracker for humans and agents.** Start with the separately labeled
+**Codex agent** and **Claude Code agent** subscription runners when you already have a
+supported signed-in CLI. See how those agents talk about your brand versus competitors,
+with honest statistics, on your own machine. Optional direct API keys add OpenAI,
+Anthropic, Gemini and Perplexity coverage.
 
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -22,30 +22,25 @@ Your customers now ask ChatGPT and Perplexity which product to buy, and you have
 idea what those answers say about you. The tools that can tell you charge $99 to $1,000
 a month and give you back a single score with no margin of error.
 
-Hearsay asks your buying questions to ChatGPT, Claude, Gemini and Perplexity on a
-schedule, several times each, and counts how often you get mentioned and recommended.
-Every rate comes with a margin of error and the number of answers behind it, and it
-keeps every answer so you can read the exact text any figure came from. It runs on your
-computer.
+Hearsay asks your buying questions several times and counts how often you get mentioned
+and recommended. Every rate comes with a margin of error and the number of answers
+behind it, and every answer is kept so you can read the exact text any figure came from.
+An explicitly enabled Codex agent or Claude Code agent runs through its authenticated
+local CLI. Those measurements retain final answers, provider-confirmed web-search
+events, citations and redacted event artifacts. They are sibling evidence to API runs,
+never a blended score, and they consume the signed-in plan allowance or possible
+overage — subscription runs are not free or unlimited.
 
-For developer-tool and technical B2B buyer questions, an explicitly enabled local
-Codex agent or Claude Code agent can run the same panel through a signed-in CLI. Those
-measurements retain final answers, provider-confirmed web-search events, citations and
-redacted event artifacts. They are sibling evidence to API runs, never a blended score,
-and they consume the signed-in plan allowance or possible overage.
-
-Hearsay itself is free, but the AI engines are not. You bring your own API key for each
-engine you want to measure. An API key is a long password-like string you get by making
-a developer account at [OpenAI](https://platform.openai.com),
-[Anthropic](https://console.anthropic.com), [Google](https://aistudio.google.com) or
-[Perplexity](https://docs.perplexity.ai) and adding a payment method. They bill you per
-question asked, usually cents rather than dollars, and one key is enough to start.
+Direct API keys are optional. Add keys for OpenAI, Anthropic, Gemini and/or Perplexity
+when you want direct API measurements and expanded coverage. API providers bill those
+questions separately, usually by usage. Hearsay's built-in dollar calculator and actual
+spend figure cover API usage only; they do not estimate or report subscription allowance
+consumption.
 
 ## Install it by asking
 
-If you use [Claude Code](https://claude.com/claude-code), a free Anthropic assistant
-that runs in a terminal on your own computer and is allowed to run commands, paste this
-and it will do the whole setup:
+If you use a supported paid [Claude Code](https://claude.com/claude-code) account, paste
+this into Claude Code and it can do the whole setup:
 
 > Install and set up https://github.com/melonwer/hearsay for my brand,
 > **[your brand]**, and track it against **[competitor]** and **[competitor]**.
@@ -56,8 +51,10 @@ worth tracking, shows you that list before saving anything, tells you what a run
 cost before spending a cent, and then reports back.
 
 This works because Hearsay speaks MCP (Model Context Protocol), the standard way an AI
-assistant plugs into an outside tool. A chat window on a website cannot do this, since
-it needs to run commands on your machine.
+assistant plugs into an outside tool. MCP lets Codex and Claude Code operate Hearsay;
+it does not make an arbitrary MCP client an inference backend. Hearsay inference runs
+come only from the explicitly enabled Codex and Claude Code CLIs or from optional
+direct API keys.
 
 <details>
 <summary>The exact steps, if your assistant gets stuck</summary>
@@ -70,11 +67,12 @@ node --version                        # must be 22.13 or newer
 # and its demo brand then blocks setup for a real one.
 node scripts/seed.js
 
-cp .env.example .env                  # then put one API key in .env
+cp .env.example .env                  # subscription flags and optional API keys go here
 node server.js > hearsay.log 2>&1 &   # redirect, or a backgrounded server hangs the shell
 curl -s "http://127.0.0.1:$(tr -d '\\n' < data/hearsay.port)/api/status"   # repeat until this returns JSON
 
-# -s user registers Hearsay for every session, not just this folder
+# Add the MCP server for the client you use (see the subscription sections below).
+codex mcp add hearsay -- node "$PWD/mcp/server.mjs"
 claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
 ```
 
@@ -83,6 +81,12 @@ it again, then say "carry on setting up Hearsay". If they still do not show up, 
 over the JSON API instead, which needs no setup: `GET /api/status`,
 `POST /api/setup`, `GET /api/cost/estimate`, `POST /api/run`, `GET /api/runs/latest`,
 `GET /api/summary?days=30`, `GET /api/alerts`. There is no index page at `/api`.
+
+MCP access and inference enablement are separate. Registering the Hearsay MCP server
+lets a client operate Hearsay; setting `HEARSAY_CODEX_ENABLED=1` or
+`HEARSAY_CLAUDE_CODE_ENABLED=1` separately opts that specific signed-in CLI into
+Hearsay measurements. Other MCP clients can operate Hearsay but are not inference
+backends.
 
 Already loaded the demo data and now want to track your own brand? Stop Hearsay, delete
 `data/hearsay.db`, and start it again. That clears the fictional brand that would
@@ -133,11 +137,70 @@ port, choose an available one with `PORT=3100 node server.js`.
    brand, which would otherwise block your own.
 2. In the `hearsay` folder, copy `.env.example` to a new file called `.env`
    (`cp .env.example .env` in the terminal).
-3. Open `.env` in any text editor and paste your key after the matching name, for
-   example `OPENAI_API_KEY=sk-...`. One key is enough.
+3. Choose a signed-in Codex or Claude Code subscription runner below, or add optional
+   direct API keys such as `OPENAI_API_KEY=sk-...` for API measurements. One route is
+   enough to start.
 4. Run `node server.js` again and open the printed local URL with `/setup` appended in
    your browser. The port is also available with `tr -d '\\n' < data/hearsay.port`.
    Type that address in; there is no link to it in the menu.
+
+### Use a Codex subscription runner
+
+Codex measurements use the local authenticated CLI and the allowance of your supported
+Codex subscription plan. They are not measurements of the ChatGPT web app. Subscription
+usage is not free or unlimited and may incur overage.
+
+```sh
+codex login
+codex login status
+```
+
+Add this line to `.env`, then restart Hearsay:
+
+```dotenv
+HEARSAY_CODEX_ENABLED=1
+```
+
+Register Hearsay as an MCP server for Codex from the repository directory:
+
+```sh
+codex mcp add hearsay -- node "$PWD/mcp/server.mjs"
+```
+
+### Use a Claude Code subscription runner
+
+Claude Code requires a supported paid Pro, Max, Team, Enterprise or Console account;
+the free `claude.ai` plan does not include Claude Code. Claude Code measurements use
+the local authenticated CLI and its plan allowance. They are not measurements of
+Claude.ai. Subscription usage is not free or unlimited and may incur overage.
+
+Authenticate in the terminal with `claude auth login`, or start `claude` and complete
+the browser login, then verify it:
+
+```sh
+claude auth login
+claude auth status
+```
+
+Add this line to `.env`, then restart Hearsay:
+
+```dotenv
+HEARSAY_CLAUDE_CODE_ENABLED=1
+```
+
+Register Hearsay for every Claude Code session from the repository directory:
+
+```sh
+claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
+```
+
+### Optional direct API providers
+
+API keys are optional and independent of the subscription flags. Add one or more of
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` and `PERPLEXITY_API_KEY` to
+`.env` when you want direct API measurements and Gemini or Perplexity coverage. The
+API cost calculator and actual-spend figure apply to these API calls only; they do not
+turn subscription allowance into a dollar estimate.
 
 ### Connect an AI assistant
 
@@ -165,8 +228,9 @@ everything. Quit Claude Desktop completely and reopen it afterwards.
 Now ask it "how's our AI visibility this week?" and it answers from your own
 measurements. Eighteen tools cover setup, exploration questions, exact-surface
 subscription previews/runs, scheduling, cost quotes, results and alerts. Your
-assistant uses its own model to talk to you, so
-reading your results does not spend the API keys you gave Hearsay.
+assistant uses its own model to talk to you. Reading results does not trigger a new
+Hearsay measurement run or optional provider-API spend; the assistant interaction
+follows that assistant client's own plan/usage.
 
 There is an optional skill that teaches an assistant the full playbook, including how to
 read the numbers honestly. Install it with
@@ -220,8 +284,10 @@ in the answers where your brand never comes up. Alerts fire when your mentions d
 when a competitor passes you, and when you win or lose a recommendation, each one
 carrying the answers that triggered it.
 
-The cost calculator estimates what a run will cost before it starts and records what it
-actually spent afterwards. You pay your model providers directly at their prices.
+The cost calculator estimates direct API usage before an API run starts and records the
+actual API spend afterwards. Subscription runs are separate: they consume the signed-in
+Codex or Claude Code plan allowance and may incur overage, so they are not represented
+as a dollar estimate here.
 
 ### What Hearsay refuses to build
 
@@ -235,10 +301,13 @@ measures cannot be trusted about either.
 
 ## What it costs to run
 
-Hearsay never quotes a flat price. What you spend depends on how many questions you
-track, how many engines you ask, and how many times you ask them, so the built-in
-calculator works it out from your own setup before each run and records the real spend
-afterwards.
+Hearsay itself has no paid edition or hosted fee. A Codex or Claude Code subscription
+runner uses the allowance of the signed-in plan and may incur overage; it is not free or
+unlimited. Optional direct API runs are billed by the API providers you configure. What
+an API run costs depends on how many questions you track, how many API providers you
+ask, and how many samples you take, so the built-in calculator estimates that API usage
+before each run and records actual API spend afterwards. It does not estimate
+subscription allowance in dollars.
 
 ![Hearsay's cost calculator on the Settings page, showing estimated spend from your panel size and actual 30-day token spend](docs/screenshot-cost.png)
 
@@ -250,13 +319,13 @@ of the same date rather than from peec.ai.
 
 | | Hearsay | [Profound](https://www.tryprofound.com/pricing) | [Peec AI](https://trakkr.ai/reviews/peec-review/pricing) | [elmo](https://github.com/elmohq/elmo) |
 |---|---|---|---|---|
-| Price | Free; you pay your model providers directly | $99/mo entry (ChatGPT only) → $399/mo → Enterprise | $95 to $495/mo, Enterprise custom | Free |
+| Price | Free; subscription runs use your existing plan allowance and may incur overage; optional API runs are billed directly by those providers | $99/mo entry (ChatGPT only) → $399/mo → Enterprise | $95 to $495/mo, Enterprise custom | Free |
 | License | MIT | Proprietary SaaS | Proprietary SaaS | MIT |
-| Engines | ChatGPT, Claude, Gemini, Perplexity, all included | Entry tier: ChatGPT only; Claude Enterprise-gated | 3 of 6 engines on self-serve tiers | ChatGPT, Claude, Perplexity, Gemini, AI Overviews |
+| Engines | Codex agent and Claude Code agent through signed-in CLIs; optional OpenAI, Anthropic, Gemini and Perplexity APIs | Entry tier: ChatGPT only; Claude Enterprise-gated | 3 of 6 engines on self-serve tiers | ChatGPT, Claude, Perplexity, Gemini, AI Overviews |
 | Margin of error | Wilson 95% intervals, plus rerun and rewording spread reported separately | None published | None published | None |
 | Stored answers | Every answer kept, searchable, linked from every metric | Answer-engine responses on paid tiers | Prompt-level views on paid tiers | Stores responses |
-| Assistant access | MCP and JSON API built in, free; can read and change your setup | API on Enterprise only | API and MCP as higher-tier add-ons | None |
-| What you install | Two commands, nothing else, all data in one file (`git clone` plus `node server.js`) | Nothing, it is hosted | Nothing, it is hosted | Container and database software first (Docker Compose, Postgres, pg-boss) |
+| Assistant access | MCP and JSON API built in; Codex/Claude Code can operate Hearsay and supply their configured subscription measurements; other MCP clients operate Hearsay but are not runners | API on Enterprise only | API and MCP as higher-tier add-ons | None |
+| What you install | Node plus any signed-in CLI you choose; API-only needs keys; core data is one file plus local subscription artifacts (`git clone` plus `node server.js`) | Nothing, it is hosted | Nothing, it is hosted | Container and database software first (Docker Compose, Postgres, pg-boss) |
 
 ## Methodology
 
@@ -268,10 +337,12 @@ recommend. Ask the identical question twice and the overlap is 50% to 61%
 ([arXiv:2605.27440](https://arxiv.org/pdf/2605.27440)). So Hearsay asks each question
 several ways and shows you both numbers.
 
-Answers from the APIs are not the same as what a logged-in person sees in the ChatGPT
-app. They have no memory of the user, no personalisation and none of the hidden
-instructions the consumer apps add. Treat them as a directional baseline. No amount of
-extra sampling fixes this.
+Answers from the direct APIs are not the same as what a logged-in person sees in the
+ChatGPT app, and Codex agent or Claude Code agent results are not measurements of the
+ChatGPT web app or Claude.ai. API answers have no memory of the user, no personalisation
+and none of the hidden instructions the consumer apps add. Treat each configured route
+as its own directional baseline; no amount of extra sampling makes sibling surfaces a
+single comparable score.
 
 The channel is still small. Under 0.2% of e-commerce visits come from AI tools
 ([organicllm.org](https://organicllm.org)), though complex, considered purchases run
@@ -281,11 +352,18 @@ several times higher. Hearsay's costs are built for a channel that size.
 
 > MIT licensed, one license, with no separate paid edition and no gated features.
 > Everything in this repo is everything there is, and no hosted version is planned.
-> Hearsay collects nothing about you and sends nothing anywhere: the only things it ever
-> contacts are the AI engines you gave it keys for. Your data is a single file at
-> `data/hearsay.db` that you can back up by copying it, and opening
-> `http://127.0.0.1:<the-port-in-data/hearsay.port>/api/export` downloads all of it,
-> questions, runs, answers and metrics, as one JSON file.
+> Hearsay runs locally and does not collect telemetry. Direct API prompts go only to
+> the API providers whose keys you configure; subscription prompts go through the
+> explicitly enabled, locally authenticated Codex or Claude Code CLI and its provider.
+> MCP clients can operate your local Hearsay instance, but are not inference backends
+> unless one of those supported runners is enabled. Core records live in
+> `data/hearsay.db`; subscription runs may also write redacted event artifacts under
+> `data/artifacts/` (or your configured `HEARSAY_DATA_DIR`), so back up both when needed.
+> The `/api/export` endpoint at
+> `http://127.0.0.1:<the-port-in-data/hearsay.port>/api/export` exports all database
+> records — questions, runs, answers and metrics — as one JSON file. It does not package
+> artifact files; back up `data/artifacts/` (or your configured `HEARSAY_DATA_DIR`)
+> separately.
 
 ## Roadmap
 

@@ -16,6 +16,7 @@ import { removePortFile, writePortFile } from './core/port-discovery.js';
 import { recoverStaleRuns } from './core/runner.js';
 import { localDate, startScheduler } from './core/scheduler.js';
 import { seedIfDemoAndEmpty } from './core/seed.js';
+import { SURFACE_LABEL } from './web/layout.js';
 import { createRouter } from './web/router.js';
 import { registerApiRoutes } from './web/pages/api.js';
 import { registerPageRoutes } from './web/pages/index.js';
@@ -36,6 +37,26 @@ function readVersion() {
 }
 
 export const VERSION = readVersion();
+
+/**
+ * Describe the configured inference routes for the production-entrypoint message.
+ * This is pure so startup copy can be exercised without opening a database or port.
+ *
+ * @param {import('./core/config.js').Config} config
+ * @returns {string|null} startup guidance, or null when an API route is already configured
+ */
+export function startupGuidance(config) {
+  if (config.demo) return 'Demo mode: live provider calls and the scheduler are disabled.';
+
+  const labels = (config.subscriptionSurfaces ?? []).map((surface) => SURFACE_LABEL[surface] ?? surface);
+  if ((config.enabledProviders ?? []).length > 0) return null;
+  if (labels.length > 0) {
+    return `No API keys are configured. Subscription measurements are enabled for ${labels.join(
+      ' and ',
+    )}; Hearsay can run through signed-in plan allowance, which may incur overage.`;
+  }
+  return 'No inference route is configured. Authenticate Codex or Claude Code and set HEARSAY_CODEX_ENABLED=1 or HEARSAY_CLAUDE_CODE_ENABLED=1, or configure an optional API key for direct API measurements.';
+}
 
 /**
  * Build the router for a given database + config.
@@ -147,9 +168,6 @@ function isMainModule() {
 if (isMainModule()) {
   const { port } = await startServer();
   process.stdout.write(`Hearsay v${VERSION} listening on http://${processConfig.host}:${port}\n`);
-  if (processConfig.demo) {
-    process.stdout.write('Demo mode: live provider calls and the scheduler are disabled.\n');
-  } else if (processConfig.enabledProviders.length === 0) {
-    process.stdout.write('No provider API keys found — add one to .env to run a panel.\n');
-  }
+  const guidance = startupGuidance(processConfig);
+  if (guidance) process.stdout.write(`${guidance}\n`);
 }

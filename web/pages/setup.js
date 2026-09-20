@@ -10,7 +10,7 @@
  * the flow never dead-ends just because nothing is wired up yet.
  */
 
-import { html, layout, usd } from '../layout.js';
+import { html, layout, SURFACE_LABEL, usd } from '../layout.js';
 import { cost, soft } from '../data.js';
 import { activePromptCount, brandEntity, listEntities } from '../queries.js';
 
@@ -85,6 +85,8 @@ export function starterPack({ brand, competitors }, year = new Date().getUTCFull
  * @property {boolean} hasKey at least one provider key is configured
  * @property {SetupProviderRow[]} providers
  * @property {number} samples
+ * @property {('codex-agent'|'claude-code-agent')[]} subscriptionSurfaces configured subscription measurement surfaces
+ * @property {number} subscriptionSamples allowance-safe subscription samples per prompt
  * @property {number} calls calls the first run would make (§4.2)
  * @property {number|null} estUsd null when the price table has no entry — never a guess (§4.3)
  * @property {{text: string, category: string}[]} starter starter pack, entity names filled in (§20.3)
@@ -129,6 +131,8 @@ export function buildView({ db, config }, query) {
       keyEnv: provider.keyEnv,
     })),
     samples: config.samples,
+    subscriptionSurfaces: config.subscriptionSurfaces,
+    subscriptionSamples: config.subscriptionSamples,
     calls: estimate ? Number(estimate.calls ?? calls) : calls,
     estUsd: estimate ? estimate.estUsd : null,
     starter: starterPack({ brand: brand?.name ?? null, competitors: competitors.map((entity) => entity.name) }),
@@ -268,36 +272,95 @@ function stepGo(view) {
     </tr>`,
   );
 
+  const subscriptionRows = view.subscriptionSurfaces.map(
+    (surface) => html`<tr>
+      <td>${SURFACE_LABEL[surface] ?? surface}</td>
+      <td>Enabled</td>
+      <td>${view.subscriptionSamples} sample(s) per prompt</td>
+    </tr>`,
+  );
+  const subscriptionSection =
+    view.subscriptionSurfaces.length > 0
+      ? html`<section>
+          <h3>Configured subscription surfaces</h3>
+          <p class="muted">
+            These separately labeled measurements use your signed-in plan allowance and may incur overage; they are not
+            free or unlimited. They are not measurements of the ChatGPT web app or Claude.ai.
+          </p>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Surface</th>
+                <th>Status</th>
+                <th>Sampling</th>
+              </tr>
+            </thead>
+            <tbody>${subscriptionRows}</tbody>
+          </table>
+          ${view.demo
+            ? html`<p class="muted">Demo mode is on, so live subscription runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`
+            : html`<form class="inline-form" data-api-form="/api/subscription/run" data-subscription-run>
+                <label class="grow">
+                  <span>Subscription surfaces</span>
+                  <input name="surfaces" data-list value="${view.subscriptionSurfaces.join(',')}" required />
+                </label>
+                <input type="hidden" name="lane" value="tracking" />
+                <input type="hidden" name="samples" value="${view.subscriptionSamples}" />
+                <button type="submit" class="btn">Preview subscription run</button>
+                <p class="muted small">A confirmation prompt appears before this uses signed-in plan allowance.</p>
+                <p class="form-error" data-form-error hidden></p>
+              </form>`}
+        </section>`
+      : html`<section>
+          <h3>Subscription surfaces</h3>
+          <p class="muted">
+            To use signed-in subscription measurements, authenticate the local CLI and add one or both enablement
+            variables to <code>.env</code>:
+          </p>
+          <p><code>HEARSAY_CODEX_ENABLED=1</code><br /><code>HEARSAY_CLAUDE_CODE_ENABLED=1</code></p>
+          <p class="muted small">Subscription runs use plan allowance and may incur overage; they are not free or unlimited.</p>
+        </section>`;
+
   return html`<section class="card">
     <h2>3 · Go</h2>
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Engine</th>
-          <th>Status</th>
-          <th>Model</th>
-          <th class="num">Key</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-    <dl class="kv">
-      <dt>Calls in the first run</dt>
-      <dd>${view.calls} <span class="muted">${view.promptCount} prompts × ${view.samples} samples per engine</span></dd>
-      <dt>Estimated cost</dt>
-      <dd>
-        ${view.estUsd === null
-          ? html`<span class="muted">not available until the price table covers your models — Hearsay does not guess</span>`
-          : usd(view.estUsd)}
-      </dd>
-    </dl>
-    ${view.demo
-      ? html`<p class="muted">Demo mode is on, so live runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`
-      : html`<p><button type="button" class="btn" id="run-panel-setup">Run first panel</button></p>`}
+    ${subscriptionSection}
+    <section>
+      <h3>Optional API providers</h3>
+      <p class="muted">
+        API keys are optional. These direct API providers add expanded coverage for OpenAI, Anthropic, Gemini and
+        Perplexity. API dollar estimates and actual spend below apply only to API usage.
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>API provider</th>
+            <th>Status</th>
+            <th>Model</th>
+            <th class="num">Key</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+      <dl class="kv">
+        <dt>API calls in the first run</dt>
+        <dd>${view.calls} <span class="muted">${view.promptCount} prompts × ${view.samples} samples per API provider</span></dd>
+        <dt>Estimated API cost</dt>
+        <dd>
+          ${view.estUsd === null
+            ? html`<span class="muted">not available until the price table covers your models — Hearsay does not guess</span>`
+            : usd(view.estUsd)}
+        </dd>
+      </dl>
+      ${view.demo
+        ? html`<p class="muted">Demo mode is on, so live API runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`
+        : view.hasKey
+          ? html`<p><button type="button" class="btn" id="run-panel-setup">Run first API panel</button></p>`
+          : html`<p class="muted">No API provider is configured. Add an API key only if you want direct API measurements.</p>`}
+    </section>
     <p class="muted small">
-      No key, or not ready to spend? Load the fictional demo universe instead: <code>node scripts/seed.js</code>.
+      Load the fictional demo universe instead: <code>node scripts/seed.js</code>.
     </p>
     <p><a href="/">Finish →</a></p>
   </section>`;

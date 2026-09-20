@@ -163,24 +163,21 @@ function costPanel(view) {
   );
 
   return html`<section class="card">
-    <h2>Cost</h2>
+    <h2>API usage &amp; cost</h2>
     <dl class="kv">
-      <dt>Calls per run</dt>
+      <dt>API calls per run</dt>
       <dd>
         ${view.calls}
-        <span class="muted"
-          >${view.activePrompts} active prompts × ${view.providers.filter((p) => p.enabled).length} engines ×
-          ${view.samples} samples</span
-        >
+        <span class="muted">${view.activePrompts} active prompts × ${view.providers.filter((p) => p.enabled).length} API providers × ${view.samples} samples</span>
       </dd>
-      <dt>Estimated cost per run</dt>
+      <dt>Estimated API cost per run</dt>
       <dd>
         ${view.estUsd === null
           ? html`<span class="muted">not available — the price table has no entry for one of your models, and Hearsay
               does not guess</span>`
           : usd(view.estUsd)}
       </dd>
-      <dt>Actual spend, last ${view.spendDays} days</dt>
+      <dt>Actual API spend, last ${view.spendDays} days</dt>
       <dd>${usd(view.spend ? view.spend.totalUsd : null)}</dd>
     </dl>
     ${perProvider.length === 0
@@ -188,9 +185,9 @@ function costPanel(view) {
       : html`<table class="table">
           <thead>
             <tr>
-              <th>Engine</th>
-              <th class="num">Calls</th>
-              <th class="num">Estimated</th>
+              <th>API provider</th>
+              <th class="num">API calls</th>
+              <th class="num">Estimated API cost</th>
             </tr>
           </thead>
           <tbody>
@@ -198,8 +195,10 @@ function costPanel(view) {
           </tbody>
         </table>`}
     <p class="muted small">
-      Estimates use the token medians documented in the methodology, priced from the table in core/cost.js. Actual
-      spend is the sum of the usage each provider reported, so it is zero until a live run happens.
+      Estimates and actual spend cover direct API usage only. Estimates use the token medians documented in the
+      methodology, priced from the table in core/cost.js. Actual API spend is the sum of the usage each provider
+      reported, so it is zero until a live API run happens. Subscription allowance and possible overage are shown
+      above and are not converted into this dollar figure.
     </p>
   </section>`;
 }
@@ -214,7 +213,11 @@ function subscriptionPanel(view) {
   if (surfaces.length === 0) {
     return html`<section class="card">
       <h2>Subscription agent surfaces</h2>
-      <p class="muted">No subscription CLI surface is enabled. Set the surface-specific opt-in environment setting and restart Hearsay.</p>
+      <p class="muted">
+        No subscription CLI surface is enabled. Authenticate the local Codex or Claude Code CLI, then set
+        <code>HEARSAY_CODEX_ENABLED=1</code> and/or <code>HEARSAY_CLAUDE_CODE_ENABLED=1</code> in <code>.env</code>
+        and restart Hearsay.
+      </p>
     </section>`;
   }
   const schedule = view.subscriptionSchedule;
@@ -284,16 +287,18 @@ export function render(ctx, view) {
     </tr>`,
   );
 
-  const body = html`<section class="card">
-      <h2>Providers</h2>
+  const body = html`${subscriptionPanel(view)}
+    <section class="card">
+      <h2>API providers</h2>
       <p class="muted">
-        A provider is enabled when its API key environment variable is set. Keys are read from the environment only —
-        Hearsay never stores them, never logs them and never displays them in full.
+        API providers are optional direct-API measurement routes. A provider is enabled when its API key environment
+        variable is set. Keys are read from the environment only — Hearsay never stores them, never logs them and
+        never displays them in full.
       </p>
       <table class="table">
         <thead>
           <tr>
-            <th>Engine</th>
+            <th>API provider</th>
             <th>Status</th>
             <th>Model</th>
             <th class="num">Key</th>
@@ -305,22 +310,21 @@ export function render(ctx, view) {
       </table>
     </section>
     <section class="card">
-      <h2>Sampling &amp; schedule</h2>
+      <h2>API sampling &amp; schedule</h2>
       <dl class="kv">
         <dt>Daily run at</dt>
         <dd>${view.runAt} <span class="muted">server local time</span></dd>
-        <dt>Samples</dt>
-        <dd>${view.samples} <span class="muted">per prompt per provider per run</span></dd>
-        <dt>Concurrency</dt>
+        <dt>API samples</dt>
+        <dd>${view.samples} <span class="muted">per prompt per API provider per run</span></dd>
+        <dt>API concurrency</dt>
         <dd>${view.concurrency}</dd>
-        <dt>Per-call timeout</dt>
+        <dt>API per-call timeout</dt>
         <dd>${view.timeoutMs} ms</dd>
         <dt>Demo mode</dt>
         <dd>${view.demo ? 'On — live calls and the scheduler are disabled' : 'Off'}</dd>
       </dl>
     </section>
     ${costPanel(view)}
-    ${subscriptionPanel(view)}
     <section class="card">
       <h2>Share of voice</h2>
       <label class="check">

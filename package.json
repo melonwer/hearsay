@@ -2,7 +2,7 @@
   "name": "hearsay",
   "version": "0.1.0",
   "private": true,
-  "description": "AI visibility tracker for humans and agents. See how ChatGPT, Claude, Gemini & Perplexity talk about your brand — self-hosted, zero dependencies, your own API keys, MCP built in.",
+  "description": "AI visibility tracker with Codex agent and Claude Code agent subscription measurements plus optional OpenAI, Anthropic, Gemini and Perplexity API measurements — self-hosted, zero dependencies, MCP built in.",
   "license": "MIT",
   "type": "module",
   "engines": {
