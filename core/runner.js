@@ -16,6 +16,8 @@ import { all, get, isoNow, run as dbRun, transaction } from './db.js';
 import { costUsd } from './cost.js';
 import { ProviderError } from './providers/shared.js';
 import { adapters as defaultAdapters } from './providers/index.js';
+import { benchmarkRevision, executionProfile } from './measurement-contract.js';
+import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from './measurement-storage.js';
 // Namespace imports: these modules belong to another lane and may still be stubs while
 // Lane A is in flight. A namespace import never fails to resolve, so the runner stays
 // importable and testable with injected implementations.
@@ -96,6 +98,8 @@ export function recoverStaleRuns(db, opts = {}) {
             SET target_status = 'failed',
                 comparability_status = 'non_comparable',
                 comparability_reason = 'abandoned',
+                answer_status = 'failed',
+                evidence_completeness = 'unavailable',
                 web_status = CASE
                   WHEN surface IN ('codex-agent', 'claude-code-agent') THEN 'failed'
                   ELSE COALESCE(web_status, 'not_applicable')
@@ -121,6 +125,7 @@ export function recoverStaleRuns(db, opts = {}) {
  * @property {string} model
  * @property {number} sampleIdx
  * @property {string} promptOrigin
+ * @property {number} responseId
  */
 
 /**
@@ -245,8 +250,34 @@ async function executeRun(options) {
   if (existing) throw new RunInProgressError(Number(existing.id));
 
   const providers = config.enabledProviders;
-  const prompts = all(db, 'SELECT id, text, origin FROM prompts WHERE active = 1 ORDER BY id');
+  const prompts = all(db, 'SELECT id, intent_id, text, category, origin FROM prompts WHERE active = 1 ORDER BY id');
   const entities = loadEntities(db);
+  const benchmark = prompts.length === 0 ? null : benchmarkRevision({
+    questions: prompts.map((prompt) => ({
+      id: Number(prompt.id), intentId: Number(prompt.intent_id),
+      category: String(prompt.category), text: String(prompt.text),
+    })),
+    entities: all(db, 'SELECT id, name, aliases, domains, is_self FROM entities WHERE archived_at IS NULL ORDER BY id')
+      .map((entity) => ({
+        id: Number(entity.id), role: /** @type {'brand'|'competitor'} */ (Number(entity.is_self) === 1 ? 'brand' : 'competitor'),
+        name: String(entity.name), aliases: parseJsonArray(entity.aliases), domains: parseJsonArray(entity.domains),
+      })),
+    weighting: 'equal', scope: 'tracking',
+  });
+
+  /** @type {Map<string, ReturnType<typeof executionProfile>>} */
+  const profiles = new Map();
+  for (const provider of providers) {
+    const route = provider.id === 'openai' ? 'openai-chat-completions-v1'
+      : provider.id === 'anthropic' ? 'anthropic-messages-v1'
+        : provider.id === 'gemini' ? 'gemini-generate-content-v1' : 'perplexity-sonar-v1';
+    const policy = provider.id === 'perplexity' ? 'legacy' : 'off';
+    profiles.set(provider.id, executionProfile({
+      surface: `${provider.id}-api`, route, model: provider.model, searchPolicy: policy,
+      envelopeVersion: API_PROMPT_ENVELOPE_VERSION,
+      requestSettings: { timeoutMs: config.timeoutMs },
+    }));
+  }
 
   /** @type {Task[]} */
   const tasks = [];
@@ -260,24 +291,47 @@ async function executeRun(options) {
           model: provider.model,
           sampleIdx,
           promptOrigin: String(prompt.origin ?? 'legacy'),
+          responseId: 0,
         });
       }
     }
   }
 
   const startedAt = isoNow(now());
-  const inserted = dbRun(
-    db,
-    `INSERT INTO runs(started_at, trigger, status, total_calls, done_calls)
-     SELECT ?, ?, 'running', ?, 0
-      WHERE NOT EXISTS (SELECT 1 FROM runs WHERE status = 'running')`,
-    [startedAt, trigger, tasks.length],
-  );
-  if (inserted.changes === 0) {
-    const running = get(db, "SELECT id FROM runs WHERE status = 'running' ORDER BY id LIMIT 1");
-    throw new RunInProgressError(running ? Number(running.id) : null);
-  }
-  const runId = inserted.lastInsertRowid;
+  const runId = transaction(db, () => {
+    const inserted = dbRun(
+      db,
+      `INSERT INTO runs(started_at, trigger, status, total_calls, done_calls)
+       SELECT ?, ?, 'running', ?, 0
+        WHERE NOT EXISTS (SELECT 1 FROM runs WHERE status = 'running')`,
+      [startedAt, trigger, tasks.length],
+    );
+    if (inserted.changes === 0) {
+      const running = get(db, "SELECT id FROM runs WHERE status = 'running' ORDER BY id LIMIT 1");
+      throw new RunInProgressError(running ? Number(running.id) : null);
+    }
+    for (const task of tasks) {
+      task.responseId = dbRun(db, `INSERT INTO responses(
+        run_id, prompt_id, provider, surface, model, sample_idx, created_at,
+        lane, target_status, comparability_status, web_status, prompt_text_snapshot,
+        prompt_origin, execution_profile_hash, prompt_envelope_version, comparison_key,
+        location_control
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, 'tracking', 'queued', 'non_comparable',
+        'not_applicable', ?, ?, ?, ?, ?, 'uncontrolled')`, [
+        inserted.lastInsertRowid, task.promptId, task.provider, `${task.provider}-api`,
+        task.model, task.sampleIdx, startedAt, task.promptText, task.promptOrigin,
+        API_EXECUTION_PROFILE_HASH, API_PROMPT_ENVELOPE_VERSION,
+        `legacy:${task.provider}:${task.model}`,
+      ]).lastInsertRowid;
+      const profile = profiles.get(task.provider);
+      if (!profile || !benchmark) throw new TypeError('Missing queued measurement definition');
+      storeTargetDefinition(db, task.responseId, {
+        profile, benchmark, analysisRevision: 'legacy-heuristic-v1',
+        searchPolicy: task.provider === 'perplexity' ? 'legacy' : 'off', at: startedAt,
+      });
+    }
+    return inserted.lastInsertRowid;
+  });
 
   /** @type {Record<string, ProviderTally>} */
   const byProvider = {};
@@ -307,8 +361,7 @@ async function executeRun(options) {
   }
 
   /**
-   * One task: call the provider, write exactly one `responses` row, and — on success —
-   * its mentions and citations in the same transaction.
+   * One queued task: call the provider, then finalize its answer and evidence together.
    *
    * @param {Task} task
    * @returns {Promise<void>}
@@ -318,29 +371,12 @@ async function executeRun(options) {
     if (tally.circuitOpen) {
       dbRun(
         db,
-        `INSERT INTO responses(
-          run_id, prompt_id, provider, surface, model, sample_idx, error, created_at,
-          lane, target_status, comparability_status, web_status, prompt_text_snapshot,
-          prompt_origin, execution_profile_hash, prompt_envelope_version, comparison_key,
-          location_control, safe_error_code
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'tracking', 'failed', 'non_comparable',
-          'not_applicable', ?, ?, ?, ?, ?, 'uncontrolled', ?)`,
-        [
-          runId,
-          task.promptId,
-          task.provider,
-          `${task.provider}-api`,
-          task.model,
-          task.sampleIdx,
-          SKIPPED_CIRCUIT,
-          isoNow(now()),
-          task.promptText,
-          task.promptOrigin,
-          API_EXECUTION_PROFILE_HASH,
-          API_PROMPT_ENVELOPE_VERSION,
-          `legacy:${task.provider}:${task.model}`,
-          'skipped_circuit',
-        ],
+        `UPDATE responses SET error = ?, created_at = ?, target_status = 'failed',
+          comparability_status = 'non_comparable', comparability_reason = 'skipped_circuit',
+          answer_status = 'failed', evidence_completeness = 'unavailable',
+          query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
+        [SKIPPED_CIRCUIT, isoNow(now()), task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
+          'skipped_circuit', task.responseId],
       );
       tally.skipped += 1;
       skippedCalls += 1;
@@ -368,29 +404,13 @@ async function executeRun(options) {
     if (failure) {
       dbRun(
         db,
-        `INSERT INTO responses(
-          run_id, prompt_id, provider, surface, model, sample_idx, error, created_at,
-          lane, target_status, comparability_status, web_status, prompt_text_snapshot,
-          prompt_origin, execution_profile_hash, prompt_envelope_version, comparison_key,
-          location_control, safe_error_code
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 'tracking', 'failed', 'non_comparable',
-          'not_applicable', ?, ?, ?, ?, ?, 'uncontrolled', ?)`,
-        [
-          runId,
-          task.promptId,
-          task.provider,
-          `${task.provider}-api`,
-          task.model,
-          task.sampleIdx,
-          failure.toStorage(),
-          isoNow(now()),
-          task.promptText,
-          task.promptOrigin,
-          API_EXECUTION_PROFILE_HASH,
-          API_PROMPT_ENVELOPE_VERSION,
-          `legacy:${task.provider}:${task.model}`,
-          failure.kind,
-        ],
+        `UPDATE responses SET error = ?, created_at = ?, target_status = 'failed',
+          comparability_status = 'non_comparable', comparability_reason = ?,
+          answer_status = 'failed', evidence_completeness = 'unavailable',
+          query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
+        [failure.toStorage(), isoNow(now()), `provider_${failure.kind}`,
+          task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
+          failure.kind, task.responseId],
       );
       tally.errors += 1;
       errorCalls += 1;
@@ -427,65 +447,94 @@ async function executeRun(options) {
 
     // Synchronous on purpose — an `await` between BEGIN and COMMIT would let another
     // worker interleave into this transaction.
-    transaction(db, () => {
-      const responseId = dbRun(
-        db,
-        `INSERT INTO responses(
-          run_id, prompt_id, provider, surface, model, sample_idx, text, latency_ms,
-          tokens_in, tokens_out, cost_usd, created_at, lane, target_status,
-          comparability_status, web_status, prompt_text_snapshot, prompt_origin,
-          execution_profile_hash, prompt_envelope_version, comparison_key, location_control
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'tracking', 'completed',
-          'comparable', 'not_applicable', ?, ?, ?, ?, ?, 'uncontrolled')`,
-        [
-          runId,
-          task.promptId,
-          task.provider,
-          `${task.provider}-api`,
-          effectiveModel,
-          task.sampleIdx,
-          answer.text,
-          Number.isFinite(answer.latencyMs) ? Math.round(answer.latencyMs) : null,
-          tokensIn,
-          tokensOut,
-          cost,
-          createdAt,
-          task.promptText,
-          task.promptOrigin,
-          API_EXECUTION_PROFILE_HASH,
-          API_PROMPT_ENVELOPE_VERSION,
-          `legacy:${task.provider}:${effectiveModel}`,
-        ],
-      ).lastInsertRowid;
-
-      for (const mention of analysis?.mentions ?? []) {
+    try {
+      transaction(db, () => {
         dbRun(
           db,
-          `INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet)
-           VALUES(?, ?, ?, ?, ?, ?, ?)`,
+          `UPDATE responses SET model = ?, latency_ms = ?, tokens_in = ?, tokens_out = ?,
+            cost_usd = ?, created_at = ?, comparison_key = ? WHERE id = ?`,
           [
-            responseId,
-            Number(pick(mention, ['entityId', 'entity_id']) ?? 0),
-            Number(pick(mention, ['firstIndex', 'first_index']) ?? 0),
-            Number(pick(mention, ['occurrences']) ?? 1),
-            Number(pick(mention, ['rank']) ?? 1),
-            pick(mention, ['recommended']) ? 1 : 0,
-            String(pick(mention, ['snippet']) ?? ''),
+            effectiveModel,
+            Number.isFinite(answer.latencyMs) ? Math.round(answer.latencyMs) : null,
+            tokensIn,
+            tokensOut,
+            cost,
+            createdAt,
+            `legacy:${task.provider}:${effectiveModel}`,
+            task.responseId,
           ],
         );
-      }
 
-      for (const citation of analysis?.citations ?? []) {
-        const entityId = pick(citation, ['entityId', 'entity_id']);
-        dbRun(db, 'INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?, ?, ?, ?, ?)', [
-          responseId,
-          String(pick(citation, ['url']) ?? ''),
-          String(pick(citation, ['domain']) ?? ''),
-          Number(pick(citation, ['rank']) ?? 1),
-          entityId === undefined ? null : Number(entityId),
-        ]);
-      }
-    });
+        const usageComponents = answer.usageComponents ?? [
+          ...(tokensIn === null ? [] : [{
+            targetId: String(task.responseId), attempt: 0, continuation: 0,
+            component: 'input_tokens', quantity: tokensIn, unit: 'tokens',
+            costUsd: null, costStatus: /** @type {const} */ ('partial'), priceVersion: null,
+          }]),
+          ...(tokensOut === null ? [] : [{
+            targetId: String(task.responseId), attempt: 0, continuation: 0,
+            component: 'output_tokens', quantity: tokensOut, unit: 'tokens',
+            costUsd: null, costStatus: /** @type {const} */ ('partial'), priceVersion: null,
+          }]),
+        ];
+        const normalizedCitations = answer.answerCitations ?? (task.provider === 'perplexity' ? []
+          : (analysis?.citations ?? []).map((citation) => ({
+            url: String(pick(citation, ['url']) ?? ''),
+            provenance: /** @type {const} */ ('text_link'),
+            sourceId: null, start: null, end: null,
+          })));
+        storeMeasurementEvidence(db, task.responseId, {
+          policy: task.provider === 'perplexity' ? 'legacy' : 'off',
+          answerStatus: answer.answerStatus ?? (answer.text.trim() === '' ? 'empty' : 'complete'),
+          answer: answer.text,
+          actions: answer.searchActions ?? [],
+          sources: answer.sources ?? [],
+          citations: normalizedCitations,
+          usage: usageComponents.map((component) => ({ ...component, targetId: String(task.responseId) })),
+          at: createdAt,
+        });
+
+        for (const mention of analysis?.mentions ?? []) {
+          dbRun(
+            db,
+            `INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet)
+             VALUES(?, ?, ?, ?, ?, ?, ?)`,
+            [
+              task.responseId,
+              Number(pick(mention, ['entityId', 'entity_id']) ?? 0),
+              Number(pick(mention, ['firstIndex', 'first_index']) ?? 0),
+              Number(pick(mention, ['occurrences']) ?? 1),
+              Number(pick(mention, ['rank']) ?? 1),
+              pick(mention, ['recommended']) ? 1 : 0,
+              String(pick(mention, ['snippet']) ?? ''),
+            ],
+          );
+        }
+
+        for (const citation of analysis?.citations ?? []) {
+          const entityId = pick(citation, ['entityId', 'entity_id']);
+          dbRun(db, 'INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?, ?, ?, ?, ?)', [
+            task.responseId,
+            String(pick(citation, ['url']) ?? ''),
+            String(pick(citation, ['domain']) ?? ''),
+            Number(pick(citation, ['rank']) ?? 1),
+            entityId === undefined ? null : Number(entityId),
+          ]);
+        }
+      });
+    } catch (error) {
+      dbRun(db, `UPDATE responses SET text = ?, model = ?, tokens_in = ?, tokens_out = ?,
+        cost_usd = ?, created_at = ?, target_status = 'failed', answer_status = ?,
+        comparability_status = 'non_comparable', comparability_reason = 'evidence_invalid',
+        evidence_completeness = 'partial', safe_error_code = 'evidence_invalid',
+        error = 'evidence:invalid' WHERE id = ?`, [
+        Buffer.byteLength(answer.text) <= EVIDENCE_LIMITS.answerBytes ? answer.text : null,
+        effectiveModel, tokensIn, tokensOut, cost, createdAt,
+        answer.answerStatus ?? (answer.text.trim() === '' ? 'empty' : 'complete'), task.responseId,
+      ]);
+      addCost(task.provider, cost);
+      throw error;
+    }
 
     tally.ok += 1;
     okCalls += 1;
@@ -508,6 +557,11 @@ async function executeRun(options) {
         // one bad row must not abandon the rest of the panel.
         errorCalls += 1;
         byProvider[task.provider].errors += 1;
+        dbRun(db, `UPDATE responses SET target_status = 'failed',
+          comparability_status = 'non_comparable', comparability_reason = 'storage_failed',
+          answer_status = 'failed', evidence_completeness = 'unavailable',
+          safe_error_code = 'storage_failed', error = 'storage:failed'
+          WHERE id = ? AND target_status IN ('queued','running')`, [task.responseId]);
         log(`hearsay: failed to record ${task.provider} response: ${err instanceof Error ? err.message : String(err)}`);
       }
       dbRun(db, 'UPDATE runs SET done_calls = done_calls + 1 WHERE id = ?', [runId]);

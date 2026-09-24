@@ -33,3 +33,11 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Evidence: focused export and retention tests plus the full suite and typecheck are recorded after this commit's boundary check.
 - Compatibility: existing table names and fields remain in the export. New top-level version fields and tables are additive.
 - Remaining gate: queue and finalize both runner paths with saved definitions and evidence, then test interruption and artifact write failure recovery. C02 is incomplete until that work passes.
+
+## C02 API runner portion: save definitions before a provider call
+
+- Reason and user result: each API target has a durable profile and benchmark snapshot before network work, so a setup edit or interrupted call cannot rewrite what was measured.
+- Contract: the API runner creates queued response rows in the run-claim transaction. It attaches one exact execution profile and benchmark revision per target, then finalizes the answer, normalized evidence, usage components, mentions, and legacy citation rows in one transaction. Existing API requests remain search-off. Sonar remains labeled legacy. The old response fields stay available for current UI and API clients.
+- Evidence: a fake adapter pauses after receiving a question while the test checks queued definitions and edits setup. The saved question and benchmark remain unchanged. An unsafe citation leaves the answer for diagnosis and a failed target without partial child evidence. Existing runner tests, the full suite, and typecheck are recorded at this commit boundary.
+- Compatibility: existing API request bodies, model defaults, cost estimates, and run consent stay the same. Old observations have no invented benchmark revision. New ones carry revision IDs and retain the old comparison key until exact-series readers are added.
+- Remaining gate: subscription runner definition and evidence finalization, artifact write rollback, and interrupted target recovery tests. C02 is incomplete until both execution paths satisfy the contract.

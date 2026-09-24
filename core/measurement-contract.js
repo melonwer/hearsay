@@ -128,7 +128,7 @@ export function executionProfile(input) {
 }
 
 /**
- * @typedef {{id:string|number, intentId:string|number, category:'discovery'|'comparison'|'branded', text:string}} BenchmarkQuestion
+ * @typedef {{id:string|number, intentId:string|number, category:string, text:string}} BenchmarkQuestion
  * @typedef {{id:string|number, role:'brand'|'competitor', name:string, aliases:string[], domains:string[]}} BenchmarkEntity
  * @typedef {{questions:BenchmarkQuestion[], entities:BenchmarkEntity[], weighting:'equal', scope:string}} BenchmarkInput
  */

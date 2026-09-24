@@ -586,6 +586,65 @@ describe('runner (§8.1)', () => {
     });
   });
 
+  it('queues immutable API definitions before calls and keeps them after setup edits', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
+    /** @type {() => void} */
+    let signalStarted = () => {};
+    /** @type {() => void} */
+    let release = () => {};
+    const started = new Promise((resolve) => { signalStarted = () => resolve(undefined); });
+    const gate = new Promise((resolve) => { release = () => resolve(undefined); });
+    /** @type {string[]} */
+    const sent = [];
+    const fake = fakeAdapter();
+    const pending = runPanel({
+      db, config, analyzeResponse: fakeAnalyze, evaluateAlerts: () => {}, env: {},
+      adapters: { openai: { runPrompt: async (text, opts) => {
+        sent.push(text);
+        signalStarted();
+        await gate;
+        return fake.runPrompt(text, opts);
+      } } },
+    });
+    await started;
+    const queued = all(db, `SELECT r.target_status, r.prompt_text_snapshot,
+      r.execution_profile_id, r.benchmark_revision_id, r.search_policy,
+      b.snapshot_json FROM responses r
+      JOIN benchmark_revisions b ON b.id = r.benchmark_revision_id ORDER BY r.prompt_id`);
+    assert.equal(queued.length, 2);
+    assert.ok(queued.every((row) => row.target_status === 'queued'));
+    assert.ok(queued.every((row) => row.search_policy === 'off'));
+    assert.ok(queued.every((row) => row.execution_profile_id && row.benchmark_revision_id));
+    assert.match(String(queued[0].snapshot_json), /paraphrase 0/);
+    dbRun(db, 'UPDATE prompts SET text = ? WHERE id = 1', ['changed while the run was waiting']);
+    release();
+    await pending;
+    assert.ok(sent.includes('paraphrase 0'));
+    assert.equal(String(get(db, 'SELECT prompt_text_snapshot FROM responses WHERE prompt_id = 1')?.prompt_text_snapshot), 'paraphrase 0');
+    assert.equal(String(get(db, 'SELECT answer_status FROM responses WHERE prompt_id = 1')?.answer_status), 'complete');
+    assert.equal(String(get(db, 'SELECT query_metadata_status FROM responses WHERE prompt_id = 1')?.query_metadata_status), 'not_applicable');
+  });
+
+  it('marks queued targets failed when evidence storage rejects an unsafe citation', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
+    const summary = await runPanel({
+      db, config, analyzeResponse: fakeAnalyze, evaluateAlerts: () => {}, env: {}, log: () => {},
+      adapters: { openai: { runPrompt: async () => ({
+        text: 'An answer', model: 'gpt-5.6-luna', latencyMs: 1,
+        answerCitations: [{ url: 'file:///etc/passwd', provenance: 'native_annotation',
+          sourceId: null, start: null, end: null }],
+      }) } },
+    });
+    assert.equal(summary.status, 'failed');
+    assert.equal(summary.errorCalls, 2);
+    assert.deepEqual(all(db, `SELECT target_status, answer_status, text, safe_error_code,
+      execution_profile_id IS NOT NULL AS has_profile FROM responses ORDER BY id`).map((row) => ({ ...row })), [
+      { target_status: 'failed', answer_status: 'complete', text: 'An answer', safe_error_code: 'evidence_invalid', has_profile: 1 },
+      { target_status: 'failed', answer_status: 'complete', text: 'An answer', safe_error_code: 'evidence_invalid', has_profile: 1 },
+    ]);
+    assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM answer_citations')?.n), 0);
+  });
+
   it('computes cost_usd at insert from the priced model, and leaves it null otherwise', async () => {
     const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
     const summary = await runPanel({
