@@ -490,6 +490,18 @@ test('settings puts subscription surfaces before API panels and distinguishes al
   assert.match(body, /direct API usage only/);
 });
 
+test('cost views show a known subtotal when a failed API call has unknown billing', async (t) => {
+  const app = await newApp(t, { fixture: true });
+  const settings = await (await fetch(`${app.base}/settings`)).text();
+  assert.match(settings, /\$0\.0045 known subtotal plus unknown components/);
+  const dashboard = await (await fetch(`${app.base}/`)).text();
+  assert.match(dashboard, /computed API subtotal \$0\.0045 plus unknown costs/);
+  const status = await (await fetch(`${app.base}/api/status`)).json();
+  assert.equal(status.spend30dUsd, null);
+  assert.equal(status.spend30dKnownSubtotalUsd, 0.0045);
+  assert.equal(status.spend30dCostStatus, 'partial');
+});
+
 test('startup guidance names configured subscription routes and offers both routes when unconfigured', () => {
   const subscriptionOnly = startupGuidance(buildConfig({ HEARSAY_CODEX_ENABLED: '1', HEARSAY_CLAUDE_CODE_ENABLED: '1' }));
   assert.ok(subscriptionOnly);

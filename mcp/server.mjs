@@ -68,7 +68,7 @@ const TOOLS = [
     name: 'hearsay_status',
     readOnly: true,
     description:
-      'Check whether the local Hearsay AI-visibility tracker is running and configured: enabled providers (ChatGPT, Claude, Gemini, Perplexity), tracked brand/competitor/prompt counts, last measurement run, schedule, 30-day API spend. Call this FIRST for any AI visibility / GEO / AI SEO / brand-monitoring question.',
+      'Check whether the local Hearsay AI-visibility tracker is running and configured: enabled providers (ChatGPT, Claude, Gemini, Perplexity), tracked brand/competitor/prompt counts, last measurement run, schedule, and 30-day computed API usage cost or known subtotal. Call this FIRST for any AI visibility / GEO / AI SEO / brand-monitoring question.',
     inputSchema: obj({}),
     call: () => ({ method: 'GET', path: '/api/status' }),
   },

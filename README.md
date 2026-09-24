@@ -284,8 +284,9 @@ in the answers where your brand never comes up. Alerts fire when your mentions d
 when a competitor passes you, and when you win or lose a recommendation, each one
 carrying the answers that triggered it.
 
-The cost calculator estimates direct API usage before an API run starts and records the
-actual API spend afterwards. Subscription runs are separate: they consume the signed-in
+The cost calculator estimates direct API usage before an API run starts and records a
+computed usage cost afterwards. It shows a known subtotal when some billing units are
+unknown; these figures are not an invoice. Subscription runs consume the signed-in
 Codex or Claude Code plan allowance and may incur overage, so they are not represented
 as a dollar estimate here.
 
@@ -306,10 +307,11 @@ runner uses the allowance of the signed-in plan and may incur overage; it is not
 unlimited. Optional direct API runs are billed by the API providers you configure. What
 an API run costs depends on how many questions you track, how many API providers you
 ask, and how many samples you take, so the built-in calculator estimates that API usage
-before each run and records actual API spend afterwards. It does not estimate
+before each run and records computed API usage costs afterwards. Unknown charges stay
+visible as unknown, with any known subtotal shown separately. It does not estimate
 subscription allowance in dollars.
 
-![Hearsay's cost calculator on the Settings page, showing estimated spend from your panel size and actual 30-day token spend](docs/screenshot-cost.png)
+![Hearsay's cost calculator on the Settings page](docs/screenshot-cost.png)
 
 ## How it compares
 

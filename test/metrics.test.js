@@ -537,24 +537,59 @@ test('citationGap lists domains cited where the brand is absent', (t) => {
   assert.equal(citationGap(db, { days: 30, now: NOW, limit: 1 }).length, 1);
 });
 
-test('actualSpend sums only priced calls and stays null-safe', (t) => {
+test('actualSpend reports a known subtotal and unknown calls without claiming a complete total', (t) => {
   const db = fixtureDb(t);
   const spend = actualSpend(db, { days: 30, now: NOW });
-  close(spend.totalUsd, 0.006, 1e-9, 'total');
-  assert.equal(spend.calls, 3, 'responses without provider usage are not counted as priced calls');
+  assert.equal(spend.totalUsd, null);
+  close(Number(spend.knownSubtotalUsd), 0.006, 1e-9, 'known subtotal');
+  assert.equal(spend.costStatus, 'partial');
+  assert.equal(spend.calls, 3);
+  assert.equal(spend.attemptedCalls, 13);
+  assert.equal(spend.unknownCalls, 10);
   assert.deepEqual(
-    spend.perProvider.map((p) => [p.provider, p.calls]),
+    spend.perProvider.map((p) => [p.provider, p.calls, p.attemptedCalls, p.costStatus]),
     [
-      ['openai', 2],
-      ['anthropic', 1],
+      ['openai', 2, 10, 'partial'],
+      ['anthropic', 1, 2, 'partial'],
+      ['gemini', 0, 1, 'unavailable'],
     ],
   );
-  close(spend.perProvider[0].usd, 0.005, 1e-9, 'openai spend');
+  close(Number(spend.perProvider[0].knownSubtotalUsd), 0.005, 1e-9, 'openai subtotal');
 });
 
-test('actualSpend on a database with no cost data reports zero, not NaN', (t) => {
+test('actualSpend includes failed and branded API attempts but excludes subscription and skipped targets', (t) => {
   const db = emptyDb(t);
-  assert.deepEqual(actualSpend(db, { days: 30, now: NOW }), { totalUsd: 0, calls: 0, perProvider: [] });
+  addIntent(db, 1, 'buyer question');
+  addPrompt(db, { id: 1, intentId: 1, text: 'Is Acme good?', category: 'branded' });
+  addRun(db, { id: 1, startedAt: '2026-07-25T07:00:00Z' });
+  const createdAt = '2026-07-25T07:00:00Z';
+  addResponse(db, { id: 1, runId: 1, promptId: 1, provider: 'openai', createdAt, costUsd: 0.002 });
+  addResponse(db, { id: 2, runId: 1, promptId: 1, provider: 'openai', createdAt, costUsd: 0.003, error: 'provider:other' });
+  addResponse(db, { id: 3, runId: 1, promptId: 1, provider: 'openai', createdAt, error: 'provider:timeout' });
+  exec(db, "UPDATE responses SET cost_known_subtotal_usd = 0.001, cost_status = 'partial' WHERE id = 3");
+  addResponse(db, { id: 4, runId: 1, promptId: 1, provider: 'openai', createdAt, error: 'provider:timeout' });
+  addResponse(db, { id: 5, runId: 1, promptId: 1, provider: 'openai', createdAt, costUsd: 0.1 });
+  exec(db, "UPDATE responses SET surface = 'codex-agent' WHERE id = 5");
+  addResponse(db, { id: 6, runId: 1, promptId: 1, provider: 'openai', createdAt, error: 'skipped:circuit' });
+  exec(db, "UPDATE responses SET safe_error_code = 'skipped_circuit' WHERE id = 6");
+  addResponse(db, { id: 7, runId: 1, promptId: 1, provider: 'openai', createdAt });
+  exec(db, "UPDATE responses SET target_status = 'queued' WHERE id = 7");
+
+  const spend = actualSpend(db, { days: 30, now: NOW });
+  assert.equal(spend.totalUsd, null);
+  close(Number(spend.knownSubtotalUsd), 0.006, 1e-9);
+  assert.equal(spend.costStatus, 'partial');
+  assert.equal(spend.attemptedCalls, 4);
+  assert.equal(spend.unknownCalls, 2);
+  assert.equal(spend.calls, 2);
+});
+
+test('actualSpend on a database with no calls reports unavailable rather than zero', (t) => {
+  const db = emptyDb(t);
+  assert.deepEqual(actualSpend(db, { days: 30, now: NOW }), {
+    totalUsd: null, knownSubtotalUsd: null, costStatus: 'unavailable',
+    calls: 0, attemptedCalls: 0, unknownCalls: 0, perProvider: [],
+  });
 });
 
 test('summary matches the §10.4 shape', (t) => {

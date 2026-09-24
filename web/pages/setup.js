@@ -324,7 +324,7 @@ function stepGo(view) {
       <h3>Optional API providers</h3>
       <p class="muted">
         API keys are optional. These direct API providers add expanded coverage for OpenAI, Anthropic, Gemini and
-        Perplexity. API dollar estimates and actual spend below apply only to API usage.
+        Perplexity. API dollar estimates and computed usage costs below apply only to API usage.
       </p>
       <table class="table">
         <thead>

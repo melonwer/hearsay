@@ -18,7 +18,7 @@ import { activePromptCount } from '../queries.js';
 import { get, getSetting, SETTING_KEYS } from '../../core/db.js';
 import { getSubscriptionSchedule } from '../../core/subscription-scheduler.js';
 
-/** Window used for the "actual spend" figure (§4.3). */
+/** Window used for computed API usage cost (§4.3). */
 export const SPEND_DAYS = 30;
 
 /**
@@ -75,7 +75,8 @@ function humanSize(bytes) {
  * @property {{provider: string, calls: number, estUsd: number|null}[]} perProvider
  * @property {ReturnType<typeof apiExecutionBudget>[]} executionBudgets
  * @property {ReturnType<typeof subscriptionExecutionBudget>[]} subscriptionBudgets
- * @property {{totalUsd: number|null, perProvider: {provider: string, usd: number|null, calls: number}[]}|null} spend
+ * @property {{totalUsd:number|null,knownSubtotalUsd:number|null,costStatus:'known'|'partial'|'unavailable',
+ *   attemptedCalls:number,unknownCalls:number}|null} spend
  * @property {number} spendDays window the actual-spend figure covers
  * @property {boolean} includeBranded branded prompts count towards SOV denominators (§6.7)
  * @property {{id:string,label:string,enabled:boolean,optedIn:boolean}[]} subscriptionSurfaces
@@ -95,7 +96,7 @@ export function buildView({ db, config }) {
     { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) => ({ id, model })) },
     config.pricingEnv,
   );
-  /** @type {{totalUsd: number|null, perProvider: {provider: string, usd: number|null, calls: number}[]}|null} */
+  /** @type {SettingsView['spend']} */
   const spend = soft(/** @type {*} */ (metrics), 'actualSpend', { db, now: new Date(), days: SPEND_DAYS }, null);
   const activeSubscription = get(db, `
     SELECT id, status, total_calls, done_calls
@@ -194,7 +195,11 @@ function costPanel(view) {
           : usd(view.estUsd)}
       </dd>
       <dt>Computed API usage cost, last ${view.spendDays} days</dt>
-      <dd>${usd(view.spend ? view.spend.totalUsd : null)}</dd>
+      <dd>${view.spend?.costStatus === 'known' ? usd(view.spend.totalUsd)
+        : view.spend?.costStatus === 'partial'
+          ? html`${usd(view.spend.knownSubtotalUsd)} known subtotal plus unknown components`
+          : view.spend?.attemptedCalls === 0 ? 'No API calls recorded' : 'Unknown'}
+        ${view.spend?.unknownCalls ? html`<span class="muted">(${view.spend.unknownCalls} call(s) with unknown cost)</span>` : ''}</dd>
     </dl>
     ${perProvider.length === 0
       ? ''

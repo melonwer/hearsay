@@ -68,7 +68,7 @@ invent a dollar price.
 
 ## How big this channel really is
 
-Honesty cuts both ways: organic LLM traffic is still small for most sites — under 0.2% of visits per [organicllm.org](https://organicllm.org), with complex and considered-purchase categories running multiples higher. This channel is worth measuring and watching, not worth a three-figure-per-month subscription for most teams. Hearsay's bring-your-own-keys cost structure is built for a channel this size; you pay providers for exactly the calls your panel makes, and the built-in calculator shows that spend before and after every run.
+Honesty cuts both ways: organic LLM traffic is still small for most sites — under 0.2% of visits per [organicllm.org](https://organicllm.org), with complex and considered-purchase categories running multiples higher. This channel is worth measuring and watching, not worth a three-figure-per-month subscription for most teams. Hearsay's bring-your-own-keys cost structure is built for a channel this size; you pay providers for your panel's API usage. The calculator previews list-price estimates and reports computed usage costs afterward, with a known subtotal and unknown components when billing data is incomplete.
 
 ## What Hearsay refuses to fake
 

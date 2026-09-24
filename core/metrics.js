@@ -772,42 +772,80 @@ export function citationGap(dbOrOpts, maybeOpts) {
 }
 
 /**
- * Actual spend recorded by the adapters (§4.3, §7). Null-safe: responses whose provider
- * returned no usage carry `cost_usd = null` and are simply not counted — the figure is
- * "what we can prove we spent", never an estimate (guardrail 13 keeps estimates in
- * `core/cost.js`).
+ * Computed API usage cost (§4.3, §7). Billing includes failed and non-comparable
+ * attempts, so this query deliberately does not use the answer-metrics eligibility
+ * filter. A missing component leaves the complete total unknown; the known subtotal
+ * remains available separately. Subscription allowance has no API price here.
  *
  * @param {Db|MetricsOpts} dbOrOpts open database, or an options object carrying `db`
  * @param {WindowOpts} [maybeOpts]
- * @returns {{totalUsd:number, calls:number, perProvider:{provider:string, usd:number, calls:number}[]}}
+ * @returns {{totalUsd:number|null, knownSubtotalUsd:number|null,
+ *   costStatus:'known'|'partial'|'unavailable', calls:number, attemptedCalls:number,
+ *   unknownCalls:number, perProvider:{provider:string,usd:number|null,knownSubtotalUsd:number|null,
+ *   costStatus:'known'|'partial'|'unavailable',calls:number,attemptedCalls:number,unknownCalls:number}[]}}
  */
 export function actualSpend(dbOrOpts, maybeOpts) {
   const [db, opts] = args(dbOrOpts, maybeOpts);
   const w = resolveWindow(opts, 'actualSpend');
-  const filter = validResponses(w);
+  const clauses = [
+    `(r.surface IS NULL OR r.surface IN (${API_SURFACES.map(() => '?').join(', ')}))`,
+    `(r.target_status IS NULL OR r.target_status IN ('completed','failed','cancelled'))`,
+    `COALESCE(r.safe_error_code, '') <> 'skipped_circuit'`,
+    `COALESCE(r.error, '') <> 'skipped:circuit'`,
+    'r.created_at >= ?', 'r.created_at <= ?',
+  ];
+  /** @type {SqlValue[]} */
+  const params = [...API_SURFACES, w.start, w.end];
+  if (w.surface !== null) { clauses.push('r.surface = ?'); params.push(w.surface); }
+  if (w.provider !== null) { clauses.push('r.provider = ?'); params.push(w.provider); }
+  if (w.comparisonKey !== null) { clauses.push('r.comparison_key = ?'); params.push(w.comparisonKey); }
   const rows = all(
     db,
     `SELECT provider,
-            SUM(COALESCE(cost_usd, 0)) AS usd,
-            SUM(CASE WHEN cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS calls
-       FROM responses r JOIN prompts p ON p.id = r.prompt_id
-      WHERE ${filter.sql}
+            SUM(COALESCE(r.cost_known_subtotal_usd, r.cost_usd, 0)) AS known_usd,
+            SUM(CASE WHEN r.cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS calls,
+            SUM(CASE WHEN COALESCE(r.cost_known_subtotal_usd, r.cost_usd) IS NOT NULL THEN 1 ELSE 0 END) AS known_calls,
+            SUM(CASE WHEN r.cost_usd IS NULL THEN 1 ELSE 0 END) AS unknown_calls,
+            COUNT(*) AS attempted_calls
+       FROM responses r
+      WHERE ${clauses.join(' AND ')}
       GROUP BY provider`,
-    filter.params,
+    params,
   );
 
   const perProvider = rows
-    .map((row) => ({
-      provider: String(row.provider),
-      usd: Number(row.usd ?? 0),
-      calls: Number(row.calls ?? 0),
-    }))
-    .filter((row) => row.calls > 0)
+    .map((row) => {
+      const knownCalls = Number(row.known_calls ?? 0);
+      const unknownCalls = Number(row.unknown_calls ?? 0);
+      const knownSubtotalUsd = knownCalls === 0 ? null : Number(row.known_usd ?? 0);
+      const costStatus = unknownCalls === 0 ? 'known' : knownCalls > 0 ? 'partial' : 'unavailable';
+      return {
+        provider: String(row.provider),
+        usd: costStatus === 'known' ? knownSubtotalUsd : null,
+        knownSubtotalUsd,
+        costStatus: /** @type {'known'|'partial'|'unavailable'} */ (costStatus),
+        calls: Number(row.calls ?? 0),
+        attemptedCalls: Number(row.attempted_calls ?? 0),
+        unknownCalls,
+      };
+    })
     .sort((a, b) => byProviderOrder(a.provider, b.provider));
 
+  const knownRows = perProvider.filter((row) => row.knownSubtotalUsd !== null);
+  const knownSubtotalUsd = knownRows.length === 0 ? null
+    : knownRows.reduce((sum, row) => sum + Number(row.knownSubtotalUsd), 0);
+  const attemptedCalls = perProvider.reduce((sum, row) => sum + row.attemptedCalls, 0);
+  const unknownCalls = perProvider.reduce((sum, row) => sum + row.unknownCalls, 0);
+  const costStatus = attemptedCalls === 0 || knownSubtotalUsd === null ? 'unavailable'
+    : unknownCalls > 0 ? 'partial' : 'known';
+
   return {
-    totalUsd: perProvider.reduce((sum, row) => sum + row.usd, 0),
+    totalUsd: costStatus === 'known' ? knownSubtotalUsd : null,
+    knownSubtotalUsd,
+    costStatus,
     calls: perProvider.reduce((sum, row) => sum + row.calls, 0),
+    attemptedCalls,
+    unknownCalls,
     perProvider,
   };
 }

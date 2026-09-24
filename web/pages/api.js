@@ -1242,6 +1242,9 @@ async function startRun({ db, config }, ctx) {
 function statusReport({ db, config, version }) {
   const brand = brandEntity(db);
   const activePrompts = activePromptCount(db);
+  /** @type {{totalUsd:number|null,knownSubtotalUsd:number|null,
+   * costStatus:'known'|'partial'|'unavailable'}|null} */
+  const spend = soft(/** @type {*} */ (metrics), 'actualSpend', { db, days: 30, now: isoNow() }, null);
   return {
     version,
     demo: config.demo,
@@ -1287,7 +1290,9 @@ function statusReport({ db, config, version }) {
       usageModel: 'included_plan_allowance_or_overage',
     },
     lastRun: latestRun(db),
-    spend30dUsd: Number(soft(/** @type {*} */ (metrics), 'actualSpend', { db, days: 30, now: isoNow() }, null)?.totalUsd ?? 0),
+    spend30dUsd: spend?.totalUsd ?? null,
+    spend30dKnownSubtotalUsd: spend?.knownSubtotalUsd ?? null,
+    spend30dCostStatus: spend?.costStatus ?? 'unavailable',
   };
 }
 

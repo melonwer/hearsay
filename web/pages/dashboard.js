@@ -117,7 +117,8 @@ export function deltaPoints(last7, last14) {
  * @property {{value: number|null, delta: number|null, points: Point[]}} sov
  * @property {{rate: MentionStat, delta: number|null}} mentionRate
  * @property {{rate: {p: number|null, n: number}|null, delta: number|null}} recRate
- * @property {{n: number, spendUsd: number|null, points: Point[]}} answers
+ * @property {{n:number,spendUsd:number|null,spendKnownSubtotalUsd:number|null,
+ *   spendCostStatus:'known'|'partial'|'unavailable',spendAttemptedCalls:number,points:Point[]}} answers
  * @property {number|null} phrasingSpread mean paraphrase spread, null below two paraphrases (§6.6)
  */
 
@@ -204,7 +205,8 @@ export function buildView({ db, config }, opts = {}) {
   const intentRows = m('intentTable', { days }, []);
   /** @type {GapRow[]} */
   const gapRows = m('citationGap', { days, limit: 8 }, []);
-  /** @type {{totalUsd:number|null, perProvider:{provider:string,usd:number|null,calls:number}[]}|null} */
+  /** @type {{totalUsd:number|null,knownSubtotalUsd:number|null,
+   * costStatus:'known'|'partial'|'unavailable',attemptedCalls:number}|null} */
   const spend = m('actualSpend', { days }, null);
 
   // Phrasing spread only means something once an intent actually has paraphrases (§6.6).
@@ -264,6 +266,9 @@ export function buildView({ db, config }, opts = {}) {
       answers: {
         n: mentionRate ? Number(mentionRate.n ?? 0) : 0,
         spendUsd: spend ? spend.totalUsd : null,
+        spendKnownSubtotalUsd: spend?.knownSubtotalUsd ?? null,
+        spendCostStatus: spend?.costStatus ?? 'unavailable',
+        spendAttemptedCalls: spend?.attemptedCalls ?? 0,
         points: trendRows.map((day) => ({
           x: epochDay(day.date),
           y: day.series.reduce((sum, entry) => sum + Number(entry.n ?? 0), 0),
@@ -360,7 +365,11 @@ function kpiRow(view) {
     <article class="card kpi">
       <h2>Answers analysed</h2>
       <p class="kpi-value">${k.answers.n}</p>
-      <p class="kpi-sub muted">${view.days}d · API spend ${usd(k.answers.spendUsd)}</p>
+      <p class="kpi-sub muted">${view.days}d · ${k.answers.spendCostStatus === 'known'
+        ? `computed API usage ${usd(k.answers.spendUsd)}`
+        : k.answers.spendCostStatus === 'partial'
+          ? `computed API subtotal ${usd(k.answers.spendKnownSubtotalUsd)} plus unknown costs`
+          : k.answers.spendAttemptedCalls === 0 ? 'no API calls recorded' : 'API usage cost unknown'}</p>
       ${raw(sparkline({ points: normaliseCounts(k.answers.points), color: 'var(--s1)', title: 'Answers per day' }))}
     </article>
   </section>`;
