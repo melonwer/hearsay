@@ -10,7 +10,7 @@
  * Every timestamp read or written here is UTC ISO-8601 (§19.6 #5).
  */
 
-import { all, get } from '../core/db.js';
+import { all, get, userVersion } from '../core/db.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 
@@ -512,9 +512,19 @@ export function latestReceipts(db, brandId, { limit = 2, days = 30, now } = {}) 
  * @returns {Record<string, unknown>}
  */
 export function exportAll(db) {
-  const tables = ['settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions', 'citations', 'search_events', 'alerts'];
+  const tables = [
+    'settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions',
+    'citations', 'search_events', 'search_queries', 'source_observations',
+    'answer_citations', 'usage_components', 'execution_profiles',
+    'benchmark_revisions', 'alerts',
+  ];
   /** @type {Record<string, unknown>} */
-  const out = { exportedAt: `${new Date().toISOString().slice(0, 19)}Z`, tables: {} };
+  const out = {
+    exportFormatVersion: 2,
+    databaseSchemaVersion: userVersion(db),
+    exportedAt: `${new Date().toISOString().slice(0, 19)}Z`,
+    tables: {},
+  };
   const bucket = /** @type {Record<string, unknown[]>} */ (out.tables);
   for (const table of tables) {
     // Table names come from this constant list only — never from user input.

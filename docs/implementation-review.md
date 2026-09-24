@@ -25,3 +25,11 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Evidence: focused migration tests cover a populated v4 database, its readable v4 backup, old IDs and text, foreign keys, distinct source and citation records, duplicate new-target prevention, original query retention, and atomic rollback after invalid evidence. Full suite and typecheck evidence is recorded in the commit and handoff after the boundary check.
 - Compatibility and rollback: legacy response IDs and annotations remain readable, with `search_policy = 'legacy'` and no invented profile or benchmark revision. `openDb` creates a SQLite-consistent timestamped backup before v5. Stop the application before restoring that backup and its matching artifacts. Restoring it loses writes made after the backup; an older executable must not open a v5 database.
 - Remaining gate: wire both runners to save definitions before network work and finalize evidence with derived rows, add export schema fields, artifact-expiry behavior, and interruption tests. C02 is incomplete until that work passes.
+
+## C02 export portion: version the local JSON export
+
+- Reason and user result: a user can export normalized evidence and see that an expired raw artifact does not erase a query, source, or citation.
+- Contract: export format version 2 includes the new measurement tables and the database schema version. The artifact helper reports `not_recorded`, `available`, or `expired` without reading provider files on report paths. [export-schema.md](export-schema.md) describes the fields and the limit that JSON export is not a full restore mechanism.
+- Evidence: focused export and retention tests plus the full suite and typecheck are recorded after this commit's boundary check.
+- Compatibility: existing table names and fields remain in the export. New top-level version fields and tables are additive.
+- Remaining gate: queue and finalize both runner paths with saved definitions and evidence, then test interruption and artifact write failure recovery. C02 is incomplete until that work passes.

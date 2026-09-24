@@ -180,6 +180,16 @@ export function readArtifact(store, ref) {
 }
 
 /**
+ * @param {ArtifactStore} store
+ * @param {string|null|undefined} ref
+ * @returns {'not_recorded'|'available'|'expired'}
+ */
+export function artifactAvailability(store, ref) {
+  if (ref === null || ref === undefined || ref === '') return 'not_recorded';
+  return existsSync(artifactPath(store, ref)) ? 'available' : 'expired';
+}
+
+/**
  * Delete expired event files without touching normalized SQLite responses.
  *
  * @param {ArtifactStore} store

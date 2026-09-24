@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { MIGRATIONS, SCHEMA_VERSION, all, get, openDb, run, userVersion } from '../core/db.js';
+import { artifactAvailability, cleanupArtifacts, createArtifactStore, writeArtifact } from '../core/artifacts.js';
 import { benchmarkRevision, executionProfile } from '../core/measurement-contract.js';
 import { storeMeasurementEvidence, storeTargetDefinition } from '../core/measurement-storage.js';
+import { exportAll } from '../web/queries.js';
 
 const V1 = readFileSync(new URL('./fixtures/schema-v1-subscription.sql', import.meta.url), 'utf8');
 
@@ -166,4 +168,25 @@ test('queued target keeps its original definitions and stores provider evidence 
   assert.equal(String(get(db, 'SELECT cost_status FROM usage_components WHERE response_id = ?', [targetId])?.cost_status), 'partial');
   assert.throws(() => storeMeasurementEvidence(db, targetId, evidence), /unfinished target/);
   assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM source_observations WHERE response_id = ?', [targetId])?.n), 1);
+
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-expired-evidence-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = createArtifactStore(dir, { retentionDays: 1 });
+  const ref = writeArtifact(store, targetId, [{ type: 'provider-event' }]);
+  run(db, 'UPDATE responses SET artifact_ref = ? WHERE id = ?', [ref, targetId]);
+  assert.equal(artifactAvailability(store, ref), 'available');
+  utimesSync(join(store.root, ref), new Date('2026-09-20T00:00:00Z'), new Date('2026-09-20T00:00:00Z'));
+  assert.equal(cleanupArtifacts(store, new Date('2026-09-24T00:00:00Z')), 1);
+  assert.equal(artifactAvailability(store, ref), 'expired');
+
+  const exported = exportAll(db);
+  const tables = /** @type {Record<string, Record<string, unknown>[]>} */ (exported.tables);
+  assert.equal(exported.exportFormatVersion, 2);
+  assert.equal(exported.databaseSchemaVersion, SCHEMA_VERSION);
+  assert.equal(tables.execution_profiles.length, 1);
+  assert.equal(tables.benchmark_revisions.length, 1);
+  assert.equal(tables.search_queries[0].original_text, '  Cafe\u0301  pricing? ');
+  assert.equal(tables.source_observations[0].url, 'https://competitor.example/page?q=1#section');
+  assert.equal(tables.answer_citations[0].url, 'https://cited.example/');
+  assert.equal(tables.usage_components[0].cost_status, 'partial');
 });
