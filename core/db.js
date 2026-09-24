@@ -260,6 +260,102 @@ export const MIGRATIONS = [
       ALTER TABLE responses ADD COLUMN cli_executable TEXT;
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE TABLE execution_profiles (
+        id TEXT PRIMARY KEY,
+        surface TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE benchmark_revisions (
+        id TEXT PRIMARY KEY,
+        snapshot_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      ALTER TABLE responses ADD COLUMN execution_profile_id TEXT REFERENCES execution_profiles(id);
+      ALTER TABLE responses ADD COLUMN benchmark_revision_id TEXT REFERENCES benchmark_revisions(id);
+      ALTER TABLE responses ADD COLUMN analysis_revision TEXT;
+      ALTER TABLE responses ADD COLUMN search_policy TEXT
+        CHECK (search_policy IN ('off','auto','required','legacy'));
+      ALTER TABLE responses ADD COLUMN answer_status TEXT
+        CHECK (answer_status IN ('complete','empty','refused','truncated','incomplete','failed'));
+      ALTER TABLE responses ADD COLUMN evidence_completeness TEXT
+        CHECK (evidence_completeness IN ('complete','partial','unavailable'));
+      ALTER TABLE responses ADD COLUMN query_metadata_status TEXT
+        CHECK (query_metadata_status IN ('available','unavailable','not_applicable'));
+      UPDATE responses SET search_policy = 'legacy';
+      CREATE INDEX idx_responses_measurement
+        ON responses(execution_profile_id, benchmark_revision_id, analysis_revision, created_at, id);
+      CREATE UNIQUE INDEX idx_responses_new_target
+        ON responses(run_id, prompt_id, surface, sample_idx)
+        WHERE benchmark_revision_id IS NOT NULL;
+
+      ALTER TABLE search_events ADD COLUMN provider_action_id TEXT;
+      ALTER TABLE search_events ADD COLUMN sequence INTEGER;
+      ALTER TABLE search_events ADD COLUMN safe_error TEXT;
+      CREATE INDEX idx_search_events_action
+        ON search_events(response_id, provider_action_id, sequence);
+      CREATE UNIQUE INDEX idx_search_events_action_unique
+        ON search_events(response_id, provider_action_id)
+        WHERE provider_action_id IS NOT NULL;
+
+      CREATE TABLE search_queries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+        search_event_id INTEGER REFERENCES search_events(id) ON DELETE SET NULL,
+        original_text TEXT NOT NULL,
+        normalized_key TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        UNIQUE(response_id, search_event_id, ordinal)
+      );
+      CREATE INDEX idx_search_queries_scope ON search_queries(response_id, normalized_key);
+
+      CREATE TABLE source_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+        search_event_id INTEGER REFERENCES search_events(id) ON DELETE SET NULL,
+        url TEXT NOT NULL,
+        normalized_url TEXT,
+        title TEXT,
+        excerpt TEXT,
+        provenance TEXT NOT NULL CHECK (provenance IN ('search_result','reported_source','fetch')),
+        original_order INTEGER
+      );
+      CREATE INDEX idx_source_observations_scope
+        ON source_observations(response_id, provenance, normalized_url);
+
+      CREATE TABLE answer_citations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+        source_observation_id INTEGER REFERENCES source_observations(id) ON DELETE SET NULL,
+        url TEXT NOT NULL,
+        provenance TEXT NOT NULL CHECK (provenance IN ('native_annotation','explicit_reference','text_link')),
+        answer_start INTEGER,
+        answer_end INTEGER,
+        ordinal INTEGER NOT NULL,
+        UNIQUE(response_id, ordinal)
+      );
+      CREATE INDEX idx_answer_citations_response ON answer_citations(response_id);
+
+      CREATE TABLE usage_components (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id INTEGER NOT NULL REFERENCES responses(id) ON DELETE CASCADE,
+        attempt_index INTEGER NOT NULL CHECK (attempt_index >= 0),
+        continuation_index INTEGER NOT NULL CHECK (continuation_index >= 0),
+        component TEXT NOT NULL,
+        quantity REAL,
+        unit TEXT NOT NULL,
+        cost_usd REAL,
+        cost_status TEXT NOT NULL CHECK (cost_status IN ('known','partial','unavailable')),
+        price_version TEXT,
+        UNIQUE(response_id, attempt_index, continuation_index, component)
+      );
+      CREATE INDEX idx_usage_components_response ON usage_components(response_id);
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

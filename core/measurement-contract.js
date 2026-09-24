@@ -15,16 +15,18 @@ export const SEARCH_STATES = /** @type {const} */ (['verified', 'not_used', 'una
  *   queries:string[], observedAt:string|null, providerType:string|null}} SearchAction
  */
 /**
- * @typedef {{url:string, title:string|null, provenance:'search_result'|'reported_source'|'fetch',
- *   actionId:string|null, order:number|null}} SourceObservation
+ * @typedef {{id:string, url:string, title:string|null, excerpt?:string|null,
+ *   provenance:'search_result'|'reported_source'|'fetch', actionId:string|null,
+ *   order:number|null}} SourceObservation
  */
 /**
  * @typedef {{url:string, provenance:'native_annotation'|'explicit_reference'|'text_link',
  *   sourceId:string|null, start:number|null, end:number|null}} AnswerCitation
  */
 /**
- * @typedef {{targetId:string, attempt:number, continuation:number, inputTokens:number|null,
- *   outputTokens:number|null, searchUnits:number|null, costStatus:'known'|'partial'|'unavailable'}} UsageComponent
+ * @typedef {{targetId:string, attempt:number, continuation:number, component:string,
+ *   quantity:number|null, unit:string, costUsd:number|null,
+ *   costStatus:'known'|'partial'|'unavailable', priceVersion:string|null}} UsageComponent
  */
 /**
  * @typedef {{targetId:string, attempt:number, continuation:number, status:'started'|'complete'|'failed'|'cancelled',
@@ -72,7 +74,7 @@ function canonicalJson(value) {
 }
 
 /** @param {unknown} value @returns {string} */
-function identity(value) {
+export function stableIdentity(value) {
   return createHash('sha256').update(canonicalJson(value)).digest('hex');
 }
 
@@ -122,7 +124,7 @@ export function executionProfile(input) {
     requestSettings: withoutSecrets(input.requestSettings ?? {}),
     limits: withoutSecrets(input.limits ?? {}),
   };
-  return { id: identity(snapshot), snapshot };
+  return { id: stableIdentity(snapshot), snapshot };
 }
 
 /**
@@ -139,7 +141,7 @@ export function benchmarkRevision(input) {
   if (input.weighting !== 'equal') throw new RangeError('Only equal prompt weights are supported');
   if (!Array.isArray(input.questions) || input.questions.length === 0) throw new TypeError('Benchmark requires questions');
   const snapshot = structuredClone(input);
-  return { id: identity(snapshot), snapshot };
+  return { id: stableIdentity(snapshot), snapshot };
 }
 
 /**
@@ -166,7 +168,7 @@ export function comparisonSelection(input) {
     start: input.start,
     end: input.end,
   };
-  return { ...snapshot, id: identity(snapshot) };
+  return { ...snapshot, id: stableIdentity(snapshot) };
 }
 
 /** @param {string} query @returns {string} */

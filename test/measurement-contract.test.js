@@ -98,8 +98,8 @@ test('verified search with hidden queries keeps sources distinct from answer cit
   assert.deepEqual(evidenceCounts({
     actions,
     sources: [
-      { url: 'https://competitor.example', title: null, provenance: 'reported_source', actionId: 'search-1', order: 1 },
-      { url: 'https://other.example', title: null, provenance: 'reported_source', actionId: 'search-1', order: 2 },
+      { id: 'source-1', url: 'https://competitor.example', title: null, provenance: 'reported_source', actionId: 'search-1', order: 1 },
+      { id: 'source-2', url: 'https://other.example', title: null, provenance: 'reported_source', actionId: 'search-1', order: 2 },
     ],
     citations: [{ url: 'https://cited.example', provenance: 'native_annotation', sourceId: null, start: 0, end: 5 }],
   }), {
