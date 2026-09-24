@@ -57,3 +57,11 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Evidence: focused cost and runner tests, full suite, typecheck, and diff check are recorded at this commit boundary.
 - Compatibility: stored historical response costs remain unchanged. Existing price overrides still win. Gemini's current standard rate expires after 2026-12-31 and must be rechecked before a later date.
 - Remaining gate: C03 still needs search-tool and continuation usage, exact preview budgets, stale-quote rejection, and consistent manual, API, MCP, and scheduled consent. No search route is enabled by this change.
+
+## C03 quote portion: bind consent to the previewed selection
+
+- Reason and user result: a confirmation now applies to the prompts, entities, providers, models, settings, and schedule fields shown in its quote. If one changes, the API returns `stale_quote` before starting a call or saving a schedule.
+- Contract: API and subscription previews return `quoteId`; confirmed JSON requests send it as `quote_id`. The browser and MCP tools pass the same value. First-use subscription consent and persistent schedule consent remain distinct. Existing low-cost API runs that need no quote can still start directly.
+- Evidence: HTTP tests change a prompt after an API or subscription quote, and change a scheduled time after its quote; each stale confirmation is refused without creating a run or schedule. Full suite, typecheck, and diff check are recorded at this commit boundary.
+- Compatibility: route names and existing preview fields are retained. Clients confirming a quote must now echo its ID. Direct CLI and cron execution do not use an interactive quote; their validated budget path remains a C03 gate.
+- Remaining gate: add provider search budgets and per-attempt tool usage/cost accounting, then carry the validated settings through every execution entry point.

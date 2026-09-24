@@ -130,8 +130,25 @@ test('run gate: HEARSAY_CONFIRM_USD=0 always quotes; confirm:true starts', async
     assert.ok(Array.isArray(quote.body.perProvider));
     // a quote must not have created a run
     assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
-    const go = await api(app.base, 'POST', '/api/run', { confirm: true });
+    const go = await api(app.base, 'POST', '/api/run', { confirm: true, quote_id: quote.body.quoteId });
     assert.equal(go.status, 202);
+  } finally {
+    await app.close();
+  }
+});
+
+test('API confirmation rejects a quote after the approved prompt changes', async () => {
+  const app = await bootRunnable({ HEARSAY_CONFIRM_USD: '0' });
+  try {
+    const quote = await api(app.base, 'POST', '/api/run', {});
+    assert.match(quote.body.quoteId, /^[a-f0-9]{64}$/);
+    dbRun(app.db, 'UPDATE prompts SET text = ? WHERE active = 1', ['Edited after the quote']);
+    const stale = await api(app.base, 'POST', '/api/run', { confirm: true, quote_id: quote.body.quoteId });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error.code, 'stale_quote');
+    assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
+    const fresh = await api(app.base, 'POST', '/api/run', {});
+    assert.notEqual(fresh.body.quoteId, quote.body.quoteId);
   } finally {
     await app.close();
   }
@@ -584,6 +601,26 @@ test('subscription preview and run quote expose exact agent surface without API 
   }
 });
 
+test('subscription consent rejects a stale question quote before any CLI work', async () => {
+  const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
+  try {
+    await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
+    });
+    const quote = await api(app.base, 'POST', '/api/subscription/run', { surfaces: ['codex-agent'] });
+    dbRun(app.db, 'UPDATE prompts SET text = ? WHERE active = 1', ['Which edited tracker is best?']);
+    const stale = await api(app.base, 'POST', '/api/subscription/run', {
+      surfaces: ['codex-agent'], confirm: true, quote_id: quote.body.quoteId,
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error.code, 'stale_quote');
+    assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
+  } finally {
+    await app.close();
+  }
+});
+
 test('subscription cancellation is available through HTTP and the settings UI', async () => {
   const app = await boot({
     HEARSAY_CODEX_ENABLED: '1',
@@ -601,6 +638,7 @@ test('subscription cancellation is available through HTTP and the settings UI', 
     const started = await api(app.base, 'POST', '/api/subscription/run', {
       surfaces: ['codex-agent'],
       confirm: true,
+      quote_id: (await api(app.base, 'POST', '/api/subscription/preview', { surfaces: ['codex-agent'] })).body.quoteId,
     });
     assert.equal(started.status, 202);
     assert.equal(typeof started.body.runId, 'number');
@@ -667,6 +705,13 @@ test('subscription schedule requires separate consent and stores the local-time 
     assert.equal(preview.status, 200);
     assert.equal(preview.body.status, 'schedule_confirmation_required');
     assert.equal((await api(app.base, 'GET', '/api/subscription/schedule')).body, null);
+    const stale = await api(app.base, 'POST', '/api/subscription/schedule', {
+      run_at: '08:00', timezone: 'Europe/Berlin', surfaces: ['codex-agent'],
+      lane: 'tracking', prompt_ids: [promptId], samples: 1, target_ceiling: 1,
+      confirm: true, quote_id: preview.body.quoteId,
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error.code, 'stale_quote');
 
     const runId = Number(dbRun(app.db, "INSERT INTO runs(started_at, trigger, status, total_calls, done_calls) VALUES(?,?,?,?,?)", ['2026-08-09T00:00:00Z', 'manual', 'done', 1, 1]).lastInsertRowid);
     dbRun(app.db, `INSERT INTO responses(
@@ -685,6 +730,7 @@ test('subscription schedule requires separate consent and stores the local-time 
       samples: 1,
       target_ceiling: 1,
       confirm: true,
+      quote_id: preview.body.quoteId,
     });
     assert.equal(saved.status, 201);
     assert.equal(saved.body.timeZone, 'Europe/Berlin');
@@ -718,7 +764,7 @@ test('subscription scheduling does not accept verified results from a cron run',
       'tracking', 'completed', 'comparable', 'verified',
     ]);
 
-    const rejected = await api(app.base, 'POST', '/api/subscription/schedule', {
+    const scheduleBody = {
       run_at: '07:00',
       timezone: 'Europe/Berlin',
       surfaces: ['codex-agent'],
@@ -726,8 +772,9 @@ test('subscription scheduling does not accept verified results from a cron run',
       prompt_ids: [promptId],
       samples: 1,
       target_ceiling: 1,
-      confirm: true,
-    });
+    };
+    const preview = await api(app.base, 'POST', '/api/subscription/schedule', scheduleBody);
+    const rejected = await api(app.base, 'POST', '/api/subscription/schedule', { ...scheduleBody, confirm: true, quote_id: preview.body.quoteId });
     assert.equal(rejected.status, 409);
     assert.equal(rejected.body.error.code, 'schedule_prerequisite_missing');
   } finally {

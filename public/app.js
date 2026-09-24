@@ -314,7 +314,7 @@ async function triggerRun(button) {
       button.removeAttribute('disabled');
       return;
     }
-    const go = await api('/api/run', 'POST', { confirm: true });
+    const go = await api('/api/run', 'POST', { confirm: true, quote_id: first.data.quoteId });
     if (!go.ok) {
       button.removeAttribute('disabled');
       showError(button, go.data);
@@ -388,7 +388,7 @@ function initApiForms() {
         const targets = Number(first.data.totalTargets ?? 0);
         const surfaces = Array.isArray(first.data.surfaces) ? first.data.surfaces.join(', ') : 'selected surfaces';
         if (!window.confirm(`Enable ${surfaces} at ${first.data.runAt} for up to ${targets} current targets per occurrence? This uses subscription allowance.`)) return;
-        const confirmed = await api(url, method, { ...payload, confirm: true });
+        const confirmed = await api(url, method, { ...payload, confirm: true, quote_id: first.data.quoteId });
         if (!confirmed.ok) {
           showError(form, confirmed.data);
           return;
@@ -398,7 +398,7 @@ function initApiForms() {
         const targets = Number(first.data.totalTargets ?? 0);
         const surfaces = Array.isArray(first.data.surfaces) ? first.data.surfaces.join(', ') : 'selected surfaces';
         if (!window.confirm(`Run ${surfaces} for ${targets} target(s)? This uses subscription allowance.`)) return;
-        const confirmed = await api(url, method, { ...payload, confirm: true });
+        const confirmed = await api(url, method, { ...payload, confirm: true, quote_id: first.data.quoteId });
         if (!confirmed.ok) {
           showError(form, confirmed.data);
           return;

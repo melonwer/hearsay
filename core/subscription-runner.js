@@ -15,7 +15,7 @@ import {
   CLAUDE_PROFILE_VERSION, CLAUDE_SURFACE, CODEX_PROFILE_VERSION, CODEX_SURFACE,
   PROMPT_ENVELOPE_VERSION,
 } from './agent-profiles.js';
-import { benchmarkRevision, executionProfile } from './measurement-contract.js';
+import { benchmarkRevision, executionProfile, stableIdentity } from './measurement-contract.js';
 import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from './measurement-storage.js';
 import { normalizeSubscriptionEvidence } from './subscription-evidence.js';
 import { runStatusFromTargets } from './subscription-model.js';
@@ -142,7 +142,7 @@ function recordOptIn(db, surfaces) {
  *   options
  * @returns {{lane:'tracking'|'exploration', surfaces:string[], prompts:PromptTarget[], samples:number, totalTargets:number,
  *   perSurface:{surface:string, prompts:number, samples:number, invocations:number}[], firstUseSurfaces:string[],
- *   estimatedCost:null, usageModel:'included_plan_allowance_or_overage'}}
+ *   estimatedCost:null, usageModel:'included_plan_allowance_or_overage', quoteId:string}}
  */
 export function subscriptionPreview(options) {
   const lane = options.lane ?? 'tracking';
@@ -151,6 +151,21 @@ export function subscriptionPreview(options) {
   const samples = Math.max(1, Math.min(10, Math.floor(options.samples ?? options.config.subscriptionSamples)));
   const prompts = selectPrompts(options.db, lane, options.promptIds);
   const perSurface = surfaces.map((surface) => ({ surface, prompts: prompts.length, samples, invocations: prompts.length * samples }));
+  const quoteId = stableIdentity({
+    kind: 'subscription-run-v1', lane, surfaces, prompts, samples,
+    entities: all(options.db, 'SELECT id, name, aliases, domains, is_self FROM entities WHERE archived_at IS NULL ORDER BY id'),
+    profiles: surfaces.map((surface) => ({
+      surface,
+      executable: surface === CODEX_SURFACE
+        ? options.config.subscription.codex.executable : options.config.subscription.claudeCode.executable,
+      version: surface === CODEX_SURFACE ? CODEX_PROFILE_VERSION : CLAUDE_PROFILE_VERSION,
+    })),
+    envelopeVersion: PROMPT_ENVELOPE_VERSION,
+    timeoutMs: options.config.subscriptionTimeoutMs,
+    idleTimeoutMs: options.config.subscriptionIdleTimeoutMs,
+    maxOutputBytes: options.config.subscriptionMaxOutputBytes,
+    concurrency: options.config.subscriptionConcurrency,
+  });
   return {
     lane,
     surfaces,
@@ -161,6 +176,7 @@ export function subscriptionPreview(options) {
     firstUseSurfaces: firstUseSurfaces(options.db, surfaces),
     estimatedCost: null,
     usageModel: 'included_plan_allowance_or_overage',
+    quoteId,
   };
 }
 

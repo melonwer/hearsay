@@ -170,9 +170,9 @@ const TOOLS = [
   {
     name: 'hearsay_run_panel',
     description:
-      'Start a measurement panel run (every active prompt × enabled provider × samples) using the user’s own API keys. Above the cost threshold this returns a quote_required estimate instead of running — relay the estimate to the human and only retry with confirm:true after they explicitly approve the spend.',
-    inputSchema: obj({ confirm: { type: 'boolean', description: 'true = the human approved the quoted cost in this conversation' } }),
-    call: (a) => ({ method: 'POST', path: '/api/run', body: { confirm: a?.confirm === true } }),
+      'Start a measurement panel run (every active prompt × enabled provider × samples) using the user’s own API keys. If a quote is required, relay it to the human and retry with confirm:true and its quoteId as quote_id after approval. A changed selection invalidates the quote.',
+    inputSchema: obj({ confirm: { type: 'boolean', description: 'true = the human approved the quoted cost in this conversation' }, quote_id: { type: 'string', description: 'quoteId returned by the approved preview' } }),
+    call: (a) => ({ method: 'POST', path: '/api/run', body: { confirm: a?.confirm === true, quote_id: a?.quote_id } }),
   },
   {
     name: 'hearsay_subscription_preview',
@@ -185,9 +185,9 @@ const TOOLS = [
   {
     name: 'hearsay_subscription_run',
     description:
-      'Run explicitly selected Codex agent or Claude Code agent buyer-angle prompts through the user’s authenticated subscription CLI. It first returns an allowance quote; only pass confirm:true after the human approves. Results retain final answer, verified web-search events, citations, redacted artifact metadata, and comparability status separately from API runs.',
-    inputSchema: obj({ surfaces: SUBSCRIPTION_SURFACES, lane: SUBSCRIPTION_LANE, prompt_ids: { type: 'array', items: { type: 'integer', minimum: 1 } }, samples: { type: 'integer', minimum: 1, maximum: 10 }, confirm: { type: 'boolean' } }),
-    call: (a) => ({ method: 'POST', path: '/api/subscription/run', body: { surfaces: a?.surfaces, lane: a?.lane, prompt_ids: a?.prompt_ids, samples: a?.samples, confirm: a?.confirm === true } }),
+      'Run explicitly selected Codex agent or Claude Code agent buyer-angle prompts through the user’s authenticated subscription CLI. For first-use consent, pass the approved quoteId as quote_id with confirm:true. Results retain final answer, verified web-search events, citations, redacted artifact metadata, and comparability status separately from API runs.',
+    inputSchema: obj({ surfaces: SUBSCRIPTION_SURFACES, lane: SUBSCRIPTION_LANE, prompt_ids: { type: 'array', items: { type: 'integer', minimum: 1 } }, samples: { type: 'integer', minimum: 1, maximum: 10 }, confirm: { type: 'boolean' }, quote_id: { type: 'string' } }),
+    call: (a) => ({ method: 'POST', path: '/api/subscription/run', body: { surfaces: a?.surfaces, lane: a?.lane, prompt_ids: a?.prompt_ids, samples: a?.samples, confirm: a?.confirm === true, quote_id: a?.quote_id } }),
   },
   {
     name: 'hearsay_subscription_schedule',
@@ -204,6 +204,7 @@ const TOOLS = [
       target_ceiling: { type: 'integer', minimum: 1 },
       grace_minutes: { type: 'integer', minimum: 0, maximum: 1440 },
       confirm: { type: 'boolean' },
+      quote_id: { type: 'string', description: 'quoteId returned by the approved schedule preview' },
     }, ['action']),
     call: (a) => a?.action === 'disable'
       ? ({ method: 'DELETE', path: '/api/subscription/schedule' })
@@ -217,6 +218,7 @@ const TOOLS = [
           target_ceiling: a?.target_ceiling,
           grace_minutes: a?.grace_minutes,
           confirm: a?.action === 'enable' && a?.confirm === true,
+          quote_id: a?.quote_id,
         } }),
   },
   {

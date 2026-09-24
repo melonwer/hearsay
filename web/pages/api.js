@@ -11,7 +11,9 @@
  * endpoint answers 503 rather than 200 with an invented shape.
  */
 
-import { get, isoNow, run, transaction, getSetting, setSetting, SETTING_KEYS } from '../../core/db.js';
+import { all, get, isoNow, run, transaction, getSetting, setSetting, SETTING_KEYS } from '../../core/db.js';
+import { PRICE_TABLE_VERSION } from '../../core/cost.js';
+import { stableIdentity } from '../../core/measurement-contract.js';
 import { sendJson, sendError } from '../router.js';
 import { cost, metrics, NotReadyError, providers, runner, soft, strict, suggest } from '../data.js';
 import {
@@ -622,7 +624,13 @@ function previewBody(preview) {
     firstUseSurfaces: preview.firstUseSurfaces,
     estimatedCost: preview.estimatedCost,
     usageModel: preview.usageModel,
+    quoteId: preview.quoteId,
   };
+}
+
+/** @param {string} quoteId @param {Record<string, unknown>} fields @param {number} ceiling */
+function scheduleQuoteId(quoteId, fields, ceiling) {
+  return stableIdentity({ kind: 'subscription-schedule-v1', quoteId, fields, ceiling, consentVersion: SCHEDULE_CONSENT_VERSION });
 }
 
 /** @param {unknown} error @returns {never} */
@@ -672,7 +680,13 @@ async function startSubscription({ db, config }, ctx) {
   }
   const needsConfirmation = preview.firstUseSurfaces.length > 0 && body.confirm !== true;
   if (needsConfirmation) {
-    return new WithStatus(200, { status: 'quote_required', ...previewBody(preview), confirmHint: 'POST /api/subscription/run with the same selection and {"confirm":true} to start' });
+    return new WithStatus(200, { status: 'quote_required', ...previewBody(preview), confirmHint: 'POST /api/subscription/run with the same selection, quote_id, and {"confirm":true} to start' });
+  }
+  if (body.confirm === true && preview.firstUseSurfaces.length > 0 && body.quote_id === undefined) {
+    return new WithStatus(200, { status: 'quote_required', ...previewBody(preview), confirmHint: 'Confirm this quote_id to start' });
+  }
+  if (body.quote_id !== undefined && body.quote_id !== preview.quoteId) {
+    throw new ApiError(409, 'stale_quote', 'The subscription selection or execution settings changed; preview the run again.');
   }
   const running = get(db, "SELECT id, done_calls, total_calls FROM runs WHERE status = 'running' ORDER BY id DESC LIMIT 1");
   if (running) throw new ApiError(409, 'already_running', `Run ${running.id} in progress: ${running.done_calls}/${running.total_calls} calls done`);
@@ -821,6 +835,7 @@ function configureSubscriptionSchedule({ db, config }, ctx) {
   if (selection.targetCeiling < preview.totalTargets) {
     throw new ApiError(422, 'schedule_budget_exceeded', `target_ceiling ${selection.targetCeiling} is below the current ${preview.totalTargets} targets`);
   }
+  const quoteId = scheduleQuoteId(preview.quoteId, fields, selection.targetCeiling);
   if (body.confirm !== true) {
     return new WithStatus(200, {
       status: 'schedule_confirmation_required',
@@ -830,8 +845,12 @@ function configureSubscriptionSchedule({ db, config }, ctx) {
       targetCeiling: selection.targetCeiling,
       graceMinutes: fields.graceMinutes,
       consentVersion: SCHEDULE_CONSENT_VERSION,
-      confirmHint: 'POST /api/subscription/schedule with the same selection and {"confirm":true} to enable persistent scheduled allowance use',
+      quoteId,
+      confirmHint: 'POST /api/subscription/schedule with the same selection, quote_id, and {"confirm":true} to enable persistent scheduled allowance use',
     });
+  }
+  if (body.quote_id !== quoteId) {
+    throw new ApiError(409, 'stale_quote', 'The schedule selection or execution settings changed; preview the schedule again.');
   }
   requireVerifiedSubscriptionSurfaces(selection.surfaces, db);
   try {
@@ -905,12 +924,19 @@ function patchIntent({ db }, ctx) {
  * price table has no entry for a configured model (§19.6 #13).
  *
  * @param {Pick<ApiDeps, 'db'|'config'>} deps
- * @returns {{calls: number, estUsd: number|null, perProvider: {provider: string, calls: number, estUsd: number|null}[]}}
+ * @returns {{calls: number, estUsd: number|null, perProvider: {provider: string, calls: number, estUsd: number|null}[], quoteId:string}}
  */
 export function costEstimate({ db, config }) {
   const prompts = activePromptCount(db);
   const enabled = config.enabledProviders;
   const callsPerProvider = prompts * config.samples;
+  const quoteId = stableIdentity({
+    kind: 'api-run-v1', priceTableVersion: PRICE_TABLE_VERSION,
+    prompts: all(db, 'SELECT id, intent_id, text, category, origin FROM prompts WHERE active = 1 ORDER BY id'),
+    entities: all(db, 'SELECT id, name, aliases, domains, is_self FROM entities WHERE archived_at IS NULL ORDER BY id'),
+    providers: enabled.map(({ id, model }) => ({ id, model })),
+    samples: config.samples, timeoutMs: config.timeoutMs, concurrency: config.concurrency,
+  });
 
   /** @type {{calls?: number, estUsd?: number|null, perProvider?: {provider: string, calls: number, estUsd: number|null}[]}|null} */
   const estimate = soft(
@@ -924,12 +950,14 @@ export function costEstimate({ db, config }) {
       calls: Number(estimate.calls ?? callsPerProvider * enabled.length),
       estUsd: estimate.estUsd ?? null,
       perProvider: estimate.perProvider,
+      quoteId,
     };
   }
   return {
     calls: callsPerProvider * enabled.length,
     estUsd: null,
     perProvider: enabled.map((provider) => ({ provider: provider.id, calls: callsPerProvider, estUsd: null })),
+    quoteId,
   };
 }
 
@@ -1164,17 +1192,19 @@ async function startRun({ db, config }, ctx) {
   const body = ctx.body !== null && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? /** @type {Record<string, unknown>} */ (ctx.body) : {};
   const confirm = body.confirm === true;
   const estimate = costEstimate({ db, config });
-  const needsQuote =
-    !confirm &&
-    (config.confirmUsd === 0 || estimate.estUsd === null || estimate.estUsd > config.confirmUsd || estimate.calls > 200);
-  if (needsQuote) {
+  const needsQuote = config.confirmUsd === 0 || estimate.estUsd === null || estimate.estUsd > config.confirmUsd || estimate.calls > 200;
+  if (needsQuote && (!confirm || body.quote_id === undefined)) {
     return new WithStatus(200, {
       status: 'quote_required',
       calls: estimate.calls,
       estUsd: estimate.estUsd,
       perProvider: estimate.perProvider,
-      confirmHint: 'POST /api/run with {"confirm":true} to start',
+      quoteId: estimate.quoteId,
+      confirmHint: 'POST /api/run with this quote_id and {"confirm":true} to start',
     });
+  }
+  if (body.quote_id !== undefined && body.quote_id !== estimate.quoteId) {
+    throw new ApiError(409, 'stale_quote', 'The API selection or execution settings changed; preview the run again.');
   }
 
   // 202: the run is accepted, not finished. Progress is read from /api/runs/latest.
