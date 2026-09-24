@@ -9,6 +9,7 @@ import { MIGRATIONS, SCHEMA_VERSION, all, get, openDb, run, userVersion } from '
 import { artifactAvailability, cleanupArtifacts, createArtifactStore, writeArtifact } from '../core/artifacts.js';
 import { benchmarkRevision, executionProfile } from '../core/measurement-contract.js';
 import { storeMeasurementEvidence, storeTargetDefinition } from '../core/measurement-storage.js';
+import { recoverStaleRuns } from '../core/runner.js';
 import { exportAll } from '../web/queries.js';
 
 const V1 = readFileSync(new URL('./fixtures/schema-v1-subscription.sql', import.meta.url), 'utf8');
@@ -162,6 +163,9 @@ test('queued target keeps its original definitions and stores provider evidence 
     comparability_status: 'comparable',
   });
   assert.equal(String(get(db, 'SELECT original_text FROM search_queries WHERE response_id = ?', [targetId])?.original_text), '  Cafe\u0301  pricing? ');
+  assert.deepEqual({ ...get(db, 'SELECT query, url FROM search_events WHERE response_id = ?', [targetId]) }, {
+    query: '  Cafe\u0301  pricing? ', url: 'https://competitor.example/page?q=1#section',
+  });
   assert.equal(String(get(db, 'SELECT normalized_key FROM search_queries WHERE response_id = ?', [targetId])?.normalized_key), 'Café pricing?');
   assert.equal(String(get(db, 'SELECT normalized_url FROM source_observations WHERE response_id = ?', [targetId])?.normalized_url), 'https://competitor.example/page?q=1');
   assert.equal(String(get(db, 'SELECT url FROM answer_citations WHERE response_id = ?', [targetId])?.url), 'https://cited.example/');
@@ -189,4 +193,34 @@ test('queued target keeps its original definitions and stores provider evidence 
   assert.equal(tables.source_observations[0].url, 'https://competitor.example/page?q=1#section');
   assert.equal(tables.answer_citations[0].url, 'https://cited.example/');
   assert.equal(tables.usage_components[0].cost_status, 'partial');
+});
+
+test('interrupted target recovery keeps its definition and invents no evidence', (t) => {
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  const at = '2026-09-24T00:00:00Z';
+  run(db, 'INSERT INTO intents(id, label, created_at) VALUES(1, ?, ?)', ['buyer intent', at]);
+  run(db, 'INSERT INTO prompts(id, intent_id, text, category, active, created_at) VALUES(1, 1, ?, ?, 1, ?)', ['Which tool?', 'discovery', at]);
+  run(db, "INSERT INTO runs(id, started_at, trigger, status, total_calls, done_calls) VALUES(1, ?, 'manual', 'running', 1, 0)", [at]);
+  const targetId = run(db, `INSERT INTO responses(run_id, prompt_id, provider, surface, model,
+    sample_idx, created_at, target_status, prompt_text_snapshot) VALUES(1, 1, 'openai',
+    'codex-agent', 'default', 0, ?, 'queued', 'Which tool?')`, [at]).lastInsertRowid;
+  const profile = executionProfile({ surface: 'codex-agent', route: 'codex-search-v1',
+    model: 'default', searchPolicy: 'required' });
+  const benchmark = benchmarkRevision({ questions: [{ id: 1, intentId: 1, category: 'discovery', text: 'Which tool?' }],
+    entities: [], weighting: 'equal', scope: 'main' });
+  storeTargetDefinition(db, targetId, { profile, benchmark, analysisRevision: 'rules-v1',
+    searchPolicy: 'required', at });
+  run(db, "UPDATE responses SET target_status = 'running' WHERE id = ?", [targetId]);
+
+  assert.equal(recoverStaleRuns(db, { now: new Date('2026-09-24T03:00:00Z') }), 1);
+  assert.deepEqual({ ...get(db, `SELECT target_status, answer_status, evidence_completeness,
+    execution_profile_id, benchmark_revision_id, analysis_revision, query_metadata_status
+    FROM responses WHERE id = ?`, [targetId]) }, {
+    target_status: 'failed', answer_status: 'failed', evidence_completeness: 'unavailable',
+    execution_profile_id: profile.id, benchmark_revision_id: benchmark.id,
+    analysis_revision: 'rules-v1', query_metadata_status: 'unavailable',
+  });
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_queries WHERE response_id = ?', [targetId])?.n), 0);
+  assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
 });

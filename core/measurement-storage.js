@@ -100,10 +100,14 @@ export function storeMeasurementEvidence(db, responseId, evidence) {
     const actionIds = new Map();
     for (const [sequence, action] of evidence.actions.entries()) {
       if (!action.id || actionIds.has(action.id)) throw new RangeError('Search action IDs must be unique');
+      const firstSource = evidence.sources.find((source) => source.actionId === action.id);
       const eventId = run(db, `INSERT INTO search_events(response_id, event_type, status,
-        observed_at, provider_event_type, provider_action_id, sequence)
-        VALUES(?, ?, ?, ?, ?, ?, ?)`, [
-        responseId, action.kind, action.status, action.observedAt ?? evidence.at,
+        query, url, title, domain, observed_at, rank, provider_event_type, provider_action_id, sequence)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        responseId, action.kind, action.status,
+        action.queries[0] ?? null, firstSource?.url ?? null, firstSource?.title ?? null,
+        firstSource ? new URL(safeUrl(firstSource.url, 'Source URL')).hostname : null,
+        action.observedAt ?? evidence.at, firstSource?.order ?? null,
         action.providerType, action.id, sequence,
       ]).lastInsertRowid;
       actionIds.set(action.id, eventId);

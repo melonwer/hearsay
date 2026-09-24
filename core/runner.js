@@ -100,6 +100,7 @@ export function recoverStaleRuns(db, opts = {}) {
                 comparability_reason = 'abandoned',
                 answer_status = 'failed',
                 evidence_completeness = 'unavailable',
+                query_metadata_status = 'unavailable',
                 web_status = CASE
                   WHEN surface IN ('codex-agent', 'claude-code-agent') THEN 'failed'
                   ELSE COALESCE(web_status, 'not_applicable')

@@ -28,6 +28,7 @@ import {
   terminateProcessTree,
 } from '../core/agent-process.js';
 import { CodexCliRunner, ClaudeCliRunner } from '../core/agent-runners.js';
+import { artifactAvailability, writeArtifact } from '../core/artifacts.js';
 import { openDb, run as dbRun, get } from '../core/db.js';
 import { DemoModeError, SubscriptionConfirmationError, runSubscriptionPanel, subscriptionPreview } from '../core/subscription-runner.js';
 
@@ -501,6 +502,67 @@ test('subscription-only preview and run need no provider API key and queue all t
   assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM responses WHERE run_id = ?', [result.runId])?.n), 2);
   assert.equal(Number(get(db, "SELECT COUNT(*) AS n FROM responses WHERE run_id = ? AND target_status = 'completed'", [result.runId])?.n), 2);
   db.close();
+});
+
+test('subscription targets keep queued definitions and normalized evidence after a setup edit', async (t) => {
+  const db = subscriptionDb(t);
+  const config = buildConfig({ HEARSAY_CODEX_ENABLED: '1' });
+  const base = fakeSubscriptionRunner('codex-agent');
+  const runner = {
+    preflight: base.preflight,
+    async run(target) {
+      const queued = get(db, `SELECT execution_profile_id, benchmark_revision_id, analysis_revision,
+        search_policy, prompt_text_snapshot FROM responses WHERE id = ?`, [target.responseId]);
+      assert.ok(queued?.execution_profile_id);
+      assert.ok(queued?.benchmark_revision_id);
+      assert.equal(queued?.analysis_revision, 'legacy-heuristic-v1');
+      assert.equal(queued?.search_policy, 'required');
+      assert.equal(queued?.prompt_text_snapshot, 'Which tracker is best?');
+      dbRun(db, 'UPDATE prompts SET text = ? WHERE id = 1', ['Edited while the CLI is running']);
+      return base.run(target);
+    },
+  };
+  const result = await runSubscriptionPanel({ db, config, surfaces: ['codex-agent'], confirm: true, runners: { 'codex-agent': runner } });
+  assert.equal(result.status, 'done');
+  const response = get(db, 'SELECT id, benchmark_revision_id, execution_profile_id, answer_status, query_metadata_status FROM responses WHERE run_id = ?', [result.runId]);
+  const benchmark = get(db, 'SELECT snapshot_json FROM benchmark_revisions WHERE id = ?', [response?.benchmark_revision_id]);
+  const profile = get(db, 'SELECT snapshot_json FROM execution_profiles WHERE id = ?', [response?.execution_profile_id]);
+  assert.equal(JSON.parse(String(benchmark?.snapshot_json)).questions[0].text, 'Which tracker is best?');
+  assert.equal(JSON.parse(String(profile?.snapshot_json)).searchPolicy, 'required');
+  assert.equal(response?.answer_status, 'complete');
+  assert.equal(response?.query_metadata_status, 'available');
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_events WHERE response_id = ?', [response?.id])?.n), 1);
+  assert.equal(get(db, 'SELECT original_text FROM search_queries WHERE response_id = ?', [response?.id])?.original_text, 'best tracker');
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM usage_components WHERE response_id = ?', [response?.id])?.n), 2);
+});
+
+test('failed evidence commit retains a bounded answer and removes its uncommitted artifact', async (t) => {
+  const db = subscriptionDb(t);
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-artifact-rollback-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const config = buildConfig({ HEARSAY_CODEX_ENABLED: '1' });
+  const base = fakeSubscriptionRunner('codex-agent');
+  let writtenRef = '';
+  class ArtifactRunner extends CodexCliRunner {
+    async preflight() { return { authenticated: true, authKind: 'subscription', cliVersion: 'test', cliExecutable: 'test' }; }
+    async run(target) {
+      const result = await base.run(target);
+      writtenRef = writeArtifact(this.artifactStore, target.responseId, [{ event: 'search', url: 'https://source.example/' }]);
+      return { ...result, artifactRef: writtenRef, citations: ['file:///not-a-web-citation'] };
+    }
+  }
+  const runner = new ArtifactRunner({ executable: 'test', dataDir: dir });
+  const result = await runSubscriptionPanel({ db, config, surfaces: ['codex-agent'], confirm: true, runners: { 'codex-agent': runner } });
+  const response = get(db, `SELECT id, target_status, answer_status, text, tokens_in, tokens_out,
+    comparability_reason, safe_error_code, artifact_ref FROM responses WHERE run_id = ?`, [result.runId]);
+  assert.equal(result.status, 'failed');
+  assert.deepEqual({ ...response, id: undefined }, {
+    id: undefined, target_status: 'failed', answer_status: 'complete', text: 'Acme is recommended.',
+    tokens_in: 1, tokens_out: 2, comparability_reason: 'evidence_invalid',
+    safe_error_code: 'evidence_invalid', artifact_ref: null,
+  });
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_events WHERE response_id = ?', [response?.id])?.n), 0);
+  assert.equal(artifactAvailability(runner.artifactStore, writtenRef), 'expired');
 });
 
 test('one failed subscription surface produces a partial logical run while another succeeds', async (t) => {

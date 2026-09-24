@@ -9,9 +9,15 @@
 import { all, get, isoNow, run as dbRun, SETTING_KEYS, setSetting, transaction } from './db.js';
 import { DemoModeError } from './runner.js';
 import { analyzeResponse as defaultAnalyzeResponse } from './analyze.js';
-import { recordSearchEvents } from './artifacts.js';
-import { CodexCliRunner, ClaudeCliRunner } from './agent-runners.js';
-import { CLAUDE_SURFACE, CODEX_SURFACE } from './agent-profiles.js';
+import { discardArtifact } from './artifacts.js';
+import { CodexCliRunner, ClaudeCliRunner, SubscriptionAgentRunner } from './agent-runners.js';
+import {
+  CLAUDE_PROFILE_VERSION, CLAUDE_SURFACE, CODEX_PROFILE_VERSION, CODEX_SURFACE,
+  PROMPT_ENVELOPE_VERSION,
+} from './agent-profiles.js';
+import { benchmarkRevision, executionProfile } from './measurement-contract.js';
+import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from './measurement-storage.js';
+import { normalizeSubscriptionEvidence } from './subscription-evidence.js';
 import { runStatusFromTargets } from './subscription-model.js';
 import * as alertsModule from './alerts.js';
 
@@ -47,6 +53,8 @@ export class SubscriptionRunError extends Error {
  * @property {string} promptText
  * @property {'tracking'|'exploration'} lane
  * @property {'user_authored'|'suggested'|'imported'|'legacy'} promptOrigin
+ * @property {number|null} intentId
+ * @property {string} category
  */
 
 /**
@@ -57,13 +65,13 @@ export class SubscriptionRunError extends Error {
  */
 function selectPrompts(db, lane, promptIds) {
   const rows = promptIds && promptIds.length > 0
-    ? all(db, `SELECT id, text, tracking_state, origin FROM prompts WHERE id IN (${promptIds.map(() => '?').join(', ')})
+    ? all(db, `SELECT id, intent_id, text, category, tracking_state, origin FROM prompts WHERE id IN (${promptIds.map(() => '?').join(', ')})
         AND (${lane === 'tracking' ? "active = 1 AND tracking_state = 'tracking'" : '1 = 1'}) ORDER BY id`, promptIds)
     : all(
         db,
         lane === 'tracking'
-          ? `SELECT id, text, tracking_state, origin FROM prompts WHERE active = 1 AND tracking_state = 'tracking' ORDER BY id`
-          : `SELECT id, text, tracking_state, origin FROM prompts WHERE tracking_state = 'exploration' ORDER BY id`,
+          ? `SELECT id, intent_id, text, category, tracking_state, origin FROM prompts WHERE active = 1 AND tracking_state = 'tracking' ORDER BY id`
+          : `SELECT id, intent_id, text, category, tracking_state, origin FROM prompts WHERE tracking_state = 'exploration' ORDER BY id`,
       );
   if (rows.length === 0) throw new SubscriptionRunError('no_prompts', 'No prompts are available for this subscription run');
   return rows.map((row) => ({
@@ -71,6 +79,8 @@ function selectPrompts(db, lane, promptIds) {
     promptText: String(row.text),
     lane,
     promptOrigin: /** @type {PromptTarget['promptOrigin']} */ (String(row.origin ?? 'legacy')),
+    intentId: row.intent_id === null ? null : Number(row.intent_id),
+    category: String(row.category),
   }));
 }
 
@@ -168,6 +178,42 @@ function queueRun(options) {
   /** @type {(PromptTarget & {responseId:number, surface:string, sampleIdx:number, db:Db, runId:number})[]} */
   const targets = [];
   transaction(db, () => {
+    const benchmark = benchmarkRevision({
+      questions: preview.prompts.map((prompt) => ({
+        id: prompt.promptId, intentId: prompt.intentId,
+        category: prompt.category, text: prompt.promptText,
+      })),
+      entities: all(db, 'SELECT id, name, aliases, domains, is_self FROM entities WHERE archived_at IS NULL ORDER BY id')
+        .map((entity) => {
+          /** @param {unknown} value @returns {string[]} */
+          const strings = (value) => {
+            try {
+              const parsed = JSON.parse(String(value ?? '[]'));
+              return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : [];
+            } catch {
+              return [];
+            }
+          };
+          return {
+            id: Number(entity.id), role: /** @type {'brand'|'competitor'} */ (Number(entity.is_self) === 1 ? 'brand' : 'competitor'),
+            name: String(entity.name), aliases: strings(entity.aliases), domains: strings(entity.domains),
+          };
+        }),
+      weighting: 'equal', scope: preview.lane,
+    });
+    const profiles = new Map(preview.surfaces.map((surface) => [surface, executionProfile({
+      surface,
+      route: surface === CODEX_SURFACE ? 'codex-search-v1' : 'claude-code-search-v1',
+      model: 'default', searchPolicy: 'required', envelopeVersion: PROMPT_ENVELOPE_VERSION,
+      requestSettings: {
+        profileVersion: surface === CODEX_SURFACE ? CODEX_PROFILE_VERSION : CLAUDE_PROFILE_VERSION,
+        executable: surface === CODEX_SURFACE
+          ? options.config.subscription.codex.executable : options.config.subscription.claudeCode.executable,
+      },
+      limits: { timeoutMs: options.config.subscriptionTimeoutMs,
+        idleTimeoutMs: options.config.subscriptionIdleTimeoutMs,
+        maxOutputBytes: options.config.subscriptionMaxOutputBytes },
+    })]));
     if (options.existingRunId === undefined) {
       const inserted = dbRun(
         db,
@@ -241,6 +287,12 @@ function queueRun(options) {
               prompt.promptOrigin,
             ],
           ).lastInsertRowid;
+          const profile = profiles.get(surface);
+          if (!profile) throw new TypeError('Missing subscription execution profile');
+          storeTargetDefinition(db, responseId, {
+            profile, benchmark, analysisRevision: 'legacy-heuristic-v1',
+            searchPolicy: 'required', at,
+          });
           targets.push({ ...prompt, responseId, surface, sampleIdx, db, runId: Number(runId) });
         }
       }
@@ -296,7 +348,7 @@ function entitiesForAnalysis(db) {
  * @param {Record<string, unknown>} result
  * @param {(text:string,entities:unknown[],citations?:{url:string}[])=>{mentions:Record<string,unknown>[],citations:Record<string,unknown>[]}} analyzeResponse
  * @param {Record<string, unknown>[]} entities
- * @param {{failureCode?:string}} [options]
+ * @param {{failureCode?:string, artifactStore?:import('./artifacts.js').ArtifactStore|null}} [options]
  * @returns {void}
  */
 function storeResult(db, responseId, result, analyzeResponse, entities, options = {}) {
@@ -306,62 +358,113 @@ function storeResult(db, responseId, result, analyzeResponse, entities, options 
   const webStatus = failureCode === null ? String(result.webStatus ?? 'unverified') : 'failed';
   const hasAnswer = text !== null && text.trim() !== '';
   const usage = result.usage && typeof result.usage === 'object' ? /** @type {Record<string, unknown>} */ (result.usage) : {};
-  const analysis = text === null ? { mentions: [], citations: [] } : analyzeResponse(text, entities, /** @type {{url:string}[]} */ (result.citations ?? []));
   const comparabilityStatus = targetStatus === 'completed' && webStatus === 'verified' && hasAnswer ? 'comparable' : 'non_comparable';
   const resultReason = targetStatus === 'failed'
     ? (failureCode !== null && failureCode.startsWith('web_search_') ? failureCode : 'web_search_failed')
     : comparabilityReason(webStatus, hasAnswer);
-  transaction(db, () => {
-    dbRun(
-      db,
-      `UPDATE responses SET model = ?, text = ?, tokens_in = ?, tokens_out = ?, target_status = ?, comparability_status = ?,
-          comparability_reason = ?, web_status = ?, cli_executable = ?, cli_version = ?, execution_profile_hash = ?,
-          prompt_envelope_version = ?, comparison_key = ?, location_control = ?, artifact_ref = ?,
-          safe_error_code = ?, error = ?
-        WHERE id = ?`,
-      [
-        result.model === null || result.model === undefined ? 'default' : String(result.model),
-        text,
-        usageCount(usage.inputTokens ?? usage.input_tokens),
-        usageCount(usage.outputTokens ?? usage.output_tokens),
-        targetStatus,
-        comparabilityStatus,
-        resultReason,
-        webStatus,
-        result.cliExecutable === undefined ? null : String(result.cliExecutable),
-        result.cliVersion === undefined ? null : String(result.cliVersion),
-        result.executionProfileHash === undefined ? null : String(result.executionProfileHash),
-        result.promptEnvelopeVersion === undefined ? null : String(result.promptEnvelopeVersion),
-        result.comparisonKey === undefined ? null : String(result.comparisonKey),
-        result.locationControl === undefined ? 'uncontrolled' : String(result.locationControl),
-        result.artifactRef === undefined || result.artifactRef === null ? null : String(result.artifactRef),
-        failureCode,
-        failureCode === null ? null : `subscription:${failureCode}`,
-        responseId,
-      ],
-    );
-    for (const mention of analysis.mentions ?? []) {
-      dbRun(db, 'INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet) VALUES(?,?,?,?,?,?,?)', [
-        responseId,
-        Number(mention.entityId ?? mention.entity_id),
-        Number(mention.firstIndex ?? mention.first_index ?? 0),
-        Number(mention.occurrences ?? 1),
-        Number(mention.rank ?? 1),
-        mention.recommended ? 1 : 0,
-        String(mention.snippet ?? ''),
-      ]);
+  try {
+    transaction(db, () => {
+      const analysis = text === null ? { mentions: [], citations: [] } : analyzeResponse(text, entities, /** @type {{url:string}[]} */ (result.citations ?? []));
+      dbRun(
+        db,
+        `UPDATE responses SET model = ?, text = ?, tokens_in = ?, tokens_out = ?, target_status = ?, comparability_status = ?,
+            comparability_reason = ?, web_status = ?, cli_executable = ?, cli_version = ?, execution_profile_hash = ?,
+            prompt_envelope_version = ?, comparison_key = ?, location_control = ?, artifact_ref = ?,
+            safe_error_code = ?, error = ?
+          WHERE id = ?`,
+        [
+          result.model === null || result.model === undefined ? 'default' : String(result.model),
+          text,
+          usageCount(usage.inputTokens ?? usage.input_tokens),
+          usageCount(usage.outputTokens ?? usage.output_tokens),
+          targetStatus,
+          comparabilityStatus,
+          resultReason,
+          webStatus,
+          result.cliExecutable === undefined ? null : String(result.cliExecutable),
+          result.cliVersion === undefined ? null : String(result.cliVersion),
+          result.executionProfileHash === undefined ? null : String(result.executionProfileHash),
+          result.promptEnvelopeVersion === undefined ? null : String(result.promptEnvelopeVersion),
+          result.comparisonKey === undefined ? null : String(result.comparisonKey),
+          result.locationControl === undefined ? 'uncontrolled' : String(result.locationControl),
+          result.artifactRef === undefined || result.artifactRef === null ? null : String(result.artifactRef),
+          failureCode,
+          failureCode === null ? null : `subscription:${failureCode}`,
+          responseId,
+        ],
+      );
+      for (const mention of analysis.mentions ?? []) {
+        dbRun(db, 'INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet) VALUES(?,?,?,?,?,?,?)', [
+          responseId,
+          Number(mention.entityId ?? mention.entity_id),
+          Number(mention.firstIndex ?? mention.first_index ?? 0),
+          Number(mention.occurrences ?? 1),
+          Number(mention.rank ?? 1),
+          mention.recommended ? 1 : 0,
+          String(mention.snippet ?? ''),
+        ]);
+      }
+      for (const citation of analysis.citations ?? []) {
+        dbRun(db, 'INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?,?,?,?,?)', [
+          responseId,
+          String(citation.url ?? ''),
+          String(citation.domain ?? ''),
+          Number(citation.rank ?? 1),
+          citation.entityId === undefined || citation.entityId === null ? null : Number(citation.entityId),
+        ]);
+      }
+      const normalized = normalizeSubscriptionEvidence(
+        /** @type {import('./agent-parsers.js').SearchEvent[]} */ (result.searchEvents ?? []),
+      );
+      const usageComponents = [
+        ...(usageCount(usage.inputTokens ?? usage.input_tokens) === null ? [] : [{
+          targetId: String(responseId), attempt: 0, continuation: 0, component: 'input_tokens',
+          quantity: usageCount(usage.inputTokens ?? usage.input_tokens), unit: 'tokens',
+          costUsd: null, costStatus: /** @type {const} */ ('unavailable'), priceVersion: null,
+        }]),
+        ...(usageCount(usage.outputTokens ?? usage.output_tokens) === null ? [] : [{
+          targetId: String(responseId), attempt: 0, continuation: 0, component: 'output_tokens',
+          quantity: usageCount(usage.outputTokens ?? usage.output_tokens), unit: 'tokens',
+          costUsd: null, costStatus: /** @type {const} */ ('unavailable'), priceVersion: null,
+        }]),
+      ];
+      storeMeasurementEvidence(db, responseId, {
+        policy: 'required', answerStatus: hasAnswer ? 'complete' : 'empty', answer: text,
+        actions: normalized.actions, sources: normalized.sources,
+        citations: (/** @type {string[]} */ (result.citations ?? [])).map((url) => ({
+          url: String(url), provenance: /** @type {const} */ ('text_link'),
+          sourceId: null, start: null, end: null,
+        })),
+        usage: usageComponents, at: String(result.observedAt ?? new Date().toISOString()),
+      });
+      const savedWebStatus = String(get(db, 'SELECT web_status FROM responses WHERE id = ?', [responseId])?.web_status ?? 'unverified');
+      const legacyReason = comparabilityReason(savedWebStatus, hasAnswer);
+      if (legacyReason !== null) {
+        dbRun(db, 'UPDATE responses SET comparability_reason = ? WHERE id = ?', [legacyReason, responseId]);
+      }
+      if (failureCode !== null) {
+        dbRun(db, `UPDATE responses SET target_status = 'failed', comparability_status = 'non_comparable',
+          comparability_reason = ?, evidence_completeness = 'partial', safe_error_code = ?,
+          error = ? WHERE id = ?`, [resultReason, failureCode, `subscription:${failureCode}`, responseId]);
+      }
+    });
+  } catch (error) {
+    if (options.artifactStore && typeof result.artifactRef === 'string') {
+      discardArtifact(options.artifactStore, result.artifactRef);
     }
-    for (const citation of analysis.citations ?? []) {
-      dbRun(db, 'INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?,?,?,?,?)', [
-        responseId,
-        String(citation.url ?? ''),
-        String(citation.domain ?? ''),
-        Number(citation.rank ?? 1),
-        citation.entityId === undefined || citation.entityId === null ? null : Number(citation.entityId),
-      ]);
-    }
-    recordSearchEvents(db, responseId, /** @type {Record<string, unknown>[]} */ (result.searchEvents ?? []));
-  });
+    dbRun(db, `UPDATE responses SET text = ?, model = ?, tokens_in = ?, tokens_out = ?,
+      target_status = 'failed', answer_status = ?, comparability_status = 'non_comparable',
+      comparability_reason = 'evidence_invalid', evidence_completeness = 'partial',
+      safe_error_code = 'evidence_invalid', error = 'evidence:invalid' WHERE id = ?`, [
+      text !== null && Buffer.byteLength(text) <= EVIDENCE_LIMITS.answerBytes ? text : null,
+      result.model === null || result.model === undefined ? 'default' : String(result.model),
+      usageCount(usage.inputTokens ?? usage.input_tokens),
+      usageCount(usage.outputTokens ?? usage.output_tokens),
+      hasAnswer ? 'complete' : 'empty',
+      responseId,
+    ]);
+    throw error;
+  }
 }
 
 /**
@@ -370,10 +473,11 @@ function storeResult(db, responseId, result, analyzeResponse, entities, options 
  * @param {Record<string, unknown>} result
  * @param {(text:string,entities:unknown[],citations?:{url:string}[])=>{mentions:Record<string,unknown>[],citations:Record<string,unknown>[]}} analyzeResponse
  * @param {Record<string, unknown>[]} entities
+ * @param {import('./artifacts.js').ArtifactStore|null} [artifactStore]
  * @returns {void}
  */
-function storeSuccess(db, responseId, result, analyzeResponse, entities) {
-  storeResult(db, responseId, result, analyzeResponse, entities);
+function storeSuccess(db, responseId, result, analyzeResponse, entities, artifactStore = null) {
+  storeResult(db, responseId, result, analyzeResponse, entities, { artifactStore });
 }
 
 /**
@@ -383,17 +487,21 @@ function storeSuccess(db, responseId, result, analyzeResponse, entities) {
  * @param {Record<string, unknown>} [result]
  * @param {(text:string,entities:unknown[],citations?:{url:string}[])=>{mentions:Record<string,unknown>[],citations:Record<string,unknown>[]}} [analyzeResponse]
  * @param {Record<string, unknown>[]} [entities]
+ * @param {import('./artifacts.js').ArtifactStore|null} [artifactStore]
  * @returns {void}
  */
-function storeFailure(db, responseId, code, result, analyzeResponse, entities) {
+function storeFailure(db, responseId, code, result, analyzeResponse, entities, artifactStore = null) {
   if (result && analyzeResponse && entities) {
-    storeResult(db, responseId, result, analyzeResponse, entities, { failureCode: code });
+    storeResult(db, responseId, result, analyzeResponse, entities, { failureCode: code, artifactStore });
     return;
   }
   dbRun(
     db,
     `UPDATE responses SET target_status = 'failed', comparability_status = 'non_comparable',
-       comparability_reason = ?, web_status = 'failed', safe_error_code = ?, error = ? WHERE id = ?`,
+       comparability_reason = ?, web_status = 'failed', answer_status = 'failed',
+       evidence_completeness = 'unavailable', query_metadata_status = 'unavailable',
+       safe_error_code = ?, error = ?
+       WHERE id = ? AND target_status IN ('queued', 'running')`,
     [code.startsWith('web_search_') ? code : null, code, `subscription:${code}`, responseId],
   );
 }
@@ -404,7 +512,8 @@ function storeCancelled(db, responseId) {
     db,
     `UPDATE responses SET target_status = 'cancelled', comparability_status = 'non_comparable',
        comparability_reason = 'cancelled', web_status = 'unavailable', safe_error_code = 'cancelled',
-       error = 'subscription:cancelled' WHERE id = ?`,
+       answer_status = 'failed', evidence_completeness = 'unavailable',
+       query_metadata_status = 'unavailable', error = 'subscription:cancelled' WHERE id = ?`,
     [responseId],
   );
 }
@@ -446,6 +555,7 @@ export async function runSubscriptionPanel(options) {
       const runner = runners[surface] ?? (surface === CODEX_SURFACE
         ? new CodexCliRunner({ executable: options.config.subscription.codex.executable, dataDir: options.config.subscriptionDataDir, timeoutMs: options.config.subscriptionTimeoutMs, idleTimeoutMs: options.config.subscriptionIdleTimeoutMs, maxOutputBytes: options.config.subscriptionMaxOutputBytes })
         : new ClaudeCliRunner({ executable: options.config.subscription.claudeCode.executable, dataDir: options.config.subscriptionDataDir, timeoutMs: options.config.subscriptionTimeoutMs, idleTimeoutMs: options.config.subscriptionIdleTimeoutMs, maxOutputBytes: options.config.subscriptionMaxOutputBytes }));
+      const artifactStore = runner instanceof SubscriptionAgentRunner ? runner.artifactStore : null;
       const onAbort = () => {
         cancellationRequested = true;
         runner.cancel?.();
@@ -477,10 +587,10 @@ export async function runSubscriptionPanel(options) {
             const result = await runner.run({ ...target }, runController.signal);
             const terminalCode = result.errorCode === null || result.errorCode === undefined ? null : errorCode(result);
             if (terminalCode) {
-              storeFailure(options.db, target.responseId, terminalCode, result, analyzeResponse, entities);
+              storeFailure(options.db, target.responseId, terminalCode, result, analyzeResponse, entities, artifactStore);
               bySurface[surface].errors += 1;
             } else {
-              storeSuccess(options.db, target.responseId, result, analyzeResponse, entities);
+              storeSuccess(options.db, target.responseId, result, analyzeResponse, entities, artifactStore);
               bySurface[surface].ok += 1;
               if (result.webStatus === 'verified') bySurface[surface].verified += 1;
               else bySurface[surface].nonComparable += 1;

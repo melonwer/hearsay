@@ -190,6 +190,19 @@ export function artifactAvailability(store, ref) {
 }
 
 /**
+ * Remove an artifact whose database finalization failed. Missing files are already gone.
+ * @param {ArtifactStore} store
+ * @param {string} ref
+ * @returns {boolean} whether a file was removed
+ */
+export function discardArtifact(store, ref) {
+  const path = artifactPath(store, ref);
+  if (!existsSync(path)) return false;
+  unlinkSync(path);
+  return true;
+}
+
+/**
  * Delete expired event files without touching normalized SQLite responses.
  *
  * @param {ArtifactStore} store

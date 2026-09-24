@@ -30,6 +30,7 @@ export class AgentParseError extends Error {
  * @property {string|null} observedAt
  * @property {number|null} rank
  * @property {string|null} providerEventType
+ * @property {string|null} actionId
  */
 
 /** @typedef {{inputTokens:number|null, outputTokens:number|null}} AgentUsage */
@@ -145,6 +146,7 @@ function evidence(eventType, status, input = {}) {
     observedAt: optionalString(input.timestamp),
     rank: optionalNumber(input.rank),
     providerEventType: null,
+    actionId: null,
   };
 }
 
@@ -223,6 +225,7 @@ export function parseCodexJsonl(input, options = {}) {
         timestamp: event.timestamp,
       });
       eventRow.providerEventType = eventType;
+      eventRow.actionId = optionalString(item.id ?? action.id);
       searchEvents.push(eventRow);
     } else if (itemType.includes('web_fetch') || itemType === 'webfetch') {
       const eventRow = evidence('fetch', eventType === 'item.completed' ? 'completed' : 'started', {
@@ -230,6 +233,7 @@ export function parseCodexJsonl(input, options = {}) {
         timestamp: event.timestamp,
       });
       eventRow.providerEventType = eventType;
+      eventRow.actionId = optionalString(item.id ?? action.id);
       searchEvents.push(eventRow);
     } else if (itemType === 'agent_message' || itemType === 'agentmessage') {
       const message = item.text ?? item.content;
@@ -285,6 +289,7 @@ export function parseClaudeStreamJsonl(input, options = {}) {
               timestamp: event.timestamp,
             });
             row.providerEventType = 'tool_use';
+            row.actionId = optionalString(item.id);
             searchEvents.push(row);
             pending.set(String(item.id ?? ''), {
               eventIndex: searchEvents.length - 1,

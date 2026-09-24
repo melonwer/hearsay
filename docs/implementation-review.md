@@ -41,3 +41,11 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Evidence: a fake adapter pauses after receiving a question while the test checks queued definitions and edits setup. The saved question and benchmark remain unchanged. An unsafe citation leaves the answer for diagnosis and a failed target without partial child evidence. Existing runner tests, the full suite, and typecheck are recorded at this commit boundary.
 - Compatibility: existing API request bodies, model defaults, cost estimates, and run consent stay the same. Old observations have no invented benchmark revision. New ones carry revision IDs and retain the old comparison key until exact-series readers are added.
 - Remaining gate: subscription runner definition and evidence finalization, artifact write rollback, and interrupted target recovery tests. C02 is incomplete until both execution paths satisfy the contract.
+
+## C02 subscription runner portion: persist CLI observations
+
+- Reason and user result: subscription measurements now retain their exact queued question and execution settings, plus separate search actions, queries, fetched or reported sources, final answer links, and token usage.
+- Contract: target definitions are saved with the run before CLI work. Provider action IDs reconcile start and completion records without counting one search twice. Final answer, legacy analysis rows, and normalized evidence commit together. The first query and source remain in the existing event columns for current answer pages. Failed finalization keeps a bounded answer and token counts while removing an uncommitted raw artifact.
+- Evidence: focused tests cover a setup edit during execution, action reconciliation, an invalid final citation after artifact creation, and recovery of an interrupted target without invented queries. Full suite and typecheck results are recorded at the commit boundary.
+- Compatibility: the current CLI consent, search prompt, result status, and answer-page event fields remain available. The execution profile includes the configured executable and safety profile version. CLI token usage has unknown monetary cost until C03 accounts for it.
+- Remaining gate: C03 adds policy budgets and usage accounting; C04–C08 add and refine provider-specific evidence. C02 has no new live provider calls.
