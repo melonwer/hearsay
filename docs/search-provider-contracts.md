@@ -47,7 +47,7 @@ These pages were checked on 2026-09-24. Prices change and must be stored with a 
 | Perplexity | [Sonar completion reference](https://docs.perplexity.ai/api-reference/sonar-post), [Agent API migration guide](https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview) | [Perplexity pricing](https://docs.perplexity.ai/getting-started/pricing): response-reported cost where available, token and search-context request components. |
 | Codex and Claude Code | Local CLI help and the current `core/agent-profiles.js` profiles | Subscription usage or allowance remains separate from API billing. No USD amount is inferred from an agent event. |
 
-`core/cost.js` values are estimates from its 2026-07-26 check. They are not invoices. A computed cost is complete only when every supported billing component for every known attempt has a quantity and a checked price. A known subtotal alongside unknown attempts or tool charges is partial, not zero.
+`core/cost.js` token and Sonar request rates were refreshed on 2026-09-24. They are estimates, not invoices. Search-tool charges and continuations still need C03 accounting; a known token subtotal alongside unknown tool charges is partial, not zero. A computed cost is complete only when every supported billing component for every known attempt has a quantity and a checked price.
 
 ## Fixture and release gates
 

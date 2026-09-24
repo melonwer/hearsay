@@ -49,3 +49,11 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Evidence: focused tests cover a setup edit during execution, action reconciliation, an invalid final citation after artifact creation, and recovery of an interrupted target without invented queries. Full suite and typecheck results are recorded at the commit boundary.
 - Compatibility: the current CLI consent, search prompt, result status, and answer-page event fields remain available. The execution profile includes the configured executable and safety profile version. CLI token usage has unknown monetary cost until C03 accounts for it.
 - Remaining gate: C03 adds policy budgets and usage accounting; C04–C08 add and refine provider-specific evidence. C02 has no new live provider calls.
+
+## C03 pricing portion: refresh checked token and Sonar rates
+
+- Reason and user result: legacy API cost estimates use the rates published on 2026-09-24, including the lower current OpenAI, Anthropic, and time-limited Gemini token rates. This corrects displayed estimates without changing requests or schedules.
+- Contract: `PRICE_TABLE_VERSION` identifies the checked standard-price table. Unknown models and missing token counts remain unpriced. Sonar's request fee remains separate from its token arithmetic. [search-provider-contracts.md](search-provider-contracts.md) retains official source links and the distinction between computed cost and an invoice.
+- Evidence: focused cost and runner tests, full suite, typecheck, and diff check are recorded at this commit boundary.
+- Compatibility: stored historical response costs remain unchanged. Existing price overrides still win. Gemini's current standard rate expires after 2026-12-31 and must be rechecked before a later date.
+- Remaining gate: C03 still needs search-tool and continuation usage, exact preview budgets, stale-quote rejection, and consistent manual, API, MCP, and scheduled consent. No search route is enabled by this change.

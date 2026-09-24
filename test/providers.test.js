@@ -658,9 +658,9 @@ describe('runner (§8.1)', () => {
     assert.equal(rows.length, 2);
     for (const row of rows) {
       assert.equal(row.model, 'gpt-5.6-luna');
-      assert.ok(Math.abs(Number(row.cost_usd) - (0.0002 + 0.003)) < 1e-12);
+      assert.ok(Math.abs(Number(row.cost_usd) - (0.00004 + 0.0006)) < 1e-12);
     }
-    assert.ok(Math.abs((summary.costUsd ?? 0) - 2 * (0.0002 + 0.003)) < 1e-12);
+    assert.ok(Math.abs((summary.costUsd ?? 0) - 2 * (0.00004 + 0.0006)) < 1e-12);
   });
 
   it('leaves cost null for a model with no known price', async () => {

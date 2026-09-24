@@ -57,8 +57,8 @@ import { resolvePortFilePath } from './port-discovery.js';
  */
 
 /**
- * Default models. Each was checked against current official docs at build time
- * (2026-07-26) rather than recalled — every one is overridable via env (§4.1).
+ * Default models. Each was checked against official docs on 2026-09-24 and remains
+ * overridable via env (§4.1).
  *
  * - openai      `gpt-5.6-luna`   — cost-tier current chat model in the GPT-5.6 family.
  *                                  Source: https://developers.openai.com/api/docs/models
@@ -70,8 +70,7 @@ import { resolvePortFilePath } from './port-discovery.js';
  * - perplexity  `sonar`          — "lightweight, cost-effective search model with grounding".
  *                                  Source: https://docs.perplexity.ai/getting-started/models
  *
- * Re-verified 2026-07-26 by Lane A alongside each provider's endpoint, request shape and
- * per-token price; the prices live in core/cost.js, keyed by these same model ids. Change
+ * Prices live in core/cost.js, keyed by these same model ids. Change
  * a model here without adding its price there and Hearsay reports "unpriced" rather than
  * billing you at the old model's rate (§4.3).
  */

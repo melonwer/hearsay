@@ -12,17 +12,15 @@
  * model's rate. Set `HEARSAY_PRICE_OPENAI_IN` / `_OUT` to teach it the new numbers.
  *
  * ---------------------------------------------------------------------------
- * PRICES VERIFIED 2026-07-26 (USD per 1M tokens, standard non-batch, non-cached):
+ * PRICES VERIFIED 2026-09-24 (USD per 1M tokens, standard non-batch, non-cached):
  *
- *   gpt-5.6-luna      $1.00 in / $6.00 out
- *     https://developers.openai.com/api/docs/models
- *   claude-sonnet-5   $3.00 in / $15.00 out   (list price)
- *     https://platform.claude.com/docs/en/about-claude/models/overview
- *     NOTE: introductory pricing of $2 / $10 applies through 2026-08-31. We default to
- *     the list price so the estimate stays correct after that date and errs high rather
- *     than low; override with HEARSAY_PRICE_ANTHROPIC_IN/_OUT to bill at the intro rate.
- *   gemini-3.6-flash  $1.50 in / $7.50 out    (output includes thinking tokens)
+ *   gpt-5.6-luna      $0.20 in / $1.20 out
+ *     https://developers.openai.com/api/docs/models/gpt-5.6-luna
+ *   claude-sonnet-5   $2.00 in / $10.00 out
+ *     https://platform.claude.com/docs/en/about-claude/pricing
+ *   gemini-3.6-flash  $0.75 in / $3.75 out    (output includes thinking tokens)
  *     https://ai.google.dev/gemini-api/docs/pricing
+ *     These Gemini rates are time-limited through 2026-12-31; recheck before 2027.
  *   sonar             $1.00 in / $1.00 out    + $0.005 per request
  *     https://docs.perplexity.ai/getting-started/pricing
  *     Perplexity bills a per-request search fee on top of tokens ($5 / $8 / $12 per 1000
@@ -31,6 +29,8 @@
  *     roughly an order of magnitude. We default to the low-context tier.
  * ---------------------------------------------------------------------------
  */
+
+export const PRICE_TABLE_VERSION = '2026-09-24-standard';
 
 /** @typedef {import('./config.js').ProviderId} ProviderId */
 
@@ -44,9 +44,9 @@
 
 /** @type {Record<string, ModelPrice>} */
 export const MODEL_PRICES = {
-  'gpt-5.6-luna': { provider: 'openai', inputPerMTok: 1.0, outputPerMTok: 6.0, requestUsd: 0 },
-  'claude-sonnet-5': { provider: 'anthropic', inputPerMTok: 3.0, outputPerMTok: 15.0, requestUsd: 0 },
-  'gemini-3.6-flash': { provider: 'gemini', inputPerMTok: 1.5, outputPerMTok: 7.5, requestUsd: 0 },
+  'gpt-5.6-luna': { provider: 'openai', inputPerMTok: 0.2, outputPerMTok: 1.2, requestUsd: 0 },
+  'claude-sonnet-5': { provider: 'anthropic', inputPerMTok: 2.0, outputPerMTok: 10.0, requestUsd: 0 },
+  'gemini-3.6-flash': { provider: 'gemini', inputPerMTok: 0.75, outputPerMTok: 3.75, requestUsd: 0 },
   sonar: { provider: 'perplexity', inputPerMTok: 1.0, outputPerMTok: 1.0, requestUsd: 0.005 },
 };
 

@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import {
   ESTIMATE_TOKENS,
   MODEL_PRICES,
+  PRICE_TABLE_VERSION,
   costUsd,
   estimateRunCost,
   formatUsd,
@@ -22,6 +23,7 @@ import { PROVIDER_IDS, buildConfig } from '../core/config.js';
 const NO_ENV = /** @type {Record<string, string|undefined>} */ ({});
 
 test('price table covers every default model in the provider registry', () => {
+  assert.equal(PRICE_TABLE_VERSION, '2026-09-24-standard');
   const config = buildConfig({});
   for (const id of PROVIDER_IDS) {
     const model = config.providers[id].model;
@@ -77,10 +79,10 @@ test('a garbage override is ignored rather than trusted', () => {
 });
 
 test('costUsd arithmetic, per 1M tokens', () => {
-  // gpt-5.6-luna: $1.00 in / $6.00 out per MTok.
+  // gpt-5.6-luna: $0.20 in / $1.20 out per MTok.
   const cost = costUsd({ provider: 'openai', model: 'gpt-5.6-luna', tokensIn: 200, tokensOut: 500 }, NO_ENV);
   assert.ok(cost !== null);
-  assert.ok(Math.abs(cost - (0.0002 + 0.003)) < 1e-12, `got ${cost}`);
+  assert.ok(Math.abs(cost - (0.00004 + 0.0006)) < 1e-12, `got ${cost}`);
 });
 
 test('costUsd includes Perplexity’s per-request search fee', () => {
@@ -114,7 +116,7 @@ test('estimateRunCost multiplies prompts × providers × samples', () => {
   assert.deepEqual(estimate.assumedTokens, ESTIMATE_TOKENS);
   assert.deepEqual(estimate.unpriced, []);
 
-  const perCallOpenai = 0.0002 + 0.003;
+  const perCallOpenai = 0.00004 + 0.0006;
   const perCallPerplexity = 0.0002 + 0.0005 + 0.005;
   assert.equal(estimate.perProvider.length, 2);
   assert.equal(estimate.perProvider[0].calls, 36);
@@ -139,7 +141,7 @@ test('estimateRunCost reports unpriced providers instead of hiding them in the t
   assert.equal(estimate.calls, 4);
   assert.deepEqual(estimate.unpriced, ['gemini']);
   assert.equal(estimate.perProvider[1].estUsd, null);
-  assert.ok(Math.abs((estimate.estUsd ?? 0) - (0.0002 + 0.003) * 2) < 1e-12);
+  assert.ok(Math.abs((estimate.estUsd ?? 0) - (0.00004 + 0.0006) * 2) < 1e-12);
 });
 
 test('estimateRunCost with nothing priced returns null, not zero', () => {
@@ -169,7 +171,7 @@ test('estimateRunCost accepts caller token assumptions', () => {
     },
     NO_ENV,
   );
-  assert.equal(estimate.estUsd, 1);
+  assert.equal(estimate.estUsd, 0.2);
   assert.deepEqual(estimate.assumedTokens, { input: 1e6, output: 0 });
 });
 
