@@ -22,7 +22,7 @@ import * as perplexity from './perplexity.js';
  * @property {string} id
  * @property {(text: string, opts?: {model?: string, timeoutMs?: number, apiKey?: string,
  *   searchPolicy?: 'off'|'auto'|'required'|'legacy', maxOutputTokens?: number|null,
- *   maxResponseBytes?: number|null}) => Promise<ProviderResult>} runPrompt
+ *   maxResponseBytes?: number|null,maxSearchCalls?:number|null,maxContinuations?:number}) => Promise<ProviderResult>} runPrompt
  */
 
 /** @type {Record<ProviderId, ProviderAdapter>} */

@@ -42,6 +42,7 @@ const ROUTE_CAPABILITIES = /** @type {const} */ ({
   'openai-chat-completions-v1': { surface: 'openai-api', policies: ['off'] },
   'openai-responses-web-search-v1': { surface: 'openai-api', policies: ['auto', 'required'] },
   'anthropic-messages-v1': { surface: 'anthropic-api', policies: ['off'] },
+  'anthropic-messages-web-search-v1': { surface: 'anthropic-api', policies: ['auto'] },
   'gemini-generate-content-v1': { surface: 'gemini-api', policies: ['off'] },
   'perplexity-sonar-v1': { surface: 'perplexity-api', policies: ['legacy'] },
   'codex-search-v1': { surface: 'codex-agent', policies: ['required'] },

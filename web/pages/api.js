@@ -15,7 +15,7 @@ import { all, get, isoNow, run, transaction, getSetting, setSetting, SETTING_KEY
 import { estimateRunCost, PRICE_TABLE_VERSION } from '../../core/cost.js';
 import { apiExecutionBudget } from '../../core/execution-budget.js';
 import { API_SEARCH_SCHEDULE_CONSENT_VERSION, apiScheduleQuoteId,
-  apiSearchScheduleApproved, disableApiSearchSchedule, getApiSearchSchedule,
+  apiSearchScheduleApproved, disableApiSearchSchedule, getApiSearchSchedule, hasEnabledApiSearch,
   saveApiSearchSchedule } from '../../core/api-search-schedule.js';
 import { stableIdentity } from '../../core/measurement-contract.js';
 import { sendJson, sendError } from '../router.js';
@@ -932,7 +932,7 @@ function patchIntent({ db }, ctx) {
  * @param {Pick<ApiDeps, 'db'|'config'>} deps
  * @returns {{calls: number, estUsd: number|null, knownSubtotalUsd:number|null,
  *   costStatus:'known'|'partial'|'unavailable', unpriced:string[],
- *   perProvider: import('../../core/cost.js').ProviderEstimate[], hasUnboundedSearch:boolean,
+ *   perProvider: import('../../core/cost.js').ProviderEstimate[], hasUnboundedSearch:boolean, hasSearch:boolean,
  *   quoteId:string, executionBudgets:ReturnType<typeof apiExecutionBudget>[]}}
  */
 export function costEstimate({ db, config }) {
@@ -947,8 +947,9 @@ export function costEstimate({ db, config }) {
   };
 
   const estimate = estimateRunCost(
-    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) =>
-      ({ id, model, searchPolicy: config.apiSearchPolicies[id] })) },
+    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }, index) =>
+      ({ id, model, searchPolicy: config.apiSearchPolicies[id],
+        searchCallLimitEnforced: executionBudgets[index].searchCallLimitEnforced })) },
     config.pricingEnv,
   );
   const quoteId = stableIdentity({ ...quoteInput,
@@ -963,6 +964,7 @@ export function costEstimate({ db, config }) {
     unpriced: estimate.unpriced,
     perProvider: estimate.perProvider,
     hasUnboundedSearch: estimate.hasUnboundedSearch,
+    hasSearch: estimate.hasSearch,
     executionBudgets,
     quoteId,
   };
@@ -975,8 +977,8 @@ export function costEstimate({ db, config }) {
  */
 function configureApiSearchSchedule({ db, config }, ctx) {
   if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on — API calls are disabled.');
-  if (config.apiSearchPolicies.openai === 'off' || !config.providers.openai.enabled) {
-    throw new ApiError(422, 'unsupported_search_schedule', 'Enable a validated OpenAI web-search route first.');
+  if (!hasEnabledApiSearch(config)) {
+    throw new ApiError(422, 'unsupported_search_schedule', 'Enable a validated API web-search route first.');
   }
   const body = asObject(ctx.body);
   const targetCeiling = body.target_ceiling;
@@ -1236,7 +1238,7 @@ async function startRun({ db, config }, ctx) {
   const body = ctx.body !== null && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? /** @type {Record<string, unknown>} */ (ctx.body) : {};
   const confirm = body.confirm === true;
   const estimate = costEstimate({ db, config });
-  const needsQuote = estimate.hasUnboundedSearch || config.confirmUsd === 0 ||
+  const needsQuote = estimate.hasSearch || config.confirmUsd === 0 ||
     estimate.estUsd === null || estimate.estUsd > config.confirmUsd || estimate.calls > 200;
   if (needsQuote && (!confirm || body.quote_id === undefined)) {
     return new WithStatus(200, {
@@ -1248,6 +1250,7 @@ async function startRun({ db, config }, ctx) {
       unpriced: estimate.unpriced,
       perProvider: estimate.perProvider,
       hasUnboundedSearch: estimate.hasUnboundedSearch,
+      hasSearch: estimate.hasSearch,
       executionBudgets: estimate.executionBudgets,
       quoteId: estimate.quoteId,
       confirmHint: 'POST /api/run with this quote_id and {"confirm":true} to start',

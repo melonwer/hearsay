@@ -35,6 +35,22 @@ Hearsay measures models through their public APIs. That is a deliberate, documen
 
 Treat Hearsay's numbers as **a logged-out discovery baseline, directional only** — a consistent, repeatable measurement of how the underlying models talk about your category, not a replay of any one customer's screen. A paired API-vs-UI comparison study is planned; it will be linked here when published.
 
+## Opt-in API web search
+
+OpenAI Responses web search supports `auto` and `required` on the validated
+`gpt-5.6-luna` route. Anthropic Messages basic web search supports `auto` on the
+validated `claude-sonnet-5` route. These are distinct measurement series from
+their search-off API routes and from each other. A complete `auto` answer where
+the provider confirms no search remains a valid auto observation. A failed or
+unfinished search makes the answer non-comparable. Search actions, exposed
+queries, returned sources, and final citations are stored separately.
+
+Anthropic search is bounded to three attempted searches and one continuation
+within a target timeout. OpenAI's hosted search has no enforceable internal
+call ceiling. Quotes forecast one billed search per target, then computed usage
+costs use provider-reported token and tool-use records when available. A
+missing billing quantity remains unknown, and no quote is an invoice.
+
 ## Subscription agent surfaces
 
 Hearsay can also run an explicitly enabled panel through a locally installed,

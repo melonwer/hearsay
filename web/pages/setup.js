@@ -12,6 +12,7 @@
 
 import { html, layout, SURFACE_LABEL, usd } from '../layout.js';
 import { estimateRunCost } from '../../core/cost.js';
+import { apiExecutionBudget } from '../../core/execution-budget.js';
 import { activePromptCount, brandEntity, listEntities } from '../queries.js';
 
 /**
@@ -90,6 +91,7 @@ export function starterPack({ brand, competitors }, year = new Date().getUTCFull
  * @property {number} calls calls the first run would make (§4.2)
  * @property {number|null} estUsd null when the price table has no entry — never a guess (§4.3)
  * @property {boolean} hasUnboundedSearch
+ * @property {boolean} hasSearch
  * @property {{text: string, category: string}[]} starter starter pack, entity names filled in (§20.3)
  */
 
@@ -106,10 +108,12 @@ export function buildView({ db, config }, query) {
   const competitors = entities.filter((entity) => entity.is_self !== 1);
   const prompts = activePromptCount(db);
   const enabled = config.enabledProviders;
+  const executionBudgets = enabled.map(({ id }) => apiExecutionBudget(config, id));
 
   const estimate = estimateRunCost(
-    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) =>
-      ({ id, model, searchPolicy: config.apiSearchPolicies[id] })) },
+    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }, index) =>
+      ({ id, model, searchPolicy: config.apiSearchPolicies[id],
+        searchCallLimitEnforced: executionBudgets[index].searchCallLimitEnforced })) },
     config.pricingEnv,
   );
 
@@ -134,6 +138,7 @@ export function buildView({ db, config }, query) {
     calls: estimate.calls,
     estUsd: estimate.estUsd,
     hasUnboundedSearch: estimate.hasUnboundedSearch,
+    hasSearch: estimate.hasSearch,
     starter: starterPack({ brand: brand?.name ?? null, competitors: competitors.map((entity) => entity.name) }),
   };
 }
@@ -352,7 +357,7 @@ function stepGo(view) {
             : usd(view.estUsd)}
         </dd>
       </dl>
-      ${view.hasUnboundedSearch ? html`<p class="muted">This forecast assumes one web-search call per target. The provider does not enforce a search-call ceiling.</p>` : ''}
+      ${view.hasSearch ? html`<p class="muted">This forecast assumes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' OpenAI does not enforce a search-call ceiling.' : ''}</p>` : ''}
       ${view.demo
         ? html`<p class="muted">Demo mode is on, so live API runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`
         : view.hasKey

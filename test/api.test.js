@@ -223,6 +223,70 @@ test('daily API search needs separate recurring consent and invalidates changed 
   }
 });
 
+test('bounded Anthropic search still requires an on-demand quote and separate schedule consent', async () => {
+  const app = await bootRunnable({ ANTHROPIC_API_KEY: 'fixture-key',
+    HEARSAY_ANTHROPIC_SEARCH_POLICY: 'auto', HEARSAY_CONFIRM_USD: '999' });
+  try {
+    const quote = await api(app.base, 'POST', '/api/run', {});
+    assert.equal(quote.body.status, 'quote_required');
+    assert.equal(quote.body.hasSearch, true);
+    assert.equal(quote.body.hasUnboundedSearch, false);
+    const budget = quote.body.executionBudgets.find((item) => item.surface === 'anthropic-api');
+    assert.equal(budget.maxSearchCalls, 3);
+    assert.equal(budget.maxContinuations, 1);
+    const schedule = await api(app.base, 'POST', '/api/search-schedule', { target_ceiling: 2 });
+    assert.equal(schedule.body.status, 'schedule_confirmation_required');
+  } finally { await app.close(); }
+});
+
+test('Anthropic web-search run persists linked result and final citation with priced usage', async () => {
+  for (let attempt = 0; attempt < 100 && isRunning(); attempt += 1) await sleep(20);
+  assert.equal(isRunning(), false);
+  const app = await boot({ ANTHROPIC_API_KEY: 'fixture-key', HEARSAY_ANTHROPIC_SEARCH_POLICY: 'auto',
+    HEARSAY_SAMPLES: '1', HEARSAY_CONFIRM_USD: '999' });
+  await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
+  await api(app.base, 'POST', '/api/prompts', { text: 'best tracker?' });
+  assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM prompts WHERE active = 1')?.n), 1);
+  let providerCalls = 0;
+  _setFetch(async () => {
+    providerCalls += 1;
+    return new Response(JSON.stringify({ model: 'claude-sonnet-5', stop_reason: 'end_turn',
+      usage: { input_tokens: 100, output_tokens: 60,
+        server_tool_use: { web_search_requests: 1 } },
+      content: [
+        { type: 'server_tool_use', id: 'srvtoolu_1', name: 'web_search', input: { query: 'best tracker' } },
+        { type: 'web_search_tool_result', tool_use_id: 'srvtoolu_1', content: [
+          { type: 'web_search_result', url: 'https://example.org/source', title: 'Source',
+            encrypted_content: 'fixture-encrypted' },
+        ] },
+        { type: 'text', text: 'Try Acme.', citations: [
+          { type: 'web_search_result_location', url: 'https://example.org/source',
+            title: 'Source', encrypted_index: 'fixture-index' },
+        ] },
+      ] }), { status: 200 });
+  });
+  try {
+    const quote = await api(app.base, 'POST', '/api/run', {});
+    assert.equal(quote.body.status, 'quote_required');
+    assert.equal(providerCalls, 0);
+    const started = await api(app.base, 'POST', '/api/run', { confirm: true,
+      quote_id: quote.body.quoteId });
+    assert.equal(started.status, 202);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (get(app.db, 'SELECT status FROM runs WHERE id = ?', [started.body.runId])?.status === 'done') break;
+      await sleep(20);
+    }
+    const row = get(app.db, 'SELECT id, web_status, comparability_status, cost_usd, error FROM responses WHERE run_id = ?', [started.body.runId]);
+    assert.equal(providerCalls, 1, JSON.stringify({ run: get(app.db, 'SELECT status, error FROM runs WHERE id = ?', [started.body.runId]), row }));
+    assert.equal(row?.web_status, 'verified');
+    assert.equal(row?.comparability_status, 'comparable');
+    assert.ok(Math.abs(Number(row?.cost_usd) - 0.0108) < 1e-12);
+    assert.equal(Number(get(app.db, `SELECT COUNT(*) AS n FROM answer_citations ac
+      JOIN source_observations so ON so.id = ac.source_observation_id
+      WHERE ac.response_id = ? AND ac.url = so.url`, [row?.id])?.n), 1);
+  } finally { await app.close(); }
+});
+
 test('API confirmation rejects a quote after the approved prompt changes', async () => {
   const app = await bootRunnable({ HEARSAY_CONFIRM_USD: '0' });
   try {

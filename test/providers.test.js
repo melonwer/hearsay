@@ -843,6 +843,37 @@ describe('runner (§8.1)', () => {
     }
   });
 
+  it('retains Anthropic search evidence when a continuation fails', async () => {
+    const config = buildConfig({ ANTHROPIC_API_KEY: 'k', HEARSAY_ANTHROPIC_SEARCH_POLICY: 'auto',
+      HEARSAY_SAMPLES: '1' });
+    const summary = await runPanel({ db, config,
+      adapters: { anthropic: { runPrompt: async () => {
+        const error = new ProviderError('other', 'Continuation failed', '', [
+          { attempt: 0, continuation: 0, inputTokens: 20, outputTokens: 10,
+            searchCalls: 1, requestCompleted: true },
+          { attempt: 0, continuation: 1, inputTokens: null, outputTokens: null,
+            searchCalls: null, requestCompleted: false },
+        ]);
+        error.partialResult = { text: 'Partial answer', model: 'claude-sonnet-5', latencyMs: 10,
+          searchActions: [{ id: 'srvtoolu_fixture', kind: 'search', status: 'completed',
+            queryMetadata: 'available', queries: ['best tracker'], observedAt: null,
+            providerType: 'web_search' }],
+          sources: [{ id: 'source_fixture', url: 'https://example.org/source', title: 'Source',
+            provenance: 'search_result', actionId: 'srvtoolu_fixture', order: 0 }],
+          answerCitations: [] };
+        throw error;
+      } } }, analyzeResponse: fakeAnalyze, env: {} });
+    assert.equal(summary.errorCalls, 2);
+    assert.equal(summary.costStatus, 'partial');
+    const row = get(db, 'SELECT id, target_status, comparability_status, evidence_completeness, cost_status FROM responses ORDER BY id LIMIT 1');
+    assert.equal(row?.target_status, 'failed');
+    assert.equal(row?.comparability_status, 'non_comparable');
+    assert.equal(row?.evidence_completeness, 'partial');
+    assert.equal(row?.cost_status, 'partial');
+    assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_events WHERE response_id = ?', [row?.id])?.n), 1);
+    assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM source_observations WHERE response_id = ?', [row?.id])?.n), 1);
+  });
+
   it('leaves cost null when the provider returned no usage counts', async () => {
     const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
     const noUsage = fakeAdapter({ model: 'gpt-5.6-luna' });
@@ -1207,6 +1238,19 @@ describe('scheduler (§8.2)', () => {
     assert.equal(await scheduler.tick(), true);
     assert.equal(receivedConfig?.apiSearchPolicies.openai, 'off');
     assert.equal(config.apiSearchPolicies.openai, 'required');
+  });
+
+  it('keeps Anthropic web search off on an old daily schedule', async () => {
+    const config = buildConfig({ ANTHROPIC_API_KEY: 'k', HEARSAY_RUN_AT: '07:00',
+      HEARSAY_ANTHROPIC_SEARCH_POLICY: 'auto' });
+    let clock = new Date(2026, 6, 26, 6, 59, 0);
+    /** @type {import('../core/config.js').Config|null} */
+    let receivedConfig = null;
+    const scheduler = start({ db, config, now: () => clock,
+      runPanel: async (opts) => { receivedConfig = opts.config ?? null; } });
+    clock = new Date(2026, 6, 26, 7, 0, 0);
+    assert.equal(await scheduler.tick(), true);
+    assert.equal(receivedConfig?.apiSearchPolicies.anthropic, 'off');
   });
 
   it('uses the search route only after recurring consent with a sufficient target ceiling', async () => {

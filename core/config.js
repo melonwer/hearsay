@@ -37,7 +37,7 @@ import { resolvePortFilePath } from './port-discovery.js';
  * @property {boolean} demo demo mode: no live calls, no scheduler, banner shown
  * @property {number} confirmUsd Run-cost confirm threshold in USD (SPEC §3.3); 0 = every run quotes first.
  * @property {Record<string, string|undefined>} pricingEnv resolved nonsecret price overrides
- * @property {{openai:'off'|'auto'|'required',anthropic:'off',gemini:'off',perplexity:'legacy'}} apiSearchPolicies
+ * @property {{openai:'off'|'auto'|'required',anthropic:'off'|'auto',gemini:'off',perplexity:'legacy'}} apiSearchPolicies
  * @property {Record<ProviderId, ProviderConfig>} providers
  * @property {ProviderConfig[]} enabledProviders
  * @property {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} subscription
@@ -211,8 +211,11 @@ export function buildConfig(env) {
   if (!['off', 'auto', 'required'].includes(openaiSearchPolicy)) {
     throw new RangeError('HEARSAY_OPENAI_SEARCH_POLICY must be off, auto, or required');
   }
+  const anthropicSearchPolicy = String(env.HEARSAY_ANTHROPIC_SEARCH_POLICY ?? 'off').trim() || 'off';
+  if (!['off', 'auto'].includes(anthropicSearchPolicy)) {
+    throw new RangeError('HEARSAY_ANTHROPIC_SEARCH_POLICY must be off or auto');
+  }
   for (const [key, policy] of [
-    ['HEARSAY_ANTHROPIC_SEARCH_POLICY', 'off'],
     ['HEARSAY_GEMINI_SEARCH_POLICY', 'off'],
     ['HEARSAY_PERPLEXITY_SEARCH_POLICY', 'legacy'],
   ]) {
@@ -246,6 +249,9 @@ export function buildConfig(env) {
   const registry = /** @type {Record<ProviderId, ProviderConfig>} */ (providers);
   if (openaiSearchPolicy !== 'off' && registry.openai.model !== 'gpt-5.6-luna') {
     throw new RangeError(`OpenAI web search is validated for gpt-5.6-luna, not ${registry.openai.model}`);
+  }
+  if (anthropicSearchPolicy !== 'off' && registry.anthropic.model !== 'claude-sonnet-5') {
+    throw new RangeError(`Anthropic web search is validated for claude-sonnet-5, not ${registry.anthropic.model}`);
   }
 
   const dbPath = String(env.HEARSAY_DB_PATH ?? '').trim() || './data/hearsay.db';
@@ -283,7 +289,7 @@ export function buildConfig(env) {
     pricingEnv,
     apiSearchPolicies: {
       openai: /** @type {'off'|'auto'|'required'} */ (openaiSearchPolicy),
-      anthropic: 'off', gemini: 'off', perplexity: 'legacy',
+      anthropic: /** @type {'off'|'auto'} */ (anthropicSearchPolicy), gemini: 'off', perplexity: 'legacy',
     },
     providers: registry,
     enabledProviders: PROVIDER_IDS.map((id) => registry[id]).filter((p) => p.enabled),

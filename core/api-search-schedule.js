@@ -8,6 +8,12 @@ import { stableIdentity } from './measurement-contract.js';
 export const API_SEARCH_SCHEDULE_CONSENT_VERSION = 'api-search-schedule-v1';
 
 /** @param {Config} config */
+export function hasEnabledApiSearch(config) {
+  return config.enabledProviders.some((provider) =>
+    config.apiSearchPolicies[provider.id] === 'auto' || config.apiSearchPolicies[provider.id] === 'required');
+}
+
+/** @param {Config} config */
 export function apiScheduleBudgetHash(config) {
   return stableIdentity(config.enabledProviders.map((provider) => apiExecutionBudget(config, provider.id)));
 }
@@ -34,8 +40,8 @@ export function getApiSearchSchedule(db) {
 /** @param {Db} db @param {Config} config @param {number} targetCeiling */
 export function saveApiSearchSchedule(db, config, targetCeiling) {
   if (!Number.isInteger(targetCeiling) || targetCeiling < 1) throw new RangeError('targetCeiling must be positive');
-  if (config.apiSearchPolicies.openai === 'off' || !config.providers.openai.enabled) {
-    throw new RangeError('An enabled OpenAI web-search route is required');
+  if (!hasEnabledApiSearch(config)) {
+    throw new RangeError('An enabled API web-search route is required');
   }
   const schedule = { enabled: /** @type {const} */ (true),
     consentVersion: API_SEARCH_SCHEDULE_CONSENT_VERSION,
@@ -55,7 +61,7 @@ export function disableApiSearchSchedule(db) {
 
 /** @param {Db} db @param {Config} config */
 export function apiSearchScheduleApproved(db, config) {
-  if (config.apiSearchPolicies.openai === 'off') return false;
+  if (!hasEnabledApiSearch(config)) return false;
   const schedule = getApiSearchSchedule(db);
   if (!schedule || schedule.runAt !== config.runAt ||
       schedule.budgetHash !== apiScheduleBudgetHash(config)) return false;

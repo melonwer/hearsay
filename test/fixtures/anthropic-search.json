@@ -1,0 +1,22 @@
+{
+  "id": "msg_fixture_search",
+  "model": "claude-sonnet-5",
+  "stop_reason": "end_turn",
+  "usage": { "input_tokens": 100, "output_tokens": 60,
+    "server_tool_use": { "web_search_requests": 2 } },
+  "content": [
+    { "type": "server_tool_use", "id": "srvtoolu_a", "name": "web_search",
+      "input": { "query": "best project tracker" } },
+    { "type": "web_search_tool_result", "tool_use_id": "srvtoolu_a",
+      "content": [
+        { "type": "web_search_result", "url": "https://example.org/review", "title": "Review", "encrypted_content": "fixture-encrypted" },
+        { "type": "web_search_result", "url": "https://example.org/catalog", "title": "Catalog", "encrypted_content": "fixture-encrypted-2" }
+      ] },
+    { "type": "server_tool_use", "id": "srvtoolu_b", "name": "web_search", "input": {} },
+    { "type": "web_search_tool_result", "tool_use_id": "srvtoolu_b", "content": [] },
+    { "type": "text", "text": "Try Acme.", "citations": [
+      { "type": "web_search_result_location", "url": "https://example.net/guide",
+        "title": "Guide", "encrypted_index": "fixture-index" }
+    ] }
+  ]
+}

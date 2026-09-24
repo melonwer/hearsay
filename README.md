@@ -48,6 +48,12 @@ exceeding the target ceiling suspends scheduled search. Use
 `DELETE /api/search-schedule` to remove recurring search consent. No live provider smoke
 test is run automatically.
 
+Anthropic API runs can use the basic server-side web search tool on
+`claude-sonnet-5` with `HEARSAY_ANTHROPIC_SEARCH_POLICY=auto`. Hearsay limits
+search to three calls per target and one continuation within the target timeout.
+The `auto` policy includes complete answers where Claude chooses not to search.
+The same on-demand quote and separate daily-schedule consent apply.
+
 ## Install it by asking
 
 If you use a supported paid [Claude Code](https://claude.com/claude-code) account, paste

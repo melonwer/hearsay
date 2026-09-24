@@ -75,6 +75,7 @@ function humanSize(bytes) {
  * @property {'known'|'partial'|'unavailable'} costStatus
  * @property {import('../../core/cost.js').ProviderEstimate[]} perProvider
  * @property {boolean} hasUnboundedSearch
+ * @property {boolean} hasSearch
  * @property {boolean} recurringSearchApproved
  * @property {ReturnType<typeof apiExecutionBudget>[]} executionBudgets
  * @property {ReturnType<typeof subscriptionExecutionBudget>[]} subscriptionBudgets
@@ -94,10 +95,12 @@ function humanSize(bytes) {
 export function buildView({ db, config }) {
   const prompts = activePromptCount(db);
   const enabled = config.enabledProviders;
+  const executionBudgets = enabled.map(({ id }) => apiExecutionBudget(config, id));
 
   const estimate = estimateRunCost(
-    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) =>
-      ({ id, model, searchPolicy: config.apiSearchPolicies[id] })) },
+    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }, index) =>
+      ({ id, model, searchPolicy: config.apiSearchPolicies[id],
+        searchCallLimitEnforced: executionBudgets[index].searchCallLimitEnforced })) },
     config.pricingEnv,
   );
   /** @type {SettingsView['spend']} */
@@ -140,8 +143,9 @@ export function buildView({ db, config }) {
     costStatus: estimate.costStatus,
     perProvider: estimate.perProvider,
     hasUnboundedSearch: estimate.hasUnboundedSearch,
+    hasSearch: estimate.hasSearch,
     recurringSearchApproved: apiSearchScheduleApproved(db, config),
-    executionBudgets: enabled.map(({ id }) => apiExecutionBudget(config, id)),
+    executionBudgets,
     subscriptionBudgets: config.subscriptionSurfaces.map((surface) => subscriptionExecutionBudget(config, surface)),
     spend,
     spendDays: SPEND_DAYS,
@@ -225,7 +229,7 @@ function costPanel(view) {
       <thead><tr><th>Surface</th><th>Endpoint profile / model</th><th>Search policy</th><th>Time limit</th><th>Answer limit</th></tr></thead>
       <tbody>${budgets}</tbody>
     </table>`}
-    ${view.hasUnboundedSearch ? html`<p class="muted small">The estimate includes one web-search call per target. The hosted search tool has no enforceable search-call ceiling, so this forecast is not a spending cap. Daily API search: ${view.recurringSearchApproved ? 'approved for the current profile and target ceiling' : 'off until separately confirmed at /api/search-schedule'}.</p>` : ''}
+    ${view.hasSearch ? html`<p class="muted small">The estimate includes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' OpenAI hosted search has no enforceable internal call ceiling, so this forecast is not a spending cap.' : ''} Daily API search: ${view.recurringSearchApproved ? 'approved for the current profile and target ceiling' : 'off until separately confirmed at /api/search-schedule'}.</p>` : ''}
     <p class="muted small">
       Estimates and computed usage costs cover direct API usage only. Estimates use the token medians documented in the
       methodology, priced from the table in core/cost.js. Computed usage cost is not an invoice and can omit

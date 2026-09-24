@@ -50,6 +50,8 @@ if (values.prompt !== undefined) {
         searchPolicy: /** @type {import('../core/measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
         maxOutputTokens: budget.answerTokenLimit,
         maxResponseBytes: budget.maxOutputBytes,
+        maxSearchCalls: budget.maxSearchCalls,
+        maxContinuations: budget.maxContinuations,
       });
       process.stdout.write(`${provider.id} ${Date.now() - t0}ms: ${result.text.slice(0, 120).replace(/\n/g, ' ')}\n`);
     } catch (err) {
@@ -61,7 +63,7 @@ if (values.prompt !== undefined) {
 
 const db = openDb(config.dbPath);
 const estimate = costEstimate({ db, config });
-const needsQuote = estimate.hasUnboundedSearch || config.confirmUsd === 0 ||
+const needsQuote = estimate.hasSearch || config.confirmUsd === 0 ||
   estimate.estUsd === null || estimate.estUsd > config.confirmUsd || estimate.calls > 200;
 if (needsQuote && values['confirm-quote'] !== estimate.quoteId) {
   process.stderr.write(`Run confirmation required. Inspect --estimate, then pass --confirm-quote ${estimate.quoteId}.\n`);

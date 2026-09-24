@@ -48,6 +48,8 @@ export class ProviderError extends Error {
     /** @type {string} */
     this.detail = detail;
     this.billableAttempts = billableAttempts;
+    /** @type {ProviderResult|null} */
+    this.partialResult = null;
   }
 
   /**
@@ -157,19 +159,21 @@ function isAbort(err) {
  * @param {RequestInit} init
  * @param {{timeoutMs: number, retries?: number,
  *   usageFromResponse?:(json:unknown)=>{inputTokens:number|null,outputTokens:number|null,searchCalls?:number|null},
- *   signal?:AbortSignal, maxResponseBytes?:number}} opts
+ *   signal?:AbortSignal, maxResponseBytes?:number, deadlineMs?:number}} opts
  * @returns {Promise<FetchResult>}
  */
-export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageFromResponse, signal, maxResponseBytes }) {
+export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageFromResponse, signal, maxResponseBytes, deadlineMs }) {
   let attempt = 0;
   /** @type {import('../cost.js').BillableAttempt[]} */
   const priorAttempts = [];
   for (;;) {
     if (signal?.aborted) throw new ProviderError('cancelled', 'Request cancelled', '', priorAttempts);
+    const attemptTimeoutMs = deadlineMs === undefined ? timeoutMs : Math.min(timeoutMs, deadlineMs - Date.now());
+    if (attemptTimeoutMs <= 0) throw new ProviderError('timeout', 'Target time limit reached', '', priorAttempts);
     const controller = new AbortController();
     const cancel = () => controller.abort();
     signal?.addEventListener('abort', cancel, { once: true });
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
     /** @type {FetchResult|null} */
     let result = null;
     /** @type {unknown} */
@@ -214,7 +218,7 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageF
       if (isAbort(err)) {
         clearTimeout(timer);
         throw new ProviderError(signal?.aborted ? 'cancelled' : 'timeout',
-          signal?.aborted ? 'Request cancelled' : `No response within ${timeoutMs} ms`, '', [
+          signal?.aborted ? 'Request cancelled' : `No response within ${attemptTimeoutMs} ms`, '', [
           ...priorAttempts, { attempt, continuation: 0, inputTokens: null, outputTokens: null },
         ]);
       }
@@ -251,7 +255,9 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageF
     if (res.status === 429 && attempt < retries) {
       priorAttempts.push(failedAttempt);
       attempt += 1;
-      await currentSleep(backoffMs(attempt));
+      const waitMs = deadlineMs === undefined ? backoffMs(attempt)
+        : Math.min(backoffMs(attempt), Math.max(0, deadlineMs - Date.now()));
+      await currentSleep(waitMs);
       continue;
     }
 

@@ -314,8 +314,8 @@ async function triggerRun(button) {
         ? 'unknown cost'
         : `at least $${Number(first.data.knownSubtotalUsd).toFixed(2)} plus unknown costs`
       : `≈ $${Number(first.data.estUsd).toFixed(2)}`;
-    const searchNote = first.data.hasUnboundedSearch
-      ? '\nWeb search is enabled. The estimate assumes one search call per target; the provider has no enforceable search-call ceiling.' : '';
+    const searchNote = first.data.hasSearch
+      ? `\nWeb search is enabled. The estimate assumes one search call per search-enabled target.${first.data.hasUnboundedSearch ? ' OpenAI has no enforceable internal search-call ceiling.' : ' Anthropic caps search calls as shown in the preview.'}` : '';
     if (!window.confirm(`This run makes ${first.data.calls} API calls (${usd}).${searchNote} Start it?`)) {
       button.removeAttribute('disabled');
       return;

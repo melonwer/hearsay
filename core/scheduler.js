@@ -19,7 +19,7 @@ import { SETTING_KEYS, getSetting, setSetting } from './db.js';
 import { runPanel as defaultRunPanel } from './runner.js';
 import { runSubscriptionPanel as defaultRunSubscriptionPanel } from './subscription-runner.js';
 import { getSubscriptionSchedule, subscriptionScheduleTick } from './subscription-scheduler.js';
-import { apiSearchScheduleApproved } from './api-search-schedule.js';
+import { apiSearchScheduleApproved, hasEnabledApiSearch } from './api-search-schedule.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('./config.js').Config} Config */
@@ -131,8 +131,9 @@ export function startScheduler(options) {
         // retried in 60 seconds, and a run that takes an hour should not start twice.
         setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(at));
         try {
-          const cronConfig = config.apiSearchPolicies.openai === 'off' || apiSearchScheduleApproved(db, config) ? config : {
-            ...config, apiSearchPolicies: { ...config.apiSearchPolicies, openai: /** @type {const} */ ('off') },
+          const cronConfig = !hasEnabledApiSearch(config) || apiSearchScheduleApproved(db, config) ? config : {
+            ...config, apiSearchPolicies: { ...config.apiSearchPolicies,
+              openai: /** @type {const} */ ('off'), anthropic: /** @type {const} */ ('off') },
           };
           await runPanel(cronConfig === config ? { db, trigger: 'cron' } : { db, trigger: 'cron', config: cronConfig });
           started = true;

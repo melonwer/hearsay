@@ -237,6 +237,7 @@ export function summarizeComputedCosts(input) {
  * @property {(ProviderId|string)[]} unpriced providers whose model has no known price
  * @property {{input: number, output: number}} assumedTokens what the estimate assumes per call
  * @property {boolean} hasUnboundedSearch forecast is not a spending ceiling
+ * @property {boolean} hasSearch at least one provider has a search tool enabled
  */
 
 /**
@@ -245,7 +246,8 @@ export function summarizeComputedCosts(input) {
  * @param {Object} input
  * @param {number} input.promptCount active prompts
  * @param {number} input.samples samples per prompt per provider
- * @param {{id: ProviderId|string, model: string, searchPolicy?:'off'|'auto'|'required'|'legacy'}[]} input.providers enabled providers
+ * @param {{id: ProviderId|string, model: string, searchPolicy?:'off'|'auto'|'required'|'legacy',
+ *   searchCallLimitEnforced?:boolean}[]} input.providers enabled providers
  * @param {number} [input.inputTokens] override the assumed input tokens per call
  * @param {number} [input.outputTokens] override the assumed output tokens per call
  * @param {Record<string, string|undefined>} [env]
@@ -265,14 +267,17 @@ export function estimateRunCost(input, env = process.env) {
   let total = 0;
   let priced = 0;
   let hasUnboundedSearch = false;
+  let hasSearch = false;
 
   for (const provider of input.providers) {
-    const unboundedSearch = provider.searchPolicy === 'auto' || provider.searchPolicy === 'required';
-    const assumedSearchCalls = unboundedSearch ? callsPerProvider : 0;
-    const searchPrice = unboundedSearch
+    const searchEnabled = provider.searchPolicy === 'auto' || provider.searchPolicy === 'required';
+    const unboundedSearch = searchEnabled && provider.searchCallLimitEnforced !== true;
+    const assumedSearchCalls = searchEnabled ? callsPerProvider : 0;
+    const searchPrice = searchEnabled
       ? SEARCH_TOOL_PRICES[/** @type {keyof typeof SEARCH_TOOL_PRICES} */ (provider.id)] ?? null : 0;
     const searchToolUsd = searchPrice === null ? null : searchPrice * assumedSearchCalls;
     hasUnboundedSearch ||= unboundedSearch;
+    hasSearch ||= searchEnabled;
     const unit = costUsd({ provider: provider.id, model: provider.model, tokensIn, tokensOut }, env);
     if (unit === null || searchToolUsd === null) {
       unpriced.push(provider.id);
@@ -297,6 +302,7 @@ export function estimateRunCost(input, env = process.env) {
     unpriced,
     assumedTokens: { input: tokensIn, output: tokensOut },
     hasUnboundedSearch,
+    hasSearch,
   };
 }
 

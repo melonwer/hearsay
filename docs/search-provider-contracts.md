@@ -2,7 +2,7 @@
 
 Checked against the official pages linked below on 2026-09-24. This is the C00 contract for the implementation plan. It describes the current implementation and the evidence required before a new search profile can be enabled. Documentation review is not account or model verification. No live provider request was made for this contract.
 
-Implementation update, 2026-09-24: the OpenAI Responses route is available by explicit `HEARSAY_OPENAI_SEARCH_POLICY=auto|required` on `gpt-5.6-luna`. Sanitized request, evidence, usage, quote, and storage fixtures pass; account access has not been checked with a live request. The search-off route remains the default. Recurring search requires a separate schedule quote and target ceiling. Anthropic and Gemini API search remain gated.
+Implementation update, 2026-09-24: the OpenAI Responses route is available by explicit `HEARSAY_OPENAI_SEARCH_POLICY=auto|required` on `gpt-5.6-luna`. Anthropic basic web search is available by explicit `HEARSAY_ANTHROPIC_SEARCH_POLICY=auto` on `claude-sonnet-5`, with three searches and one continuation at most per target. Sanitized request, evidence, usage, quote, and storage fixtures pass; account access has not been checked with a live request. Search-off routes remain the default. Recurring search requires a separate schedule quote and target ceiling. Gemini API search remains gated.
 
 ## Baseline at `d7c9573`
 
@@ -27,7 +27,7 @@ Each adapter must return a completion state, search state, evidence completeness
 
 ## Provider capability matrix
 
-The matrix records the original C00 gates. The OpenAI route is now enabled by explicit configuration and validated locally against sanitized fixtures. Account compatibility still needs an opt-in live smoke check. Other proposed API search profiles remain gated. An unsupported model or tool combination returns an actionable error rather than silently using another endpoint or policy.
+The matrix records the original C00 gates. OpenAI and Anthropic basic-search routes are now enabled by explicit configuration and validated locally against sanitized fixtures. Account compatibility still needs an opt-in live smoke check. Other proposed API search profiles remain gated. An unsupported model or tool combination returns an actionable error rather than silently using another endpoint or policy.
 
 | Surface and proposed route | Policy gate and request | Search verification and missingness | Query, source, and citation mapping | Completion, usage, and limit gate |
 |---|---|---|---|---|
@@ -49,7 +49,7 @@ These pages were checked on 2026-09-24. Prices change and must be stored with a 
 | Perplexity | [Sonar completion reference](https://docs.perplexity.ai/api-reference/sonar-post), [Agent API migration guide](https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview) | [Perplexity pricing](https://docs.perplexity.ai/getting-started/pricing): response-reported cost where available, token and search-context request components. |
 | Codex and Claude Code | Local CLI help and the current `core/agent-profiles.js` profiles | Subscription usage or allowance remains separate from API billing. No USD amount is inferred from an agent event. |
 
-`core/cost.js` token and Sonar request rates were refreshed on 2026-09-24. OpenAI web-search calls now have a checked list price and a separate usage component; the pre-run forecast assumes one call per target and is not a cap. They are estimates, not invoices. Other provider search charges and continuations remain to implement. A known token subtotal alongside unknown tool charges is partial, not zero. A computed cost is complete only when every supported billing component for every known attempt has a quantity and a checked price.
+`core/cost.js` token and Sonar request rates were refreshed on 2026-09-24. OpenAI and Anthropic basic web-search calls now have checked list prices and separate usage components; the pre-run forecast assumes one call per target and is not a cap. Anthropic's tool also has a three-call ceiling per target. These figures are estimates, not invoices. Other provider search charges remain to implement. A known token subtotal alongside unknown tool charges is partial, not zero. A computed cost is complete only when every supported billing component for every known attempt has a quantity and a checked price.
 
 ## Fixture and release gates
 
@@ -63,4 +63,4 @@ Existing sanitized inputs are `test/fixtures/{openai,anthropic,gemini,perplexity
 | Perplexity | Two `search_results` and one different `citations` URL, absent query wording, numeric reference mapping, partial usage, failed or truncated choice. |
 | Subscription agents | Multiple queries/results for one action, start/completion reconciliation, missing IDs, unknown event type, terminal failure, redaction, size and event limits. |
 
-No credential or account capability was verified through a live request. Live smoke checks remain opt-in, bounded, and outside CI. Anthropic and Gemini API search profiles remain unavailable. The baseline non-search routes and existing subscription runs keep their current behavior.
+No credential or account capability was verified through a live request. Live smoke checks remain opt-in, bounded, and outside CI. Gemini API search remains unavailable. The baseline non-search routes and existing subscription runs keep their current behavior.
