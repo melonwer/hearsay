@@ -109,12 +109,13 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
   const list = await rpc(mcp, 'tools/list', {}, 2);
   const tools = list.result.tools;
-  assert.equal(tools.length, 18);
+  assert.equal(tools.length, 19);
   const names = tools.map((/** @type {*} */ t) => t.name);
   for (const name of [
     'hearsay_status', 'hearsay_summary', 'hearsay_intent_results', 'hearsay_prompt_results',
     'hearsay_answers_search', 'hearsay_citation_gap', 'hearsay_alerts', 'hearsay_cost_estimate',
-    'hearsay_suggest_prompts', 'hearsay_setup_tracking', 'hearsay_run_panel', 'hearsay_run_status',
+    'hearsay_suggest_prompts', 'hearsay_setup_tracking', 'hearsay_run_panel',
+    'hearsay_api_search_schedule', 'hearsay_run_status',
     'hearsay_ack_alert', 'hearsay_subscription_preview', 'hearsay_subscription_run',
     'hearsay_subscription_schedule', 'hearsay_exploration_create', 'hearsay_exploration_promote',
   ]) assert.ok(names.includes(name), `missing ${name}`);
@@ -139,6 +140,7 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
     'GET /api/answers': { status: 200, body: { total: 0, page: 1, items: [] } },
     'POST /api/setup': { status: 422, body: { error: { code: 'validation', message: '1 problem(s) — nothing was saved' }, errors: [] } },
     'POST /api/run': { status: 200, body: { status: 'quote_required', calls: 300, estUsd: 2.4, perProvider: [] } },
+    'POST /api/search-schedule': { status: 200, body: { status: 'schedule_confirmation_required' } },
     'POST /api/alerts/7/ack': { status: 200, body: { ok: true } },
   });
   const mcp = startMcp(backend.url);
@@ -163,6 +165,10 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
   assert.notEqual(quote.result.isError, true); // a quote is a successful outcome
   assert.equal(JSON.parse(quote.result.content[0].text).status, 'quote_required');
   assert.equal(JSON.parse(backend.seen.at(-1).body).confirm, false);
+
+  const searchSchedule = await call(9, 'hearsay_api_search_schedule', { action: 'preview', target_ceiling: 5 });
+  assert.equal(JSON.parse(searchSchedule.result.content[0].text).status, 'schedule_confirmation_required');
+  assert.equal(backend.seen.at(-1).url, '/api/search-schedule');
 
   await call(8, 'hearsay_subscription_preview', { surfaces: ['codex-agent'], samples: 1 });
   assert.equal(backend.seen.at(-1).url, '/api/subscription/preview');

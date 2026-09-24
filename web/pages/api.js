@@ -14,6 +14,9 @@
 import { all, get, isoNow, run, transaction, getSetting, setSetting, SETTING_KEYS } from '../../core/db.js';
 import { estimateRunCost, PRICE_TABLE_VERSION } from '../../core/cost.js';
 import { apiExecutionBudget } from '../../core/execution-budget.js';
+import { API_SEARCH_SCHEDULE_CONSENT_VERSION, apiScheduleQuoteId,
+  apiSearchScheduleApproved, disableApiSearchSchedule, getApiSearchSchedule,
+  saveApiSearchSchedule } from '../../core/api-search-schedule.js';
 import { stableIdentity } from '../../core/measurement-contract.js';
 import { sendJson, sendError } from '../router.js';
 import { metrics, NotReadyError, providers, runner, soft, strict, suggest } from '../data.js';
@@ -929,7 +932,7 @@ function patchIntent({ db }, ctx) {
  * @param {Pick<ApiDeps, 'db'|'config'>} deps
  * @returns {{calls: number, estUsd: number|null, knownSubtotalUsd:number|null,
  *   costStatus:'known'|'partial'|'unavailable', unpriced:string[],
- *   perProvider: {provider: string, calls: number, estUsd: number|null}[],
+ *   perProvider: import('../../core/cost.js').ProviderEstimate[], hasUnboundedSearch:boolean,
  *   quoteId:string, executionBudgets:ReturnType<typeof apiExecutionBudget>[]}}
  */
 export function costEstimate({ db, config }) {
@@ -944,7 +947,8 @@ export function costEstimate({ db, config }) {
   };
 
   const estimate = estimateRunCost(
-    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) => ({ id, model })) },
+    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) =>
+      ({ id, model, searchPolicy: config.apiSearchPolicies[id] })) },
     config.pricingEnv,
   );
   const quoteId = stableIdentity({ ...quoteInput,
@@ -958,9 +962,47 @@ export function costEstimate({ db, config }) {
     costStatus: estimate.costStatus,
     unpriced: estimate.unpriced,
     perProvider: estimate.perProvider,
+    hasUnboundedSearch: estimate.hasUnboundedSearch,
     executionBudgets,
     quoteId,
   };
+}
+
+/**
+ * Explicit consent to add web search to the existing daily API schedule.
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ */
+function configureApiSearchSchedule({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on — API calls are disabled.');
+  if (config.apiSearchPolicies.openai === 'off' || !config.providers.openai.enabled) {
+    throw new ApiError(422, 'unsupported_search_schedule', 'Enable a validated OpenAI web-search route first.');
+  }
+  const body = asObject(ctx.body);
+  const targetCeiling = body.target_ceiling;
+  if (!Number.isInteger(targetCeiling) || Number(targetCeiling) < 1) {
+    throw new ApiError(422, 'unprocessable', 'target_ceiling must be a positive integer');
+  }
+  const estimate = costEstimate({ db, config });
+  if (estimate.calls > Number(targetCeiling)) {
+    throw new ApiError(422, 'schedule_budget_exceeded',
+      `target_ceiling ${targetCeiling} is below the current ${estimate.calls} targets`);
+  }
+  const quoteId = apiScheduleQuoteId(config, estimate.quoteId, Number(targetCeiling));
+  if (body.confirm !== true) {
+    return new WithStatus(200, { status: 'schedule_confirmation_required',
+      ...estimate, runAt: config.runAt, targetCeiling, consentVersion: API_SEARCH_SCHEDULE_CONSENT_VERSION,
+      quoteId, confirmHint: 'POST /api/search-schedule with the same target_ceiling, quote_id, and {"confirm":true} to add web search to daily API runs' });
+  }
+  if (body.quote_id !== quoteId) {
+    throw new ApiError(409, 'stale_quote', 'The schedule selection or execution settings changed; preview the schedule again.');
+  }
+  return new WithStatus(201, saveApiSearchSchedule(db, config, Number(targetCeiling)));
+}
+
+/** @param {ApiDeps} deps */
+function readApiSearchSchedule({ db, config }) {
+  return { schedule: getApiSearchSchedule(db), approved: apiSearchScheduleApproved(db, config) };
 }
 
 /** Names `core/suggest.js` may expose for its draft entry point (§6.7). */
@@ -1194,7 +1236,8 @@ async function startRun({ db, config }, ctx) {
   const body = ctx.body !== null && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? /** @type {Record<string, unknown>} */ (ctx.body) : {};
   const confirm = body.confirm === true;
   const estimate = costEstimate({ db, config });
-  const needsQuote = config.confirmUsd === 0 || estimate.estUsd === null || estimate.estUsd > config.confirmUsd || estimate.calls > 200;
+  const needsQuote = estimate.hasUnboundedSearch || config.confirmUsd === 0 ||
+    estimate.estUsd === null || estimate.estUsd > config.confirmUsd || estimate.calls > 200;
   if (needsQuote && (!confirm || body.quote_id === undefined)) {
     return new WithStatus(200, {
       status: 'quote_required',
@@ -1204,6 +1247,7 @@ async function startRun({ db, config }, ctx) {
       costStatus: estimate.costStatus,
       unpriced: estimate.unpriced,
       perProvider: estimate.perProvider,
+      hasUnboundedSearch: estimate.hasUnboundedSearch,
       executionBudgets: estimate.executionBudgets,
       quoteId: estimate.quoteId,
       confirmHint: 'POST /api/run with this quote_id and {"confirm":true} to start',
@@ -1524,6 +1568,9 @@ export function registerApiRoutes(router, deps) {
     '/api/run',
     json((ctx) => startRun(deps, ctx)),
   );
+  router.add('GET', '/api/search-schedule', json(() => readApiSearchSchedule(deps)));
+  router.add('POST', '/api/search-schedule', json((ctx) => configureApiSearchSchedule(deps, ctx)));
+  router.add('DELETE', '/api/search-schedule', json(() => ({ disabled: disableApiSearchSchedule(db) })));
   router.add(
     'POST',
     '/api/subscription/preview',
@@ -1624,6 +1671,8 @@ export function registerApiRoutes(router, deps) {
             entity_id: citation.entity_id,
           })),
           search_events: item.search_events,
+          source_observations: item.source_observations,
+          answer_citations: item.answer_citations,
         })),
       };
     }),

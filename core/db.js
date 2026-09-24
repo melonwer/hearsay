@@ -424,6 +424,8 @@ export const SETTING_KEYS = /** @type {const} */ ({
   SUBSCRIPTION_SURFACE_OPT_IN: 'subscription_surface_opt_in',
   /** JSON-encoded persistent subscription schedule and consent metadata. */
   SUBSCRIPTION_SCHEDULE: 'subscription_schedule',
+  /** Explicit consent for the OpenAI web-search route on the existing daily API schedule. */
+  API_SEARCH_SCHEDULE: 'api_search_schedule',
 });
 
 /** @type {WeakMap<Db, Map<string, Stmt>>} */

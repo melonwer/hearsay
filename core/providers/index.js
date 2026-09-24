@@ -20,7 +20,9 @@ import * as perplexity from './perplexity.js';
 /**
  * @typedef {Object} ProviderAdapter
  * @property {string} id
- * @property {(text: string, opts?: {model?: string, timeoutMs?: number, apiKey?: string}) => Promise<ProviderResult>} runPrompt
+ * @property {(text: string, opts?: {model?: string, timeoutMs?: number, apiKey?: string,
+ *   searchPolicy?: 'off'|'auto'|'required'|'legacy', maxOutputTokens?: number|null,
+ *   maxResponseBytes?: number|null}) => Promise<ProviderResult>} runPrompt
  */
 
 /** @type {Record<ProviderId, ProviderAdapter>} */

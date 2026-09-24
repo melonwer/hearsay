@@ -14,6 +14,7 @@ import { html, layout, raw, SURFACE_LABEL, usd } from '../layout.js';
 import { metrics, soft } from '../data.js';
 import { estimateRunCost } from '../../core/cost.js';
 import { apiExecutionBudget, subscriptionExecutionBudget } from '../../core/execution-budget.js';
+import { apiSearchScheduleApproved } from '../../core/api-search-schedule.js';
 import { activePromptCount } from '../queries.js';
 import { get, getSetting, SETTING_KEYS } from '../../core/db.js';
 import { getSubscriptionSchedule } from '../../core/subscription-scheduler.js';
@@ -72,7 +73,9 @@ function humanSize(bytes) {
  * @property {number|null} estUsd null when the price table has no entry — never a guess (§4.3)
  * @property {number|null} knownSubtotalUsd
  * @property {'known'|'partial'|'unavailable'} costStatus
- * @property {{provider: string, calls: number, estUsd: number|null}[]} perProvider
+ * @property {import('../../core/cost.js').ProviderEstimate[]} perProvider
+ * @property {boolean} hasUnboundedSearch
+ * @property {boolean} recurringSearchApproved
  * @property {ReturnType<typeof apiExecutionBudget>[]} executionBudgets
  * @property {ReturnType<typeof subscriptionExecutionBudget>[]} subscriptionBudgets
  * @property {{totalUsd:number|null,knownSubtotalUsd:number|null,costStatus:'known'|'partial'|'unavailable',
@@ -93,7 +96,8 @@ export function buildView({ db, config }) {
   const enabled = config.enabledProviders;
 
   const estimate = estimateRunCost(
-    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) => ({ id, model })) },
+    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) =>
+      ({ id, model, searchPolicy: config.apiSearchPolicies[id] })) },
     config.pricingEnv,
   );
   /** @type {SettingsView['spend']} */
@@ -135,6 +139,8 @@ export function buildView({ db, config }) {
     knownSubtotalUsd: estimate.knownSubtotalUsd,
     costStatus: estimate.costStatus,
     perProvider: estimate.perProvider,
+    hasUnboundedSearch: estimate.hasUnboundedSearch,
+    recurringSearchApproved: apiSearchScheduleApproved(db, config),
     executionBudgets: enabled.map(({ id }) => apiExecutionBudget(config, id)),
     subscriptionBudgets: config.subscriptionSurfaces.map((surface) => subscriptionExecutionBudget(config, surface)),
     spend,
@@ -219,6 +225,7 @@ function costPanel(view) {
       <thead><tr><th>Surface</th><th>Endpoint profile / model</th><th>Search policy</th><th>Time limit</th><th>Answer limit</th></tr></thead>
       <tbody>${budgets}</tbody>
     </table>`}
+    ${view.hasUnboundedSearch ? html`<p class="muted small">The estimate includes one web-search call per target. The hosted search tool has no enforceable search-call ceiling, so this forecast is not a spending cap. Daily API search: ${view.recurringSearchApproved ? 'approved for the current profile and target ceiling' : 'off until separately confirmed at /api/search-schedule'}.</p>` : ''}
     <p class="muted small">
       Estimates and computed usage costs cover direct API usage only. Estimates use the token medians documented in the
       methodology, priced from the table in core/cost.js. Computed usage cost is not an invoice and can omit

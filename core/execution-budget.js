@@ -1,5 +1,5 @@
 import { assertRoutePolicy } from './measurement-contract.js';
-import { endpoint as openaiEndpoint } from './providers/openai.js';
+import { endpoint as openaiEndpoint, responsesEndpoint as openaiResponsesEndpoint } from './providers/openai.js';
 import { endpoint as anthropicEndpoint, MAX_TOKENS as anthropicMaxTokens } from './providers/anthropic.js';
 import { endpointFor as geminiEndpointFor } from './providers/gemini.js';
 import { endpoint as perplexityEndpoint } from './providers/perplexity.js';
@@ -27,21 +27,30 @@ const API_ROUTES = Object.freeze({
  * @param {ProviderId} providerId
  */
 export function apiExecutionBudget(config, providerId) {
-  const definition = API_ROUTES[providerId];
+  const searchPolicy = config.apiSearchPolicies[providerId];
+  const definition = providerId === 'openai' && searchPolicy !== 'off'
+    ? { route: 'openai-responses-web-search-v1', policy: searchPolicy,
+      endpoint: openaiResponsesEndpoint, answerTokenLimit: 2048 }
+    : API_ROUTES[providerId];
   const provider = config.providers[providerId];
+  if (providerId === 'openai' && searchPolicy !== 'off' && provider.model !== 'gpt-5.6-luna') {
+    throw new RangeError(`OpenAI web search is not validated for ${provider.model}`);
+  }
   assertRoutePolicy(definition.route, `${providerId}-api`, /** @type {import('./measurement-contract.js').SearchPolicy} */ (definition.policy));
   return {
     surface: `${providerId}-api`, route: definition.route, model: provider.model,
     endpoint: providerId === 'gemini' ? geminiEndpointFor(provider.model) : definition.endpoint,
     searchPolicy: definition.policy,
-    enabledTools: providerId === 'perplexity' ? ['Sonar internal retrieval'] : [],
-    searchUsageAssumption: providerId === 'perplexity' ? 'one_sonar_request' : 'none',
-    maxSearchCalls: providerId === 'perplexity' ? null : 0,
-    searchCallLimitEnforced: providerId !== 'perplexity',
+    enabledTools: providerId === 'perplexity' ? ['Sonar internal retrieval']
+      : providerId === 'openai' && searchPolicy !== 'off' ? ['web_search'] : [],
+    searchUsageAssumption: providerId === 'perplexity' ? 'one_sonar_request'
+      : providerId === 'openai' && searchPolicy !== 'off' ? 'one_web_search_call_per_target_forecast' : 'none',
+    maxSearchCalls: providerId === 'perplexity' || providerId === 'openai' && searchPolicy !== 'off' ? null : 0,
+    searchCallLimitEnforced: providerId !== 'perplexity' && !(providerId === 'openai' && searchPolicy !== 'off'),
     maxContinuations: 0,
     timeoutMs: config.timeoutMs,
     answerTokenLimit: definition.answerTokenLimit,
-    maxOutputBytes: null,
+    maxOutputBytes: providerId === 'openai' && searchPolicy !== 'off' ? 2 * 1024 * 1024 : null,
   };
 }
 

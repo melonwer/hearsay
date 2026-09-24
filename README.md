@@ -37,6 +37,17 @@ questions separately, usually by usage. Hearsay's built-in dollar calculator and
 spend figure cover API usage only; they do not estimate or report subscription allowance
 consumption.
 
+OpenAI API runs can use live web search on `gpt-5.6-luna`. Set
+`HEARSAY_OPENAI_SEARCH_POLICY=auto` or `required` to use the Responses API route;
+the default `off` keeps the existing Chat Completions request. Search runs always
+show a quote before starting. It forecasts one web-search call per target, but the
+hosted tool has no enforceable internal call ceiling. The daily API schedule stays
+search off until you separately confirm `POST /api/search-schedule` with a
+`target_ceiling` and its returned `quoteId`. Changing the execution profile or
+exceeding the target ceiling suspends scheduled search. Use
+`DELETE /api/search-schedule` to remove recurring search consent. No live provider smoke
+test is run automatically.
+
 ## Install it by asking
 
 If you use a supported paid [Claude Code](https://claude.com/claude-code) account, paste

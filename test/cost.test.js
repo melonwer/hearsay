@@ -177,6 +177,15 @@ test('estimateRunCost multiplies prompts × providers × samples', () => {
   assert.ok(Math.abs((estimate.estUsd ?? 0) - (perCallOpenai + perCallPerplexity) * 36) < 1e-12);
 });
 
+test('search estimate includes one tool call per target and labels the forecast unbounded', () => {
+  const estimate = estimateRunCost({ promptCount: 2, samples: 1,
+    providers: [{ id: 'openai', model: 'gpt-5.6-luna', searchPolicy: 'required' }] }, NO_ENV);
+  assert.equal(estimate.hasUnboundedSearch, true);
+  assert.equal(estimate.perProvider[0].assumedSearchCalls, 2);
+  assert.equal(estimate.perProvider[0].searchToolUsd, 0.02);
+  assert.ok(Math.abs(Number(estimate.estUsd) - 0.02128) < 1e-12);
+});
+
 test('estimateRunCost reports unpriced providers instead of hiding them in the total', () => {
   const estimate = estimateRunCost(
     {

@@ -89,6 +89,7 @@ export function starterPack({ brand, competitors }, year = new Date().getUTCFull
  * @property {number} subscriptionSamples allowance-safe subscription samples per prompt
  * @property {number} calls calls the first run would make (§4.2)
  * @property {number|null} estUsd null when the price table has no entry — never a guess (§4.3)
+ * @property {boolean} hasUnboundedSearch
  * @property {{text: string, category: string}[]} starter starter pack, entity names filled in (§20.3)
  */
 
@@ -107,7 +108,8 @@ export function buildView({ db, config }, query) {
   const enabled = config.enabledProviders;
 
   const estimate = estimateRunCost(
-    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) => ({ id, model })) },
+    { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) =>
+      ({ id, model, searchPolicy: config.apiSearchPolicies[id] })) },
     config.pricingEnv,
   );
 
@@ -131,6 +133,7 @@ export function buildView({ db, config }, query) {
     subscriptionSamples: config.subscriptionSamples,
     calls: estimate.calls,
     estUsd: estimate.estUsd,
+    hasUnboundedSearch: estimate.hasUnboundedSearch,
     starter: starterPack({ brand: brand?.name ?? null, competitors: competitors.map((entity) => entity.name) }),
   };
 }
@@ -349,6 +352,7 @@ function stepGo(view) {
             : usd(view.estUsd)}
         </dd>
       </dl>
+      ${view.hasUnboundedSearch ? html`<p class="muted">This forecast assumes one web-search call per target. The provider does not enforce a search-call ceiling.</p>` : ''}
       ${view.demo
         ? html`<p class="muted">Demo mode is on, so live API runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`
         : view.hasKey

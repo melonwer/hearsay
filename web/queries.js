@@ -325,7 +325,9 @@ export function activePromptCount(db) {
  * @property {string|null} artifact_ref
  * @property {{entity_id: number, name: string, first_index: number, occurrences: number, recommended: number, snippet: string, rank: number}[]} mentions
  * @property {{url: string, domain: string, entity_id: number|null, rank: number}[]} citations
- * @property {{event_type:string, status:string, query:string|null, url:string|null, title:string|null, domain:string|null, observed_at:string, rank:number|null}[]} search_events
+ * @property {{id:number,event_type:string, status:string, query:string|null, queries:string[], url:string|null, title:string|null, domain:string|null, observed_at:string, rank:number|null}[]} search_events
+ * @property {{url:string,title:string|null,provenance:string,search_event_id:number|null}[]} source_observations
+ * @property {{url:string,provenance:string,start:number|null,end:number|null}[]} answer_citations
  */
 
 /**
@@ -407,6 +409,8 @@ export function queryAnswers(db, filters = {}) {
     mentions: [],
     citations: [],
     search_events: [],
+    source_observations: [],
+    answer_citations: [],
   }));
 
   if (items.length === 0) return { total, page, per, pages, items };
@@ -437,21 +441,47 @@ export function queryAnswers(db, filters = {}) {
 
   for (const row of all(
     db,
-    `SELECT response_id, event_type, status, query, url, title, domain, observed_at, rank
+    `SELECT id, response_id, event_type, status, query, url, title, domain, observed_at, rank
        FROM search_events
       WHERE response_id IN (${placeholders})
       ORDER BY response_id ASC, id ASC`,
     ids,
   )) {
     byId.get(Number(row.response_id))?.search_events.push({
+      id: Number(row.id),
       event_type: String(row.event_type),
       status: String(row.status),
       query: row.query === null || row.query === undefined ? null : String(row.query),
+      queries: [],
       url: row.url === null || row.url === undefined ? null : String(row.url),
       title: row.title === null || row.title === undefined ? null : String(row.title),
       domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
       observed_at: String(row.observed_at),
       rank: row.rank === null || row.rank === undefined ? null : Number(row.rank),
+    });
+  }
+
+  const events = new Map(items.flatMap((item) => item.search_events.map((event) => [event.id, event])));
+  for (const row of all(db, `SELECT search_event_id, original_text FROM search_queries
+      WHERE response_id IN (${placeholders}) ORDER BY search_event_id, ordinal`, ids)) {
+    events.get(Number(row.search_event_id))?.queries.push(String(row.original_text));
+  }
+
+  for (const row of all(db, `SELECT response_id, search_event_id, url, title, provenance
+      FROM source_observations WHERE response_id IN (${placeholders}) ORDER BY response_id, id`, ids)) {
+    byId.get(Number(row.response_id))?.source_observations.push({
+      url: String(row.url), title: row.title === null ? null : String(row.title),
+      provenance: String(row.provenance),
+      search_event_id: row.search_event_id === null ? null : Number(row.search_event_id),
+    });
+  }
+
+  for (const row of all(db, `SELECT response_id, url, provenance, answer_start, answer_end
+      FROM answer_citations WHERE response_id IN (${placeholders}) ORDER BY response_id, ordinal`, ids)) {
+    byId.get(Number(row.response_id))?.answer_citations.push({
+      url: String(row.url), provenance: String(row.provenance),
+      start: row.answer_start === null ? null : Number(row.answer_start),
+      end: row.answer_end === null ? null : Number(row.answer_end),
     });
   }
 

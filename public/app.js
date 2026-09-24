@@ -314,7 +314,9 @@ async function triggerRun(button) {
         ? 'unknown cost'
         : `at least $${Number(first.data.knownSubtotalUsd).toFixed(2)} plus unknown costs`
       : `≈ $${Number(first.data.estUsd).toFixed(2)}`;
-    if (!window.confirm(`This run makes ${first.data.calls} API calls (${usd}). Start it?`)) {
+    const searchNote = first.data.hasUnboundedSearch
+      ? '\nWeb search is enabled. The estimate assumes one search call per target; the provider has no enforceable search-call ceiling.' : '';
+    if (!window.confirm(`This run makes ${first.data.calls} API calls (${usd}).${searchNote} Start it?`)) {
       button.removeAttribute('disabled');
       return;
     }

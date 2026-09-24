@@ -30,7 +30,7 @@ Both numbers are always shown. The phrasing number is never hidden, even though 
 Hearsay measures models through their public APIs. That is a deliberate, documented trade-off, and it is a bias no amount of sampling removes:
 
 - **No memory or personalisation.** Consumer apps adapt to each user's history; the API sees a fresh, anonymous caller every time.
-- **No consumer-app system prompts or tools.** ChatGPT-the-app wraps the model in hidden instructions, browsing and other tooling that the raw API does not replicate.
+- **No consumer-app system prompts or tools.** ChatGPT-the-app wraps the model in hidden instructions and tooling that the raw API does not replicate. Hearsay can explicitly enable the OpenAI Responses web-search tool, but that API route still does not reproduce the consumer app.
 - **No geography or account effects.** Your customers' answers vary by locale and account state in ways an API panel cannot reproduce.
 
 Treat Hearsay's numbers as **a logged-out discovery baseline, directional only** — a consistent, repeatable measurement of how the underlying models talk about your category, not a replay of any one customer's screen. A paired API-vs-UI comparison study is planned; it will be linked here when published.

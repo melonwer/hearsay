@@ -257,7 +257,8 @@ function answerCard(view, item) {
     >`;
   });
 
-  const evidence = item.surface === 'codex-agent' || item.surface === 'claude-code-agent'
+  const evidence = item.surface === 'codex-agent' || item.surface === 'claude-code-agent' ||
+      item.search_events.length > 0 || item.source_observations.length > 0 || item.answer_citations.length > 0
     ? html`<details class="answer-evidence">
         <summary>Measurement evidence</summary>
         <dl class="kv">
@@ -267,14 +268,18 @@ function answerCard(view, item) {
           <dd>${item.comparability_status ?? 'unknown'}</dd>
           <dt>Search/fetch events</dt>
           <dd>${item.search_events.length}</dd>
+          <dt>Reported sources</dt>
+          <dd>${item.source_observations.length}</dd>
           <dt>Final-answer citations</dt>
-          <dd>${item.citations.length}</dd>
+          <dd>${item.answer_citations.length || item.citations.length}</dd>
           <dt>Redacted event artifact</dt>
           <dd>${item.artifact_ref ?? 'not retained'}</dd>
         </dl>
         ${item.search_events.length > 0
-          ? html`<ul class="evidence-list">${item.search_events.map((event) => html`<li>${event.event_type} · ${event.status}${event.query ? html` · ${event.query}` : ''}${event.url ? html` · ${event.url}` : ''}</li>`)}</ul>`
+          ? html`<ul class="evidence-list">${item.search_events.map((event) => html`<li>${event.event_type} · ${event.status}${event.queries.length > 0 ? html` · ${event.queries.join(' · ')}` : event.query ? html` · ${event.query}` : ' · query not exposed'}${event.url ? html` · ${event.url}` : ''}</li>`)}</ul>`
           : ''}
+        ${item.source_observations.length > 0 ? html`<p>Reported sources</p><ul class="evidence-list">${item.source_observations.map((source) => html`<li>${/^https?:\/\//i.test(source.url) ? html`<a href="${source.url}" rel="noreferrer noopener nofollow" target="_blank">${source.title ?? source.url}</a>` : source.title ?? source.url}</li>`)}</ul>` : ''}
+        ${item.answer_citations.length > 0 ? html`<p>Final-answer citations</p><ul class="evidence-list">${item.answer_citations.map((citation) => html`<li>${/^https?:\/\//i.test(citation.url) ? html`<a href="${citation.url}" rel="noreferrer noopener nofollow" target="_blank">${citation.url}</a>` : citation.url}</li>`)}</ul>` : ''}
       </details>`
     : '';
 

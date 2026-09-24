@@ -19,6 +19,7 @@ import { SETTING_KEYS, getSetting, setSetting } from './db.js';
 import { runPanel as defaultRunPanel } from './runner.js';
 import { runSubscriptionPanel as defaultRunSubscriptionPanel } from './subscription-runner.js';
 import { getSubscriptionSchedule, subscriptionScheduleTick } from './subscription-scheduler.js';
+import { apiSearchScheduleApproved } from './api-search-schedule.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('./config.js').Config} Config */
@@ -78,7 +79,7 @@ export function shouldRun({ now, runAt, lastRunDate }) {
  * @param {Object} options
  * @param {Db} options.db
  * @param {Config} [options.config]
- * @param {(opts: {db: Db, trigger: 'cron'}) => Promise<unknown>} [options.runPanel]
+ * @param {(opts: {db: Db, trigger: 'cron', config?:Config}) => Promise<unknown>} [options.runPanel]
  * @param {(opts: Record<string, unknown>) => Promise<unknown>} [options.runSubscription]
  * @param {() => Date} [options.now]
  * @param {number} [options.intervalMs]
@@ -89,7 +90,7 @@ export function startScheduler(options) {
   const {
     db,
     config = processConfig,
-    runPanel = (opts) => defaultRunPanel({ ...opts, config }),
+    runPanel = (opts) => defaultRunPanel({ ...opts, config: opts.config ?? config }),
     runSubscription = (opts) => defaultRunSubscriptionPanel({ ...(/** @type {*} */ (opts)), config }),
     now = () => new Date(),
     intervalMs = TICK_MS,
@@ -130,7 +131,10 @@ export function startScheduler(options) {
         // retried in 60 seconds, and a run that takes an hour should not start twice.
         setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(at));
         try {
-          await runPanel({ db, trigger: 'cron' });
+          const cronConfig = config.apiSearchPolicies.openai === 'off' || apiSearchScheduleApproved(db, config) ? config : {
+            ...config, apiSearchPolicies: { ...config.apiSearchPolicies, openai: /** @type {const} */ ('off') },
+          };
+          await runPanel(cronConfig === config ? { db, trigger: 'cron' } : { db, trigger: 'cron', config: cronConfig });
           started = true;
         } catch (err) {
           log(`hearsay: scheduled run failed: ${err instanceof Error ? err.message : String(err)}`);

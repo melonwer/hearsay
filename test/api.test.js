@@ -14,6 +14,7 @@ import { startServer } from '../server.js';
 import { buildConfig } from '../core/config.js';
 import { get, run as dbRun } from '../core/db.js';
 import { _setFetch } from '../core/providers/shared.js';
+import { isRunning } from '../core/runner.js';
 
 after(() => {
   _setFetch(); // restore the real fetch, matching test/providers.test.js
@@ -134,6 +135,89 @@ test('run gate: HEARSAY_CONFIRM_USD=0 always quotes; confirm:true starts', async
     assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
     const go = await api(app.base, 'POST', '/api/run', { confirm: true, quote_id: quote.body.quoteId });
     assert.equal(go.status, 202);
+  } finally {
+    await app.close();
+  }
+});
+
+test('OpenAI search run requires its forecast quote and persists separate evidence', async () => {
+  for (let attempt = 0; attempt < 100 && isRunning(); attempt += 1) await sleep(20);
+  assert.equal(isRunning(), false);
+  const app = await bootRunnable({ HEARSAY_OPENAI_SEARCH_POLICY: 'required', HEARSAY_CONFIRM_USD: '999' });
+  let providerCalls = 0;
+  _setFetch(async () => {
+    providerCalls += 1;
+    return new Response(JSON.stringify({ model: 'gpt-5.6-luna', status: 'completed',
+      usage: { input_tokens: 120, output_tokens: 74 },
+      output: [
+        { id: 'search_one', type: 'web_search_call', status: 'completed',
+          action: { type: 'search', query: 'best tracker',
+            sources: [{ url: 'https://example.org/source', title: 'Source' }] } },
+        { type: 'message', status: 'completed', content: [{ type: 'output_text',
+          text: 'Try Acme.', annotations: [{ type: 'url_citation',
+            url: 'https://example.net/citation', start_index: 4, end_index: 9 }] }] },
+      ] }), { status: 200 });
+  });
+  try {
+    const quote = await api(app.base, 'POST', '/api/run', {});
+    assert.equal(quote.status, 200);
+    assert.equal(quote.body.status, 'quote_required');
+    assert.equal(quote.body.hasUnboundedSearch, true);
+    assert.equal(quote.body.perProvider[0].assumedSearchCalls, 1);
+    assert.equal(quote.body.perProvider[0].searchToolUsd, 0.01);
+    assert.equal(providerCalls, 0);
+    const started = await api(app.base, 'POST', '/api/run', {
+      confirm: true, quote_id: quote.body.quoteId,
+    });
+    assert.equal(started.status, 202);
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (get(app.db, 'SELECT status FROM runs WHERE id = ?', [started.body.runId])?.status === 'done') break;
+      await sleep(20);
+    }
+    assert.equal(providerCalls, 1);
+    const response = get(app.db, 'SELECT id, web_status, search_policy, cost_usd, comparability_status FROM responses WHERE run_id = ?', [started.body.runId]);
+    assert.equal(response?.web_status, 'verified');
+    assert.equal(response?.search_policy, 'required');
+    assert.equal(response?.comparability_status, 'comparable');
+    assert.ok(Math.abs(Number(response?.cost_usd) - 0.0101128) < 1e-12);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS count FROM search_events WHERE response_id = ?', [response?.id])?.count), 1);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS count FROM source_observations WHERE response_id = ?', [response?.id])?.count), 1);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS count FROM answer_citations WHERE response_id = ? AND source_observation_id IS NULL', [response?.id])?.count), 1);
+    const answer = (await api(app.base, 'GET', '/api/answers')).body.items.find((item) => item.id === response?.id);
+    assert.deepEqual(answer.search_events[0].queries, ['best tracker']);
+    assert.equal(answer.source_observations[0].url, 'https://example.org/source');
+    assert.equal(answer.answer_citations[0].url, 'https://example.net/citation');
+    const page = await fetch(`${app.base}/answers`).then((result) => result.text());
+    assert.match(page, /Reported sources/);
+    assert.match(page, /https:\/\/example\.net\/citation/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('daily API search needs separate recurring consent and invalidates changed selections', async () => {
+  const app = await bootRunnable({ HEARSAY_OPENAI_SEARCH_POLICY: 'required' });
+  try {
+    const before = await api(app.base, 'GET', '/api/search-schedule');
+    assert.equal(before.body.approved, false);
+    const preview = await api(app.base, 'POST', '/api/search-schedule', { target_ceiling: 1 });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.body.status, 'schedule_confirmation_required');
+    assert.equal(preview.body.hasUnboundedSearch, true);
+    dbRun(app.db, 'UPDATE prompts SET text = ? WHERE active = 1', ['Changed after preview']);
+    const stale = await api(app.base, 'POST', '/api/search-schedule', {
+      target_ceiling: 1, confirm: true, quote_id: preview.body.quoteId,
+    });
+    assert.equal(stale.status, 409);
+    const fresh = await api(app.base, 'POST', '/api/search-schedule', { target_ceiling: 1 });
+    const enabled = await api(app.base, 'POST', '/api/search-schedule', {
+      target_ceiling: 1, confirm: true, quote_id: fresh.body.quoteId,
+    });
+    assert.equal(enabled.status, 201);
+    assert.equal((await api(app.base, 'GET', '/api/search-schedule')).body.approved, true);
+    await api(app.base, 'POST', '/api/prompts', { text: 'another question?' });
+    assert.equal((await api(app.base, 'GET', '/api/search-schedule')).body.approved, false);
+    assert.equal((await api(app.base, 'DELETE', '/api/search-schedule')).body.disabled, true);
   } finally {
     await app.close();
   }

@@ -37,6 +37,7 @@ import { resolvePortFilePath } from './port-discovery.js';
  * @property {boolean} demo demo mode: no live calls, no scheduler, banner shown
  * @property {number} confirmUsd Run-cost confirm threshold in USD (SPEC §3.3); 0 = every run quotes first.
  * @property {Record<string, string|undefined>} pricingEnv resolved nonsecret price overrides
+ * @property {{openai:'off'|'auto'|'required',anthropic:'off',gemini:'off',perplexity:'legacy'}} apiSearchPolicies
  * @property {Record<ProviderId, ProviderConfig>} providers
  * @property {ProviderConfig[]} enabledProviders
  * @property {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} subscription
@@ -206,6 +207,18 @@ export function maskSecret(secret) {
  * @returns {Config}
  */
 export function buildConfig(env) {
+  const openaiSearchPolicy = String(env.HEARSAY_OPENAI_SEARCH_POLICY ?? 'off').trim() || 'off';
+  if (!['off', 'auto', 'required'].includes(openaiSearchPolicy)) {
+    throw new RangeError('HEARSAY_OPENAI_SEARCH_POLICY must be off, auto, or required');
+  }
+  for (const [key, policy] of [
+    ['HEARSAY_ANTHROPIC_SEARCH_POLICY', 'off'],
+    ['HEARSAY_GEMINI_SEARCH_POLICY', 'off'],
+    ['HEARSAY_PERPLEXITY_SEARCH_POLICY', 'legacy'],
+  ]) {
+    const value = String(env[key] ?? policy).trim() || policy;
+    if (value !== policy) throw new RangeError(`${key} does not support ${value} in this build`);
+  }
   /** @type {Record<string, string|undefined>} */
   const pricingEnv = {};
   for (const id of PROVIDER_IDS) {
@@ -231,6 +244,9 @@ export function buildConfig(env) {
     };
   }
   const registry = /** @type {Record<ProviderId, ProviderConfig>} */ (providers);
+  if (openaiSearchPolicy !== 'off' && registry.openai.model !== 'gpt-5.6-luna') {
+    throw new RangeError(`OpenAI web search is validated for gpt-5.6-luna, not ${registry.openai.model}`);
+  }
 
   const dbPath = String(env.HEARSAY_DB_PATH ?? '').trim() || './data/hearsay.db';
   const subscriptionDataDir = String(env.HEARSAY_DATA_DIR ?? '').trim() || dirname(resolve(dbPath));
@@ -265,6 +281,10 @@ export function buildConfig(env) {
     demo: String(env.HEARSAY_DEMO ?? '').trim() === '1',
     confirmUsd: floatIn(env.HEARSAY_CONFIRM_USD, 1, 0),
     pricingEnv,
+    apiSearchPolicies: {
+      openai: /** @type {'off'|'auto'|'required'} */ (openaiSearchPolicy),
+      anthropic: 'off', gemini: 'off', perplexity: 'legacy',
+    },
     providers: registry,
     enabledProviders: PROVIDER_IDS.map((id) => registry[id]).filter((p) => p.enabled),
     subscription,

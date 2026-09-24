@@ -175,6 +175,24 @@ const TOOLS = [
     call: (a) => ({ method: 'POST', path: '/api/run', body: { confirm: a?.confirm === true, quote_id: a?.quote_id } }),
   },
   {
+    name: 'hearsay_api_search_schedule',
+    description:
+      'Preview, enable, or disable web search on the existing daily API panel. Enabling needs a separate approved quote and a target ceiling. Without this consent, daily API runs keep their search-off route even if on-demand search is configured.',
+    inputSchema: obj({
+      action: { type: 'string', enum: ['preview', 'enable', 'disable'] },
+      target_ceiling: { type: 'integer', minimum: 1 },
+      confirm: { type: 'boolean' },
+      quote_id: { type: 'string', description: 'quoteId returned by the approved schedule preview' },
+    }, ['action']),
+    call: (a) => a?.action === 'disable'
+      ? ({ method: 'DELETE', path: '/api/search-schedule' })
+      : ({ method: 'POST', path: '/api/search-schedule', body: {
+          target_ceiling: a?.target_ceiling,
+          confirm: a?.action === 'enable' && a?.confirm === true,
+          quote_id: a?.quote_id,
+        } }),
+  },
+  {
     name: 'hearsay_subscription_preview',
     readOnly: true,
     description:

@@ -36,6 +36,7 @@ import {
   runPanel,
 } from '../core/runner.js';
 import { localDate, localHm, shouldRun, startScheduler } from '../core/scheduler.js';
+import { saveApiSearchSchedule } from '../core/api-search-schedule.js';
 
 /**
  * @param {string} name
@@ -1192,6 +1193,34 @@ describe('scheduler (§8.2)', () => {
     clock = new Date(2026, 6, 27, 7, 1, 0);
     assert.equal(await scheduler.tick(), true, 'next day, next run');
     assert.deepEqual(triggers, ['cron', 'cron']);
+  });
+
+  it('preserves the old search-off route on an existing daily schedule', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_RUN_AT: '07:00',
+      HEARSAY_OPENAI_SEARCH_POLICY: 'required' });
+    let clock = new Date(2026, 6, 26, 6, 59, 0);
+    /** @type {import('../core/config.js').Config|null} */
+    let receivedConfig = null;
+    const scheduler = start({ db, config, now: () => clock,
+      runPanel: async (opts) => { receivedConfig = opts.config ?? null; } });
+    clock = new Date(2026, 6, 26, 7, 0, 0);
+    assert.equal(await scheduler.tick(), true);
+    assert.equal(receivedConfig?.apiSearchPolicies.openai, 'off');
+    assert.equal(config.apiSearchPolicies.openai, 'required');
+  });
+
+  it('uses the search route only after recurring consent with a sufficient target ceiling', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_RUN_AT: '07:00',
+      HEARSAY_OPENAI_SEARCH_POLICY: 'required' });
+    saveApiSearchSchedule(db, config, 999);
+    let clock = new Date(2026, 6, 26, 6, 59, 0);
+    /** @type {import('../core/config.js').Config|null} */
+    let receivedConfig = null;
+    const scheduler = start({ db, config, now: () => clock,
+      runPanel: async (opts) => { receivedConfig = opts.config ?? config; } });
+    clock = new Date(2026, 6, 26, 7, 0, 0);
+    assert.equal(await scheduler.tick(), true);
+    assert.equal(receivedConfig?.apiSearchPolicies.openai, 'required');
   });
 
   it('booting after runAt claims the day instead of spending money on the spot', async () => {

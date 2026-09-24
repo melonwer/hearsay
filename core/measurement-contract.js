@@ -40,6 +40,7 @@ export const SEARCH_STATES = /** @type {const} */ (['verified', 'not_used', 'una
 
 const ROUTE_CAPABILITIES = /** @type {const} */ ({
   'openai-chat-completions-v1': { surface: 'openai-api', policies: ['off'] },
+  'openai-responses-web-search-v1': { surface: 'openai-api', policies: ['auto', 'required'] },
   'anthropic-messages-v1': { surface: 'anthropic-api', policies: ['off'] },
   'gemini-generate-content-v1': { surface: 'gemini-api', policies: ['off'] },
   'perplexity-sonar-v1': { surface: 'perplexity-api', policies: ['legacy'] },

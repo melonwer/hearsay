@@ -29,7 +29,7 @@ import * as alertsModule from './alerts.js';
 /** @typedef {import('./config.js').Config} Config */
 /** @typedef {import('./config.js').ProviderId} ProviderId */
 /** @typedef {import('./providers/shared.js').ProviderResult} ProviderResult */
-/** @typedef {Record<string, {runPrompt: (text: string, opts?: {model?: string, timeoutMs?: number, apiKey?: string}) => Promise<ProviderResult>}>} AdapterMap */
+/** @typedef {Record<string, {runPrompt: (text: string, opts?: {model?: string, timeoutMs?: number, apiKey?: string, searchPolicy?: 'off'|'auto'|'required'|'legacy', maxOutputTokens?: number|null, maxResponseBytes?: number|null}) => Promise<ProviderResult>}>} AdapterMap */
 
 /** Refused because demo mode is on: no live provider calls, ever (§4.1, §8.1). */
 export class DemoModeError extends Error {
@@ -289,7 +289,8 @@ async function executeRun(options) {
       envelopeVersion: API_PROMPT_ENVELOPE_VERSION,
       requestSettings: { endpoint: budget.endpoint, enabledTools: budget.enabledTools },
       limits: { timeoutMs: budget.timeoutMs, answerTokenLimit: budget.answerTokenLimit,
-        maxSearchCalls: budget.maxSearchCalls, maxContinuations: budget.maxContinuations },
+        maxSearchCalls: budget.maxSearchCalls, maxContinuations: budget.maxContinuations,
+        maxOutputBytes: budget.maxOutputBytes },
     }));
   }
 
@@ -397,7 +398,12 @@ async function executeRun(options) {
       if (!adapter || typeof adapter.runPrompt !== 'function') {
         throw new ProviderError('other', `No adapter registered for provider "${task.provider}"`);
       }
-      result = await adapter.runPrompt(task.promptText, { model: budget.model, timeoutMs: budget.timeoutMs });
+      result = await adapter.runPrompt(task.promptText, {
+        model: budget.model, timeoutMs: budget.timeoutMs,
+        searchPolicy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
+        maxOutputTokens: budget.answerTokenLimit,
+        maxResponseBytes: budget.maxOutputBytes,
+      });
     } catch (err) {
       failure =
         err instanceof ProviderError
@@ -516,6 +522,7 @@ async function executeRun(options) {
           sources: answer.sources ?? [],
           citations: normalizedCitations,
           usage: pricedUsage.components,
+          noSearchConfirmed: answer.noSearchConfirmed,
           at: createdAt,
         });
 

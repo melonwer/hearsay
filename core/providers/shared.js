@@ -23,10 +23,11 @@
  * @property {import('../measurement-contract.js').SearchAction[]} [searchActions]
  * @property {import('../measurement-contract.js').SourceObservation[]} [sources]
  * @property {import('../measurement-contract.js').AnswerCitation[]} [answerCitations]
+ * @property {boolean} [noSearchConfirmed] complete auto response with no search call
  * @property {import('../cost.js').BillableAttempt[]} [billableAttempts] provider-reported attempt and continuation usage
  */
 
-/** @typedef {'auth'|'quota'|'timeout'|'other'} ProviderErrorKind */
+/** @typedef {'auth'|'quota'|'timeout'|'cancelled'|'other'} ProviderErrorKind */
 
 /**
  * A provider failure, classified so the runner can drive its circuit breaker (§8.1)
@@ -155,15 +156,19 @@ function isAbort(err) {
  * @param {string} url
  * @param {RequestInit} init
  * @param {{timeoutMs: number, retries?: number,
- *   usageFromResponse?:(json:unknown)=>{inputTokens:number|null,outputTokens:number|null,searchCalls?:number|null}}} opts
+ *   usageFromResponse?:(json:unknown)=>{inputTokens:number|null,outputTokens:number|null,searchCalls?:number|null},
+ *   signal?:AbortSignal, maxResponseBytes?:number}} opts
  * @returns {Promise<FetchResult>}
  */
-export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageFromResponse }) {
+export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageFromResponse, signal, maxResponseBytes }) {
   let attempt = 0;
   /** @type {import('../cost.js').BillableAttempt[]} */
   const priorAttempts = [];
   for (;;) {
+    if (signal?.aborted) throw new ProviderError('cancelled', 'Request cancelled', '', priorAttempts);
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    signal?.addEventListener('abort', cancel, { once: true });
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     /** @type {FetchResult|null} */
     let result = null;
@@ -171,7 +176,31 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageF
     let networkError = null;
     try {
       const res = await currentFetch(url, { ...init, signal: controller.signal });
-      const text = await res.text();
+      let text;
+      if (maxResponseBytes === undefined || res.body === null) {
+        text = await res.text();
+      } else {
+        const reader = res.body.getReader();
+        /** @type {Uint8Array[]} */
+        const chunks = [];
+        let size = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxResponseBytes) {
+            await reader.cancel();
+            throw new ProviderError('other', `Response exceeded ${maxResponseBytes} bytes`, '', [
+              ...priorAttempts, { attempt, continuation: 0, inputTokens: null, outputTokens: null },
+            ]);
+          }
+          chunks.push(value);
+        }
+        text = new TextDecoder().decode(Buffer.concat(chunks));
+      }
+      if (signal?.aborted) throw new ProviderError('cancelled', 'Request cancelled', '', [
+        ...priorAttempts, { attempt, continuation: 0, inputTokens: null, outputTokens: null },
+      ]);
       /** @type {unknown} */
       let json = null;
       try {
@@ -181,15 +210,18 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageF
       }
       result = { status: res.status, text, json, retryCount: attempt, priorAttempts: [...priorAttempts] };
     } catch (err) {
+      if (err instanceof ProviderError) throw err;
       if (isAbort(err)) {
         clearTimeout(timer);
-        throw new ProviderError('timeout', `No response within ${timeoutMs} ms`, '', [
+        throw new ProviderError(signal?.aborted ? 'cancelled' : 'timeout',
+          signal?.aborted ? 'Request cancelled' : `No response within ${timeoutMs} ms`, '', [
           ...priorAttempts, { attempt, continuation: 0, inputTokens: null, outputTokens: null },
         ]);
       }
       networkError = err;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
     }
 
     if (networkError !== null) {
@@ -236,12 +268,14 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageF
  * @param {FetchResult} response
  * @param {number|null} inputTokens
  * @param {number|null} outputTokens
+ * @param {number|null|undefined} [searchCalls]
  * @returns {import('../cost.js').BillableAttempt[]}
  */
-export function billableAttempts(response, inputTokens, outputTokens) {
+export function billableAttempts(response, inputTokens, outputTokens, searchCalls) {
   return [
     ...response.priorAttempts,
-    { attempt: response.retryCount, continuation: 0, inputTokens, outputTokens, requestCompleted: true },
+    { attempt: response.retryCount, continuation: 0, inputTokens, outputTokens, requestCompleted: true,
+      ...(searchCalls !== undefined ? { searchCalls } : {}) },
   ];
 }
 
