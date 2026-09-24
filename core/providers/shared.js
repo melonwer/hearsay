@@ -34,17 +34,19 @@
  */
 export class ProviderError extends Error {
   /**
-   * @param {ProviderErrorKind} kind
-   * @param {string} message short, safe, human-readable
-   * @param {string} [detail] extra context — already scrubbed of anything key-shaped
-   */
-  constructor(kind, message, detail = '') {
+ * @param {ProviderErrorKind} kind
+ * @param {string} message short, safe, human-readable
+ * @param {string} [detail] extra context — already scrubbed of anything key-shaped
+ * @param {import('../cost.js').BillableAttempt[]|null} [billableAttempts] normalized usage, never a raw response
+ */
+  constructor(kind, message, detail = '', billableAttempts = null) {
     super(message);
     this.name = 'ProviderError';
     /** @type {ProviderErrorKind} */
     this.kind = kind;
     /** @type {string} */
     this.detail = detail;
+    this.billableAttempts = billableAttempts;
   }
 
   /**
@@ -136,6 +138,7 @@ function isAbort(err) {
  * @property {string} text raw response body
  * @property {unknown} json parsed body, or null when the body was not JSON
  * @property {number} retryCount prior HTTP 429 responses before this success
+ * @property {import('../cost.js').BillableAttempt[]} priorAttempts prior rate-limited responses
  */
 
 /**
@@ -151,11 +154,14 @@ function isAbort(err) {
  *
  * @param {string} url
  * @param {RequestInit} init
- * @param {{timeoutMs: number, retries?: number}} opts
+ * @param {{timeoutMs: number, retries?: number,
+ *   usageFromResponse?:(json:unknown)=>{inputTokens:number|null,outputTokens:number|null,searchCalls?:number|null}}} opts
  * @returns {Promise<FetchResult>}
  */
-export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
+export async function fetchWithRetry(url, init, { timeoutMs, retries = 1, usageFromResponse }) {
   let attempt = 0;
+  /** @type {import('../cost.js').BillableAttempt[]} */
+  const priorAttempts = [];
   for (;;) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -173,11 +179,13 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
       } catch {
         json = null;
       }
-      result = { status: res.status, text, json, retryCount: attempt };
+      result = { status: res.status, text, json, retryCount: attempt, priorAttempts: [...priorAttempts] };
     } catch (err) {
       if (isAbort(err)) {
         clearTimeout(timer);
-        throw new ProviderError('timeout', `No response within ${timeoutMs} ms`);
+        throw new ProviderError('timeout', `No response within ${timeoutMs} ms`, '', [
+          ...priorAttempts, { attempt, continuation: 0, inputTokens: null, outputTokens: null },
+        ]);
       }
       networkError = err;
     } finally {
@@ -186,26 +194,39 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
 
     if (networkError !== null) {
       const message = networkError instanceof Error ? networkError.message : String(networkError);
-      throw new ProviderError('other', 'Network request failed', safeDetail(message));
+      throw new ProviderError('other', 'Network request failed', safeDetail(message), [
+        ...priorAttempts, { attempt, continuation: 0, inputTokens: null, outputTokens: null },
+      ]);
     }
 
     const res = /** @type {FetchResult} */ (result);
     if (res.status >= 200 && res.status < 300) return res;
 
+    const reported = usageFromResponse?.(res.json);
+    const failedAttempt = {
+      attempt, continuation: 0,
+      inputTokens: reported?.inputTokens ?? null,
+      outputTokens: reported?.outputTokens ?? null,
+      ...(reported?.searchCalls !== undefined ? { searchCalls: reported.searchCalls } : {}),
+      requestCompleted: false,
+    };
+    const failedAttempts = [...priorAttempts, failedAttempt];
+
     if (res.status === 401 || res.status === 403) {
-      throw new ProviderError('auth', `Rejected the API key (HTTP ${res.status})`, safeDetail(res.text));
+      throw new ProviderError('auth', `Rejected the API key (HTTP ${res.status})`, safeDetail(res.text), failedAttempts);
     }
 
     if (res.status === 429 && attempt < retries) {
+      priorAttempts.push(failedAttempt);
       attempt += 1;
       await currentSleep(backoffMs(attempt));
       continue;
     }
 
     if (res.status === 429) {
-      throw new ProviderError('quota', 'Rate limited or out of quota (HTTP 429)', safeDetail(res.text));
+      throw new ProviderError('quota', 'Rate limited or out of quota (HTTP 429)', safeDetail(res.text), failedAttempts);
     }
-    throw new ProviderError('other', `Unexpected HTTP ${res.status}`, safeDetail(res.text));
+    throw new ProviderError('other', `Unexpected HTTP ${res.status}`, safeDetail(res.text), failedAttempts);
   }
 }
 
@@ -219,10 +240,7 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
  */
 export function billableAttempts(response, inputTokens, outputTokens) {
   return [
-    ...Array.from({ length: response.retryCount }, (_, attempt) => ({
-      attempt, continuation: 0, inputTokens: null, outputTokens: null,
-      requestCompleted: false,
-    })),
+    ...response.priorAttempts,
     { attempt: response.retryCount, continuation: 0, inputTokens, outputTokens, requestCompleted: true },
   ];
 }
@@ -252,7 +270,7 @@ export function textFromContent(content) {
  * @returns {number|null}
  */
 export function usageNumber(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 /**

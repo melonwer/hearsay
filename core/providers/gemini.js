@@ -36,6 +36,16 @@ export function endpointFor(model) {
   return `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
 }
 
+/** @param {unknown} json */
+function reportedUsage(json) {
+  const usage = /** @type {{usageMetadata?:{promptTokenCount?:unknown,candidatesTokenCount?:unknown,
+   * thoughtsTokenCount?:unknown}}|null} */ (json)?.usageMetadata;
+  const candidates = usageNumber(usage?.candidatesTokenCount);
+  const thoughts = usageNumber(usage?.thoughtsTokenCount) ?? 0;
+  return { inputTokens: usageNumber(usage?.promptTokenCount),
+    outputTokens: candidates === null ? null : candidates + thoughts };
+}
+
 /**
  * @param {string} text the prompt, sent verbatim as the single user turn
  * @param {{model?: string, timeoutMs?: number, apiKey?: string}} [opts]
@@ -59,15 +69,17 @@ export async function runPrompt(text, opts = {}) {
       },
       body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text }] }] }),
     },
-    { timeoutMs },
+    { timeoutMs, usageFromResponse: reportedUsage },
   );
   const latencyMs = Date.now() - startedAt;
 
   const data = /** @type {{modelVersion?: unknown, candidates?: {content?: {parts?: {text?: unknown}[]}}[], usageMetadata?: {promptTokenCount?: unknown, candidatesTokenCount?: unknown, thoughtsTokenCount?: unknown}}|null} */ (
     res.json
   );
+  const { inputTokens: input, outputTokens: output } = reportedUsage(res.json);
   if (!data || !Array.isArray(data.candidates) || data.candidates.length === 0) {
-    throw new ProviderError('other', 'Response had no candidates', 'unexpected Gemini response shape');
+    throw new ProviderError('other', 'Response had no candidates', 'unexpected Gemini response shape',
+      billableAttempts(res, input, output));
   }
 
   const parts = data.candidates[0]?.content?.parts;
@@ -75,17 +87,11 @@ export async function runPrompt(text, opts = {}) {
     ? parts.map((part) => (part && typeof part.text === 'string' ? part.text : '')).join('')
     : '';
 
-  // Thinking tokens are billed at the output rate for this model family, so they belong
-  // in `output` rather than being dropped (source: Gemini API pricing, 2026-07-26).
-  const input = usageNumber(data.usageMetadata?.promptTokenCount);
-  const candidates = usageNumber(data.usageMetadata?.candidatesTokenCount);
-  const thoughts = usageNumber(data.usageMetadata?.thoughtsTokenCount) ?? 0;
-
   return {
     text: answer,
     model: typeof data.modelVersion === 'string' ? data.modelVersion : model,
     latencyMs,
-    tokens: tokensOrUndefined(input, candidates === null ? null : candidates + thoughts),
-    billableAttempts: billableAttempts(res, input, candidates === null ? null : candidates + thoughts),
+    tokens: tokensOrUndefined(input, output),
+    billableAttempts: billableAttempts(res, input, output),
   };
 }

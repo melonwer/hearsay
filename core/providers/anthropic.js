@@ -34,6 +34,17 @@ export const ANTHROPIC_VERSION = '2023-06-01';
  */
 export const MAX_TOKENS = 1024;
 
+/** @param {unknown} json */
+function reportedUsage(json) {
+  const usage = /** @type {{usage?:{input_tokens?:unknown,output_tokens?:unknown,
+   * cache_creation_input_tokens?:unknown,cache_read_input_tokens?:unknown}}|null} */ (json)?.usage;
+  const input = usageNumber(usage?.input_tokens);
+  const cacheWrite = usageNumber(usage?.cache_creation_input_tokens) ?? 0;
+  const cacheRead = usageNumber(usage?.cache_read_input_tokens) ?? 0;
+  return { inputTokens: input === null ? null : input + cacheWrite + cacheRead,
+    outputTokens: usageNumber(usage?.output_tokens) };
+}
+
 /**
  * @param {string} text the prompt, sent verbatim as the single user message
  * @param {{model?: string, timeoutMs?: number, apiKey?: string}} [opts]
@@ -58,15 +69,17 @@ export async function runPrompt(text, opts = {}) {
       },
       body: JSON.stringify({ model, max_tokens: MAX_TOKENS, messages: [{ role: 'user', content: text }] }),
     },
-    { timeoutMs },
+    { timeoutMs, usageFromResponse: reportedUsage },
   );
   const latencyMs = Date.now() - startedAt;
 
   const data = /** @type {{model?: unknown, content?: {type?: unknown, text?: unknown}[], usage?: {input_tokens?: unknown, output_tokens?: unknown, cache_creation_input_tokens?: unknown, cache_read_input_tokens?: unknown}}|null} */ (
     res.json
   );
+  const { inputTokens: input, outputTokens: output } = reportedUsage(res.json);
   if (!data || !Array.isArray(data.content)) {
-    throw new ProviderError('other', 'Response had no content blocks', 'unexpected Anthropic response shape');
+    throw new ProviderError('other', 'Response had no content blocks', 'unexpected Anthropic response shape',
+      billableAttempts(res, input, output));
   }
 
   const answer = data.content
@@ -74,19 +87,11 @@ export async function runPrompt(text, opts = {}) {
     .map((block) => String(block.text))
     .join('');
 
-  // Docs: total input = input_tokens + cache_creation_input_tokens + cache_read_input_tokens.
-  // We never enable prompt caching, so the cache counters are 0 in practice; summing them
-  // keeps the billed figure right if that ever changes.
-  const input = usageNumber(data.usage?.input_tokens);
-  const cacheWrite = usageNumber(data.usage?.cache_creation_input_tokens) ?? 0;
-  const cacheRead = usageNumber(data.usage?.cache_read_input_tokens) ?? 0;
-  const output = usageNumber(data.usage?.output_tokens);
-
   return {
     text: answer,
     model: typeof data.model === 'string' ? data.model : model,
     latencyMs,
-    tokens: tokensOrUndefined(input === null ? null : input + cacheWrite + cacheRead, output),
-    billableAttempts: billableAttempts(res, input === null ? null : input + cacheWrite + cacheRead, output),
+    tokens: tokensOrUndefined(input, output),
+    billableAttempts: billableAttempts(res, input, output),
   };
 }

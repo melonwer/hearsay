@@ -181,6 +181,45 @@ describe('shared plumbing (§5.1)', () => {
     ]);
   });
 
+  it('retains reported usage from a rate-limited attempt before a successful retry', async () => {
+    _setSleep(async () => {});
+    stubFetch([
+      { status: 429, body: { error: { message: 'rate limit' }, usage: { prompt_tokens: 10, completion_tokens: 4 } } },
+      { status: 200, body: fixture('openai') },
+    ]);
+    const result = await openai.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 });
+    assert.deepEqual(result.billableAttempts, [
+      { attempt: 0, continuation: 0, inputTokens: 10, outputTokens: 4, requestCompleted: false },
+      { attempt: 1, continuation: 0, inputTokens: 24, outputTokens: 187, requestCompleted: true },
+    ]);
+  });
+
+  it('normalizes provider-reported usage on an unsuccessful HTTP response', async () => {
+    for (const [adapter, usage, expected] of /** @type {[any, object, [number,number]][]} */ ([
+      [openai, { prompt_tokens: 11, completion_tokens: 5 }, [11, 5]],
+      [anthropic, { input_tokens: 12, output_tokens: 6 }, [12, 6]],
+      [gemini, { promptTokenCount: 13, candidatesTokenCount: 7, thoughtsTokenCount: 2 }, [13, 9]],
+      [perplexity, { prompt_tokens: 14, completion_tokens: 8 }, [14, 8]],
+    ])) {
+      const body = adapter === gemini ? { error: { message: 'failed' }, usageMetadata: usage }
+        : { error: { message: 'failed' }, usage };
+      stubFetch([{ status: 500, body }]);
+      const error = await adapter.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 }).catch((cause) => cause);
+      assert.ok(error instanceof ProviderError);
+      assert.equal(error.kind, 'other');
+      assert.deepEqual(error.billableAttempts?.map((attempt) => [attempt.inputTokens, attempt.outputTokens]), [expected]);
+    }
+  });
+
+  it('retains usage when a successful HTTP response lacks an answer', async () => {
+    stubFetch([{ status: 200, body: { usage: { prompt_tokens: 9, completion_tokens: 3 } } }]);
+    const error = await openai.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 }).catch((cause) => cause);
+    assert.ok(error instanceof ProviderError);
+    assert.deepEqual(error.billableAttempts, [
+      { attempt: 0, continuation: 0, inputTokens: 9, outputTokens: 3, requestCompleted: true },
+    ]);
+  });
+
   it('does not retry a 400', async () => {
     _setSleep(async () => {});
     const { calls } = stubFetch([{ status: 400, body: { error: { message: 'bad request' } } }]);
@@ -712,6 +751,53 @@ describe('runner (§8.1)', () => {
     assert.equal(rows.length, 2);
     assert.ok(rows.every((row) => row.cost_usd === 0.0041 && row.cost_status === 'known'));
     assert.ok(rows.every((row) => String(row.cost_price_version).startsWith('override:')));
+  });
+
+  it('keeps a failed target and its reported usage cost in the same durable record', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
+    const { calls } = stubFetch([{ status: 500, body: {
+      error: { message: 'failed after generation' },
+      usage: { prompt_tokens: 100, completion_tokens: 40 },
+    } }]);
+    const summary = await runPanel({
+      db, config, analyzeResponse: fakeAnalyze,
+      adapters: { openai: { runPrompt: (text, options) => openai.runPrompt(text, { ...options, apiKey: FAKE_KEY }) } },
+    });
+    assert.equal(calls.length, 2);
+    assert.equal(summary.errorCalls, 2);
+    assert.ok(Math.abs(Number(summary.costUsd) - 2 * 0.000068) < 1e-12);
+    const rows = all(db, 'SELECT id, target_status, cost_usd, cost_status FROM responses ORDER BY id');
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      assert.equal(row.target_status, 'failed');
+      assert.equal(row.cost_status, 'known');
+      assert.ok(Math.abs(Number(row.cost_usd) - 0.000068) < 1e-12);
+      assert.deepEqual(all(db, 'SELECT component, quantity FROM usage_components WHERE response_id = ? ORDER BY id', [row.id]).map((part) => ({ ...part })), [
+        { component: 'input_tokens', quantity: 100 },
+        { component: 'output_tokens', quantity: 40 },
+      ]);
+    }
+  });
+
+  it('keeps timeout billing unknown on a failed target after a request was sent', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1', HEARSAY_TIMEOUT_MS: '1000' });
+    stubHangingFetch();
+    const summary = await runPanel({
+      db, config, analyzeResponse: fakeAnalyze,
+      adapters: { openai: { runPrompt: (text, options) => openai.runPrompt(text, { ...options, apiKey: FAKE_KEY }) } },
+    });
+    assert.equal(summary.errorCalls, 2);
+    const rows = all(db, 'SELECT id, cost_usd, cost_known_subtotal_usd, cost_status FROM responses');
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      assert.equal(row.cost_usd, null);
+      assert.equal(row.cost_known_subtotal_usd, null);
+      assert.equal(row.cost_status, 'unavailable');
+      assert.deepEqual(all(db, 'SELECT component, quantity, cost_status FROM usage_components WHERE response_id = ? ORDER BY id', [row.id]).map((part) => ({ ...part })), [
+        { component: 'input_tokens', quantity: null, cost_status: 'unavailable' },
+        { component: 'output_tokens', quantity: null, cost_status: 'unavailable' },
+      ]);
+    }
   });
 
   it('retains a known subtotal when one attempt has unknown billing', async () => {

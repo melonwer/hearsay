@@ -37,6 +37,12 @@ import {
 export const id = 'perplexity';
 export const endpoint = 'https://api.perplexity.ai/v1/sonar';
 
+/** @param {unknown} json */
+function reportedUsage(json) {
+  const usage = /** @type {{usage?:{prompt_tokens?:unknown,completion_tokens?:unknown}}|null} */ (json)?.usage;
+  return { inputTokens: usageNumber(usage?.prompt_tokens), outputTokens: usageNumber(usage?.completion_tokens) };
+}
+
 /**
  * @param {string} text the prompt, sent verbatim as the single user message
  * @param {{model?: string, timeoutMs?: number, apiKey?: string}} [opts]
@@ -60,15 +66,17 @@ export async function runPrompt(text, opts = {}) {
       },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: text }] }),
     },
-    { timeoutMs },
+    { timeoutMs, usageFromResponse: reportedUsage },
   );
   const latencyMs = Date.now() - startedAt;
 
   const data = /** @type {{model?: unknown, choices?: {message?: {content?: unknown}}[], citations?: unknown, search_results?: unknown, usage?: {prompt_tokens?: unknown, completion_tokens?: unknown}}|null} */ (
     res.json
   );
+  const { inputTokens: input, outputTokens: output } = reportedUsage(res.json);
   if (!data || !Array.isArray(data.choices) || data.choices.length === 0) {
-    throw new ProviderError('other', 'Response had no choices', 'unexpected Perplexity response shape');
+    throw new ProviderError('other', 'Response had no choices', 'unexpected Perplexity response shape',
+      billableAttempts(res, input, output));
   }
 
   const rawCitations = Array.isArray(data.search_results)
@@ -78,8 +86,6 @@ export async function runPrompt(text, opts = {}) {
       : [];
   const citations = normalizeCitations(rawCitations);
 
-  const input = usageNumber(data.usage?.prompt_tokens);
-  const output = usageNumber(data.usage?.completion_tokens);
   /** @type {ProviderResult} */
   const result = {
     text: textFromContent(data.choices[0]?.message?.content),

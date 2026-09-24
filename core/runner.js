@@ -412,17 +412,40 @@ async function executeRun(options) {
     }
 
     if (failure) {
-      dbRun(
-        db,
-        `UPDATE responses SET error = ?, created_at = ?, target_status = 'failed',
-          comparability_status = 'non_comparable', comparability_reason = ?,
-          answer_status = 'failed', evidence_completeness = 'unavailable',
-          cost_status = 'unavailable',
-          query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
-        [failure.toStorage(), isoNow(now()), `provider_${failure.kind}`,
-          task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
-          failure.kind, task.responseId],
-      );
+      const attempts = failure.billableAttempts;
+      const pricedUsage = attempts && attempts.length > 0 ? priceUsage({
+        provider: task.provider, model: task.model, targetId: String(task.responseId),
+        searchPolicy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
+        attempts,
+      }, env) : null;
+      const priceVersions = [...new Set(pricedUsage?.components.map((component) => component.priceVersion).filter(Boolean) ?? [])];
+      const costPriceVersion = priceVersions.length === 1 ? priceVersions[0] : priceVersions.length > 1 ? 'mixed' : null;
+      const failedAt = isoNow(now());
+      transaction(db, () => {
+        if (pricedUsage) {
+          storeMeasurementEvidence(db, task.responseId, {
+            policy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
+            answerStatus: 'failed', answer: null, actions: [], sources: [], citations: [],
+            usage: pricedUsage.components, at: failedAt,
+          });
+        }
+        dbRun(
+          db,
+          `UPDATE responses SET error = ?, created_at = ?, target_status = 'failed',
+            comparability_status = 'non_comparable', comparability_reason = ?,
+            answer_status = 'failed', evidence_completeness = 'unavailable',
+            cost_usd = ?, cost_known_subtotal_usd = ?, cost_status = ?,
+            cost_provenance = ?, cost_price_version = ?,
+            query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
+          [failure.toStorage(), failedAt, `provider_${failure.kind}`,
+            pricedUsage?.computedCostUsd ?? null, pricedUsage?.knownSubtotalUsd ?? null,
+            pricedUsage?.costStatus ?? 'unavailable', pricedUsage?.knownSubtotalUsd != null ? 'computed' : null,
+            costPriceVersion,
+            task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
+            failure.kind, task.responseId],
+        );
+      });
+      addCost(task.provider, pricedUsage?.computedCostUsd ?? null);
       tally.errors += 1;
       errorCalls += 1;
 

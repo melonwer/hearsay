@@ -30,6 +30,12 @@ import {
 export const id = 'openai';
 export const endpoint = 'https://api.openai.com/v1/chat/completions';
 
+/** @param {unknown} json */
+function reportedUsage(json) {
+  const usage = /** @type {{usage?:{prompt_tokens?:unknown,completion_tokens?:unknown}}|null} */ (json)?.usage;
+  return { inputTokens: usageNumber(usage?.prompt_tokens), outputTokens: usageNumber(usage?.completion_tokens) };
+}
+
 /**
  * @param {string} text the prompt, sent verbatim as the single user message
  * @param {{model?: string, timeoutMs?: number, apiKey?: string}} [opts]
@@ -53,19 +59,19 @@ export async function runPrompt(text, opts = {}) {
       },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: text }] }),
     },
-    { timeoutMs },
+    { timeoutMs, usageFromResponse: reportedUsage },
   );
   const latencyMs = Date.now() - startedAt;
 
   const data = /** @type {{model?: unknown, choices?: {message?: {content?: unknown}}[], usage?: {prompt_tokens?: unknown, completion_tokens?: unknown}}|null} */ (
     res.json
   );
+  const { inputTokens: input, outputTokens: output } = reportedUsage(res.json);
   if (!data || !Array.isArray(data.choices) || data.choices.length === 0) {
-    throw new ProviderError('other', 'Response had no choices', 'unexpected OpenAI response shape');
+    throw new ProviderError('other', 'Response had no choices', 'unexpected OpenAI response shape',
+      billableAttempts(res, input, output));
   }
 
-  const input = usageNumber(data.usage?.prompt_tokens);
-  const output = usageNumber(data.usage?.completion_tokens);
   return {
     text: textFromContent(data.choices[0]?.message?.content),
     model: typeof data.model === 'string' ? data.model : model,
