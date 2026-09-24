@@ -200,6 +200,23 @@ export function priceUsage(input, env = process.env) {
 }
 
 /**
+ * Complete versus partial computed cost for a set of attempted API calls. The subtotal
+ * already includes every known component, including components of partial calls.
+ * @param {{attemptedCalls:number,unknownCalls:number,knownSubtotalUsd:number|null}} input
+ */
+export function summarizeComputedCosts(input) {
+  const costStatus = input.attemptedCalls === 0 || input.knownSubtotalUsd === null ? 'unavailable'
+    : input.unknownCalls > 0 ? 'partial' : 'known';
+  return {
+    totalUsd: costStatus === 'known' ? input.knownSubtotalUsd : null,
+    knownSubtotalUsd: input.knownSubtotalUsd,
+    costStatus: /** @type {'known'|'partial'|'unavailable'} */ (costStatus),
+    attemptedCalls: input.attemptedCalls,
+    unknownCalls: input.unknownCalls,
+  };
+}
+
+/**
  * @typedef {Object} ProviderEstimate
  * @property {ProviderId|string} provider
  * @property {string} model

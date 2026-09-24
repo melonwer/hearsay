@@ -95,3 +95,10 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Contract: `actualSpend` reads billing rows independently of answer eligibility. It returns nullable `totalUsd`, `knownSubtotalUsd`, a cost status, and attempted/unknown call counts. The dashboard, settings, and status API report those fields without converting an unknown amount to zero or calling a computed amount invoice spend. Historical costs retain their stored values.
 - Evidence: deterministic fixtures cover mixed known/unknown costs, failed and branded attempts, excluded subscription/skipped/queued targets, an empty database, and rendered HTTP views. Full suite, typecheck, and diff check are recorded at the commit boundary.
 - Remaining gate: per-run summaries and further provider search/continuation usage must follow the same complete-versus-partial rule; C03 is still open.
+
+## C03 run-summary portion: report the saved cost state
+
+- Reason and user result: a completed panel can contain both known and unknown billing. Its returned summary now sets `costUsd` only for a complete computed total and separately returns the known subtotal, cost status, attempted calls, and unknown calls, including provider-level breakdowns.
+- Contract: run totals are derived from saved response rows after execution, so failure receipts, partial attempts, and circuit-skipped targets follow the same rule as the 30-day report. A shared pure cost summary function defines known, partial, and unavailable states for both paths.
+- Evidence: runner tests cover known failed-call usage, unknown timeout billing, an unpriced model, a partial retry, and circuit skips. The full suite, typecheck, and diff check are recorded at the commit boundary.
+- Remaining gate: selectable provider search policies, continuation and search-tool receipts, uncertainty consent, and the corresponding provider contracts remain before C03 can be checked off.

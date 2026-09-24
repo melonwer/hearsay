@@ -13,7 +13,7 @@
 
 import { config as processConfig } from './config.js';
 import { all, get, isoNow, run as dbRun, transaction } from './db.js';
-import { priceUsage } from './cost.js';
+import { priceUsage, summarizeComputedCosts } from './cost.js';
 import { ProviderError } from './providers/shared.js';
 import { adapters as defaultAdapters } from './providers/index.js';
 import { benchmarkRevision, executionProfile } from './measurement-contract.js';
@@ -136,7 +136,11 @@ export function recoverStaleRuns(db, opts = {}) {
  * @property {number} ok
  * @property {number} errors
  * @property {number} skipped
- * @property {number|null} costUsd null when nothing priced was recorded
+ * @property {number|null} costUsd complete computed total, null when any attempted call is unpriced
+ * @property {number|null} knownSubtotalUsd sum of known response components
+ * @property {'known'|'partial'|'unavailable'} costStatus
+ * @property {number} attemptedCalls
+ * @property {number} unknownCalls
  * @property {boolean} circuitOpen
  */
 
@@ -150,7 +154,11 @@ export function recoverStaleRuns(db, opts = {}) {
  * @property {number} okCalls
  * @property {number} errorCalls
  * @property {number} skippedCalls
- * @property {number|null} costUsd total of the priced responses, null when none were priced
+ * @property {number|null} costUsd complete computed total, null when any attempted call is unpriced
+ * @property {number|null} knownSubtotalUsd sum of known response components
+ * @property {'known'|'partial'|'unavailable'} costStatus
+ * @property {number} attemptedCalls
+ * @property {number} unknownCalls
  * @property {string} startedAt UTC ISO-8601
  * @property {string} finishedAt UTC ISO-8601
  * @property {Record<string, ProviderTally>} byProvider
@@ -343,7 +351,9 @@ async function executeRun(options) {
   /** @type {Record<string, ProviderTally>} */
   const byProvider = {};
   for (const provider of providers) {
-    byProvider[provider.id] = { ok: 0, errors: 0, skipped: 0, costUsd: null, circuitOpen: false };
+    byProvider[provider.id] = { ok: 0, errors: 0, skipped: 0, costUsd: null,
+      knownSubtotalUsd: null, costStatus: 'unavailable', attemptedCalls: 0,
+      unknownCalls: 0, circuitOpen: false };
   }
   /** @type {Map<string, number>} */
   const consecutiveFatal = new Map();
@@ -351,22 +361,6 @@ async function executeRun(options) {
   let okCalls = 0;
   let errorCalls = 0;
   let skippedCalls = 0;
-  let totalCost = 0;
-  let anyPriced = false;
-
-  /**
-   * @param {string} provider
-   * @param {number|null} cost
-   * @returns {void}
-   */
-  function addCost(provider, cost) {
-    if (cost === null) return;
-    anyPriced = true;
-    totalCost += cost;
-    const tally = byProvider[provider];
-    tally.costUsd = (tally.costUsd ?? 0) + cost;
-  }
-
   /**
    * One queued task: call the provider, then finalize its answer and evidence together.
    *
@@ -445,7 +439,6 @@ async function executeRun(options) {
             failure.kind, task.responseId],
         );
       });
-      addCost(task.provider, pricedUsage?.computedCostUsd ?? null);
       tally.errors += 1;
       errorCalls += 1;
 
@@ -567,13 +560,11 @@ async function executeRun(options) {
         pricedUsage.costStatus, costPriceVersion, createdAt,
         answer.answerStatus ?? (answer.text.trim() === '' ? 'empty' : 'complete'), task.responseId,
       ]);
-      addCost(task.provider, cost);
       throw error;
     }
 
     tally.ok += 1;
     okCalls += 1;
-    addCost(task.provider, cost);
   }
 
   // Concurrency pool (§8.1 step 3): `config.concurrency` workers pulling from one queue.
@@ -621,6 +612,29 @@ async function executeRun(options) {
   }
 
   const doneRow = get(db, 'SELECT done_calls FROM runs WHERE id = ?', [runId]);
+  const costRows = all(db, `SELECT provider, cost_usd, cost_known_subtotal_usd, target_status, safe_error_code
+    FROM responses WHERE run_id = ?`, [runId]);
+  for (const row of costRows) {
+    if (!['completed', 'failed', 'cancelled'].includes(String(row.target_status)) ||
+        row.safe_error_code === 'skipped_circuit') continue;
+    const tally = byProvider[String(row.provider)];
+    if (!tally) continue;
+    tally.attemptedCalls += 1;
+    const known = row.cost_known_subtotal_usd ?? row.cost_usd;
+    if (known !== null) tally.knownSubtotalUsd = (tally.knownSubtotalUsd ?? 0) + Number(known);
+    if (row.cost_usd === null) tally.unknownCalls += 1;
+  }
+  for (const tally of Object.values(byProvider)) {
+    const summary = summarizeComputedCosts(tally);
+    tally.costStatus = summary.costStatus;
+    tally.costUsd = summary.totalUsd;
+  }
+  const knownTotals = Object.values(byProvider).filter((tally) => tally.knownSubtotalUsd !== null);
+  const knownSubtotalUsd = knownTotals.length === 0 ? null
+    : knownTotals.reduce((sum, tally) => sum + Number(tally.knownSubtotalUsd), 0);
+  const attemptedCalls = Object.values(byProvider).reduce((sum, tally) => sum + tally.attemptedCalls, 0);
+  const unknownCalls = Object.values(byProvider).reduce((sum, tally) => sum + tally.unknownCalls, 0);
+  const costSummary = summarizeComputedCosts({ attemptedCalls, unknownCalls, knownSubtotalUsd });
 
   return {
     runId,
@@ -631,7 +645,11 @@ async function executeRun(options) {
     okCalls,
     errorCalls,
     skippedCalls,
-    costUsd: anyPriced ? totalCost : null,
+    costUsd: costSummary.totalUsd,
+    knownSubtotalUsd: costSummary.knownSubtotalUsd,
+    costStatus: costSummary.costStatus,
+    attemptedCalls: costSummary.attemptedCalls,
+    unknownCalls: costSummary.unknownCalls,
     startedAt,
     finishedAt,
     byProvider,

@@ -20,6 +20,7 @@
  */
 
 import { all, get } from './db.js';
+import { summarizeComputedCosts } from './cost.js';
 import { eligibilitySql } from './subscription-model.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
@@ -818,15 +819,17 @@ export function actualSpend(dbOrOpts, maybeOpts) {
       const knownCalls = Number(row.known_calls ?? 0);
       const unknownCalls = Number(row.unknown_calls ?? 0);
       const knownSubtotalUsd = knownCalls === 0 ? null : Number(row.known_usd ?? 0);
-      const costStatus = unknownCalls === 0 ? 'known' : knownCalls > 0 ? 'partial' : 'unavailable';
+      const summary = summarizeComputedCosts({
+        attemptedCalls: Number(row.attempted_calls ?? 0), unknownCalls, knownSubtotalUsd,
+      });
       return {
         provider: String(row.provider),
-        usd: costStatus === 'known' ? knownSubtotalUsd : null,
-        knownSubtotalUsd,
-        costStatus: /** @type {'known'|'partial'|'unavailable'} */ (costStatus),
+        usd: summary.totalUsd,
+        knownSubtotalUsd: summary.knownSubtotalUsd,
+        costStatus: summary.costStatus,
         calls: Number(row.calls ?? 0),
-        attemptedCalls: Number(row.attempted_calls ?? 0),
-        unknownCalls,
+        attemptedCalls: summary.attemptedCalls,
+        unknownCalls: summary.unknownCalls,
       };
     })
     .sort((a, b) => byProviderOrder(a.provider, b.provider));
@@ -836,16 +839,15 @@ export function actualSpend(dbOrOpts, maybeOpts) {
     : knownRows.reduce((sum, row) => sum + Number(row.knownSubtotalUsd), 0);
   const attemptedCalls = perProvider.reduce((sum, row) => sum + row.attemptedCalls, 0);
   const unknownCalls = perProvider.reduce((sum, row) => sum + row.unknownCalls, 0);
-  const costStatus = attemptedCalls === 0 || knownSubtotalUsd === null ? 'unavailable'
-    : unknownCalls > 0 ? 'partial' : 'known';
+  const summary = summarizeComputedCosts({ attemptedCalls, unknownCalls, knownSubtotalUsd });
 
   return {
-    totalUsd: costStatus === 'known' ? knownSubtotalUsd : null,
-    knownSubtotalUsd,
-    costStatus,
+    totalUsd: summary.totalUsd,
+    knownSubtotalUsd: summary.knownSubtotalUsd,
+    costStatus: summary.costStatus,
     calls: perProvider.reduce((sum, row) => sum + row.calls, 0),
-    attemptedCalls,
-    unknownCalls,
+    attemptedCalls: summary.attemptedCalls,
+    unknownCalls: summary.unknownCalls,
     perProvider,
   };
 }

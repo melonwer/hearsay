@@ -734,6 +734,10 @@ describe('runner (§8.1)', () => {
       env: {},
     });
     assert.equal(summary.costUsd, null);
+    assert.equal(summary.knownSubtotalUsd, null);
+    assert.equal(summary.costStatus, 'unavailable');
+    assert.equal(summary.attemptedCalls, 2);
+    assert.equal(summary.unknownCalls, 2);
     assert.ok(all(db, 'SELECT cost_usd FROM responses').every((r) => r.cost_usd === null));
     assert.ok(all(db, 'SELECT cost_status FROM responses').every((r) => r.cost_status === 'unavailable'));
   });
@@ -766,6 +770,9 @@ describe('runner (§8.1)', () => {
     assert.equal(calls.length, 2);
     assert.equal(summary.errorCalls, 2);
     assert.ok(Math.abs(Number(summary.costUsd) - 2 * 0.000068) < 1e-12);
+    assert.equal(summary.costStatus, 'known');
+    assert.equal(summary.attemptedCalls, 2);
+    assert.equal(summary.unknownCalls, 0);
     const rows = all(db, 'SELECT id, target_status, cost_usd, cost_status FROM responses ORDER BY id');
     assert.equal(rows.length, 2);
     for (const row of rows) {
@@ -787,6 +794,10 @@ describe('runner (§8.1)', () => {
       adapters: { openai: { runPrompt: (text, options) => openai.runPrompt(text, { ...options, apiKey: FAKE_KEY }) } },
     });
     assert.equal(summary.errorCalls, 2);
+    assert.equal(summary.costUsd, null);
+    assert.equal(summary.knownSubtotalUsd, null);
+    assert.equal(summary.costStatus, 'unavailable');
+    assert.equal(summary.unknownCalls, 2);
     const rows = all(db, 'SELECT id, cost_usd, cost_known_subtotal_usd, cost_status FROM responses');
     assert.equal(rows.length, 2);
     for (const row of rows) {
@@ -811,7 +822,11 @@ describe('runner (§8.1)', () => {
         { attempt: 1, continuation: 0, inputTokens: 200, outputTokens: 500 },
       ],
     });
-    await runPanel({ db, config, adapters: { openai: adapter }, analyzeResponse: fakeAnalyze, env: {} });
+    const summary = await runPanel({ db, config, adapters: { openai: adapter }, analyzeResponse: fakeAnalyze, env: {} });
+    assert.equal(summary.costUsd, null);
+    assert.ok(Math.abs(Number(summary.knownSubtotalUsd) - 2 * 0.00064) < 1e-12);
+    assert.equal(summary.costStatus, 'partial');
+    assert.equal(summary.byProvider.openai.costStatus, 'partial');
     const rows = all(db, 'SELECT id, cost_usd, cost_known_subtotal_usd, cost_status FROM responses');
     assert.equal(rows.length, 2);
     for (const row of rows) {
@@ -900,6 +915,8 @@ describe('runner (§8.1)', () => {
     assert.equal(summary.doneCalls, 8);
     assert.equal(summary.errorCalls, CIRCUIT_THRESHOLD);
     assert.equal(summary.skippedCalls, 8 - CIRCUIT_THRESHOLD);
+    assert.equal(summary.attemptedCalls, CIRCUIT_THRESHOLD);
+    assert.equal(summary.unknownCalls, CIRCUIT_THRESHOLD);
     assert.equal(failing.stats.prompts.length, CIRCUIT_THRESHOLD, 'no calls after the breaker opens');
     assert.equal(summary.byProvider.openai.circuitOpen, true);
 
