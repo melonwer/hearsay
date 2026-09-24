@@ -19,6 +19,11 @@
  * @property {string} model actual model echoed by the API when available
  * @property {number} latencyMs
  * @property {{url:string}[]} [citations] only providers with native citations
+ * @property {import('../measurement-contract.js').AnswerStatus} [answerStatus]
+ * @property {import('../measurement-contract.js').SearchAction[]} [searchActions]
+ * @property {import('../measurement-contract.js').SourceObservation[]} [sources]
+ * @property {import('../measurement-contract.js').AnswerCitation[]} [answerCitations]
+ * @property {import('../measurement-contract.js').UsageComponent[]} [usageComponents]
  */
 
 /** @typedef {'auth'|'quota'|'timeout'|'other'} ProviderErrorKind */
