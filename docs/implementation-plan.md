@@ -13,8 +13,8 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [x] C00 — provider contracts and baseline (`a66546f`)
 - [x] C01 — versioned measurement and evidence contracts (`d241a31`)
 - [x] C02 — evidence storage, exports, and runner snapshots (`4905bb5` through `097f0f5`)
-- [ ] C03 — search budgets and usage accounting (in progress through `13840f6`)
-- [ ] C04 — OpenAI search evidence adapter
+- [ ] C03 — search budgets and usage accounting (in progress through `b647107`)
+- [x] C04 — OpenAI search evidence adapter (`b647107`)
 - [ ] C05 — Anthropic search evidence and bounded continuation
 - [ ] C06 — Gemini grounding evidence adapter
 - [ ] C07 — Perplexity and subscription evidence provenance
