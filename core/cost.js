@@ -32,6 +32,8 @@
 
 export const PRICE_TABLE_VERSION = '2026-09-24-standard';
 
+import { stableIdentity } from './measurement-contract.js';
+
 /** @typedef {import('./config.js').ProviderId} ProviderId */
 
 /**
@@ -49,6 +51,14 @@ export const MODEL_PRICES = {
   'gemini-3.6-flash': { provider: 'gemini', inputPerMTok: 0.75, outputPerMTok: 3.75, requestUsd: 0 },
   sonar: { provider: 'perplexity', inputPerMTok: 1.0, outputPerMTok: 1.0, requestUsd: 0.005 },
 };
+
+export const SEARCH_TOOL_PRICES = Object.freeze({
+  // Checked against official OpenAI, Anthropic, and Gemini API pricing on 2026-09-24.
+  // Gemini has a shared monthly free tier; these are paid list rates, not invoices.
+  openai: 0.01,
+  anthropic: 0.01,
+  gemini: 0.014,
+});
 
 /**
  * Token counts assumed by the pre-run estimate (§4.3). A panel prompt is one short
@@ -85,7 +95,8 @@ export function priceFor(provider, model, env = process.env) {
   const key = String(provider).toUpperCase();
   const inOverride = positiveNumber(env[`HEARSAY_PRICE_${key}_IN`]);
   const outOverride = positiveNumber(env[`HEARSAY_PRICE_${key}_OUT`]);
-  const table = Object.hasOwn(MODEL_PRICES, model) ? MODEL_PRICES[model] : null;
+  const listed = Object.hasOwn(MODEL_PRICES, model) ? MODEL_PRICES[model] : null;
+  const table = listed?.provider === provider ? listed : null;
   const requestOverride = positiveNumber(env[`HEARSAY_PRICE_${key}_REQUEST`]);
 
   if (inOverride !== null && outOverride !== null) {
@@ -117,6 +128,75 @@ export function costUsd(call, env = process.env) {
   const tokensOut = positiveNumber(call.tokensOut);
   if (tokensIn === null || tokensOut === null) return null;
   return (tokensIn / MILLION) * price.inputPerMTok + (tokensOut / MILLION) * price.outputPerMTok + price.requestUsd;
+}
+
+/**
+ * @typedef {{attempt:number, continuation:number, inputTokens:number|null,
+ *   outputTokens:number|null, searchCalls?:number|null, requestCompleted?:boolean|null}} BillableAttempt
+ */
+
+/**
+ * Price reported quantities without inferring billable calls from observed queries,
+ * URLs, or citations. A timeout with unknown usage keeps an unknown component.
+ *
+ * @param {{provider:ProviderId|string, model:string, targetId:string,
+ *   searchPolicy:'off'|'auto'|'required'|'legacy', attempts:BillableAttempt[]}} input
+ * @param {Record<string,string|undefined>} [env]
+ * @returns {{components:import('./measurement-contract.js').UsageComponent[],
+ *   knownSubtotalUsd:number|null, computedCostUsd:number|null,
+ *   costStatus:'known'|'partial'|'unavailable'}}
+ */
+export function priceUsage(input, env = process.env) {
+  const modelPrice = priceFor(input.provider, input.model, env);
+  const key = String(input.provider).toUpperCase();
+  const overridden = positiveNumber(env[`HEARSAY_PRICE_${key}_IN`]) !== null &&
+    positiveNumber(env[`HEARSAY_PRICE_${key}_OUT`]) !== null;
+  const requestOverridden = positiveNumber(env[`HEARSAY_PRICE_${key}_REQUEST`]) !== null;
+  const tokenVersion = modelPrice === null ? null : overridden || requestOverridden
+    ? `override:${stableIdentity(modelPrice)}` : PRICE_TABLE_VERSION;
+  /** @type {import('./measurement-contract.js').UsageComponent[]} */
+  const components = [];
+  /** @param {BillableAttempt} attempt @param {string} component @param {number|null} quantity @param {string} unit @param {number|null} unitPrice @param {string|null} version */
+  const append = (attempt, component, quantity, unit, unitPrice, version) => {
+    if (quantity !== null && (!Number.isFinite(quantity) || quantity < 0)) throw new RangeError('Usage quantity must be nonnegative and finite');
+    components.push({
+      targetId: input.targetId, attempt: attempt.attempt, continuation: attempt.continuation,
+      component, quantity, unit,
+      costUsd: quantity === null || unitPrice === null ? null : quantity * unitPrice,
+      costStatus: quantity === null || unitPrice === null ? 'unavailable' : 'known',
+      priceVersion: version,
+    });
+  };
+  for (const attempt of input.attempts) {
+    if (!Number.isInteger(attempt.attempt) || attempt.attempt < 0 ||
+        !Number.isInteger(attempt.continuation) || attempt.continuation < 0) {
+      throw new RangeError('Attempt and continuation indices must be nonnegative integers');
+    }
+    if (attempt.searchCalls !== null && attempt.searchCalls !== undefined &&
+        (!Number.isInteger(attempt.searchCalls) || attempt.searchCalls < 0)) {
+      throw new RangeError('Reported search calls must be a nonnegative integer');
+    }
+    append(attempt, 'input_tokens', attempt.inputTokens, 'tokens',
+      modelPrice === null ? null : modelPrice.inputPerMTok / MILLION, tokenVersion);
+    append(attempt, 'output_tokens', attempt.outputTokens, 'tokens',
+      modelPrice === null ? null : modelPrice.outputPerMTok / MILLION, tokenVersion);
+    if (input.provider === 'perplexity') {
+      append(attempt, 'sonar_request', attempt.requestCompleted === true ? 1 : null,
+        'requests', modelPrice?.requestUsd ?? null, tokenVersion);
+    } else if (input.searchPolicy === 'auto' || input.searchPolicy === 'required') {
+      const searchPrice = SEARCH_TOOL_PRICES[/** @type {keyof typeof SEARCH_TOOL_PRICES} */ (input.provider)] ?? null;
+      append(attempt, 'web_search', attempt.searchCalls ?? null, 'calls', searchPrice, PRICE_TABLE_VERSION);
+    }
+  }
+  const known = components.filter((component) => component.costStatus === 'known');
+  const knownSubtotalUsd = known.length === 0 ? null : known.reduce((sum, component) => sum + Number(component.costUsd), 0);
+  const complete = components.length > 0 && known.length === components.length;
+  return {
+    components,
+    knownSubtotalUsd,
+    computedCostUsd: complete ? knownSubtotalUsd : null,
+    costStatus: complete ? 'known' : known.length > 0 ? 'partial' : 'unavailable',
+  };
 }
 
 /**

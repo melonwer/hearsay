@@ -18,6 +18,7 @@ import { config } from '../config.js';
 import {
   ProviderError,
   fetchWithRetry,
+  billableAttempts,
   requireKey,
   textFromContent,
   tokensOrUndefined,
@@ -63,10 +64,13 @@ export async function runPrompt(text, opts = {}) {
     throw new ProviderError('other', 'Response had no choices', 'unexpected OpenAI response shape');
   }
 
+  const input = usageNumber(data.usage?.prompt_tokens);
+  const output = usageNumber(data.usage?.completion_tokens);
   return {
     text: textFromContent(data.choices[0]?.message?.content),
     model: typeof data.model === 'string' ? data.model : model,
     latencyMs,
-    tokens: tokensOrUndefined(usageNumber(data.usage?.prompt_tokens), usageNumber(data.usage?.completion_tokens)),
+    tokens: tokensOrUndefined(input, output),
+    billableAttempts: billableAttempts(res, input, output),
   };
 }

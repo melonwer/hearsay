@@ -12,10 +12,12 @@ import {
   ESTIMATE_TOKENS,
   MODEL_PRICES,
   PRICE_TABLE_VERSION,
+  SEARCH_TOOL_PRICES,
   costUsd,
   estimateRunCost,
   formatUsd,
   priceFor,
+  priceUsage,
 } from '../core/cost.js';
 import { PROVIDER_IDS, buildConfig } from '../core/config.js';
 
@@ -37,6 +39,7 @@ test('price table covers every default model in the provider registry', () => {
 
 test('an unknown model has no price — we never guess one', () => {
   assert.equal(priceFor('openai', 'gpt-未来-9000', NO_ENV), null);
+  assert.equal(priceFor('gemini', 'gpt-5.6-luna', NO_ENV), null);
   assert.equal(
     costUsd({ provider: 'openai', model: 'gpt-未来-9000', tokensIn: 1000, tokensOut: 1000 }, NO_ENV),
     null,
@@ -97,6 +100,54 @@ test('costUsd includes Perplexity’s per-request search fee', () => {
 test('missing usage counts mean no cost, not a zero cost', () => {
   assert.equal(costUsd({ provider: 'openai', model: 'gpt-5.6-luna', tokensIn: null, tokensOut: 500 }, NO_ENV), null);
   assert.equal(costUsd({ provider: 'openai', model: 'gpt-5.6-luna', tokensIn: 200, tokensOut: undefined }, NO_ENV), null);
+});
+
+test('search pricing uses reported billable calls and leaves missing usage partial', () => {
+  assert.equal(SEARCH_TOOL_PRICES.openai, 0.01);
+  const attempt = { attempt: 0, continuation: 0, inputTokens: 200, outputTokens: 500 };
+  const unknown = priceUsage({ provider: 'openai', model: 'gpt-5.6-luna', targetId: '7',
+    searchPolicy: 'required', attempts: [attempt] }, NO_ENV);
+  assert.equal(unknown.costStatus, 'partial');
+  assert.equal(unknown.computedCostUsd, null);
+  assert.ok(Math.abs(Number(unknown.knownSubtotalUsd) - 0.00064) < 1e-12);
+  assert.deepEqual(unknown.components.map((component) => [component.component, component.quantity, component.costStatus]), [
+    ['input_tokens', 200, 'known'], ['output_tokens', 500, 'known'], ['web_search', null, 'unavailable'],
+  ]);
+  const reported = priceUsage({ provider: 'openai', model: 'gpt-5.6-luna', targetId: '7',
+    searchPolicy: 'required', attempts: [{ ...attempt, searchCalls: 2 }] }, NO_ENV);
+  assert.equal(reported.costStatus, 'known');
+  assert.ok(Math.abs(Number(reported.computedCostUsd) - 0.02064) < 1e-12);
+});
+
+test('a timeout attempt with unknown billing does not turn a later success into a complete cost', () => {
+  const result = priceUsage({ provider: 'anthropic', model: 'claude-sonnet-5', targetId: '9',
+    searchPolicy: 'auto', attempts: [
+      { attempt: 0, continuation: 0, inputTokens: null, outputTokens: null, searchCalls: null },
+      { attempt: 1, continuation: 0, inputTokens: 100, outputTokens: 200, searchCalls: 0 },
+    ] }, NO_ENV);
+  assert.equal(result.components.length, 6);
+  assert.equal(result.costStatus, 'partial');
+  assert.equal(result.computedCostUsd, null);
+  assert.ok(Math.abs(Number(result.knownSubtotalUsd) - 0.0022) < 1e-12);
+});
+
+test('Sonar request fee is one request component, independent of result URLs', () => {
+  const result = priceUsage({ provider: 'perplexity', model: 'sonar', targetId: '10',
+    searchPolicy: 'legacy', attempts: [{ attempt: 0, continuation: 0, inputTokens: 200,
+      outputTokens: 500, requestCompleted: true }] }, NO_ENV);
+  assert.deepEqual(result.components.map((component) => [component.component, component.quantity]), [
+    ['input_tokens', 200], ['output_tokens', 500], ['sonar_request', 1],
+  ]);
+  assert.ok(Math.abs(Number(result.computedCostUsd) - 0.0057) < 1e-12);
+  assert.ok(result.components.every((component) => component.priceVersion === PRICE_TABLE_VERSION));
+});
+
+test('billable search counts reject fractional or negative values', () => {
+  for (const searchCalls of [-1, 0.5]) {
+    assert.throws(() => priceUsage({ provider: 'openai', model: 'gpt-5.6-luna', targetId: '11',
+      searchPolicy: 'auto', attempts: [{ attempt: 0, continuation: 0, inputTokens: 1,
+        outputTokens: 1, searchCalls }] }, NO_ENV), /Reported search calls/);
+  }
 });
 
 test('estimateRunCost multiplies prompts × providers × samples', () => {

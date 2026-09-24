@@ -24,6 +24,7 @@ import { config } from '../config.js';
 import {
   ProviderError,
   fetchWithRetry,
+  billableAttempts,
   normalizeCitations,
   requireKey,
   textFromContent,
@@ -77,12 +78,15 @@ export async function runPrompt(text, opts = {}) {
       : [];
   const citations = normalizeCitations(rawCitations);
 
+  const input = usageNumber(data.usage?.prompt_tokens);
+  const output = usageNumber(data.usage?.completion_tokens);
   /** @type {ProviderResult} */
   const result = {
     text: textFromContent(data.choices[0]?.message?.content),
     model: typeof data.model === 'string' ? data.model : model,
     latencyMs,
-    tokens: tokensOrUndefined(usageNumber(data.usage?.prompt_tokens), usageNumber(data.usage?.completion_tokens)),
+    tokens: tokensOrUndefined(input, output),
+    billableAttempts: billableAttempts(res, input, output),
   };
   if (citations.length > 0) result.citations = citations;
   return result;

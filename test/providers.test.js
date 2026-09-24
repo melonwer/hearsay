@@ -144,18 +144,18 @@ describe('shared plumbing (§5.1)', () => {
     assert.ok(Date.now() - started < 2000, 'a timeout must not be followed by a backoff sleep');
   });
 
-  it('retries once on 5xx and succeeds', async () => {
+  it('does not replay a 5xx that may have reached the provider', async () => {
     _setSleep(async () => {});
     const { calls } = stubFetch([
       { status: 500, body: ERRORS.openai_500 },
       { status: 200, body: fixture('openai') },
     ]);
-    const result = await openai.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 });
-    assert.equal(calls.length, 2);
-    assert.match(result.text, /Notewell/);
+    const error = await openai.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 }).catch((cause) => cause);
+    assert.equal(calls.length, 1);
+    assert.equal(error.kind, 'other');
   });
 
-  it('retries once on a network error, then reports it as other', async () => {
+  it('does not replay an ambiguous network failure', async () => {
     _setSleep(async () => {});
     let attempts = 0;
     _setFetch(async () => {
@@ -163,8 +163,22 @@ describe('shared plumbing (§5.1)', () => {
       throw new TypeError('fetch failed');
     });
     const err = await openai.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 }).catch((e) => e);
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 1);
     assert.equal(err.kind, 'other');
+  });
+
+  it('retains an earlier rate-limited attempt when a retry succeeds', async () => {
+    _setSleep(async () => {});
+    const { calls } = stubFetch([
+      { status: 429, body: ERRORS.openai_429 },
+      { status: 200, body: fixture('openai') },
+    ]);
+    const result = await openai.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 });
+    assert.equal(calls.length, 2);
+    assert.deepEqual(result.billableAttempts, [
+      { attempt: 0, continuation: 0, inputTokens: null, outputTokens: null, requestCompleted: false },
+      { attempt: 1, continuation: 0, inputTokens: 24, outputTokens: 187, requestCompleted: true },
+    ]);
   });
 
   it('does not retry a 400', async () => {
@@ -654,11 +668,19 @@ describe('runner (§8.1)', () => {
       analyzeResponse: fakeAnalyze,
       env: {},
     });
-    const rows = all(db, 'SELECT model, cost_usd FROM responses');
+    const rows = all(db, 'SELECT id, model, cost_usd, cost_known_subtotal_usd, cost_status, cost_provenance, cost_price_version FROM responses');
     assert.equal(rows.length, 2);
     for (const row of rows) {
       assert.equal(row.model, 'gpt-5.6-luna');
       assert.ok(Math.abs(Number(row.cost_usd) - (0.00004 + 0.0006)) < 1e-12);
+      assert.equal(row.cost_known_subtotal_usd, row.cost_usd);
+      assert.equal(row.cost_status, 'known');
+      assert.equal(row.cost_provenance, 'computed');
+      assert.equal(row.cost_price_version, '2026-09-24-standard');
+      assert.deepEqual(all(db, 'SELECT component, cost_status, price_version FROM usage_components WHERE response_id = ? ORDER BY id', [row.id]).map((item) => ({ ...item })), [
+        { component: 'input_tokens', cost_status: 'known', price_version: '2026-09-24-standard' },
+        { component: 'output_tokens', cost_status: 'known', price_version: '2026-09-24-standard' },
+      ]);
     }
     assert.ok(Math.abs((summary.costUsd ?? 0) - 2 * (0.00004 + 0.0006)) < 1e-12);
   });
@@ -674,6 +696,34 @@ describe('runner (§8.1)', () => {
     });
     assert.equal(summary.costUsd, null);
     assert.ok(all(db, 'SELECT cost_usd FROM responses').every((r) => r.cost_usd === null));
+    assert.ok(all(db, 'SELECT cost_status FROM responses').every((r) => r.cost_status === 'unavailable'));
+  });
+
+  it('retains a known subtotal when one attempt has unknown billing', async () => {
+    const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
+    const adapter = fakeAdapter({ model: 'gpt-5.6-luna' });
+    const original = adapter.runPrompt;
+    adapter.runPrompt = async (text, options) => ({
+      ...await original(text, options),
+      billableAttempts: [
+        { attempt: 0, continuation: 0, inputTokens: null, outputTokens: null },
+        { attempt: 1, continuation: 0, inputTokens: 200, outputTokens: 500 },
+      ],
+    });
+    await runPanel({ db, config, adapters: { openai: adapter }, analyzeResponse: fakeAnalyze, env: {} });
+    const rows = all(db, 'SELECT id, cost_usd, cost_known_subtotal_usd, cost_status FROM responses');
+    assert.equal(rows.length, 2);
+    for (const row of rows) {
+      assert.equal(row.cost_usd, null);
+      assert.ok(Math.abs(Number(row.cost_known_subtotal_usd) - 0.00064) < 1e-12);
+      assert.equal(row.cost_status, 'partial');
+      assert.deepEqual(all(db, 'SELECT attempt_index, component, cost_status FROM usage_components WHERE response_id = ? ORDER BY id', [row.id]).map((item) => ({ ...item })), [
+        { attempt_index: 0, component: 'input_tokens', cost_status: 'unavailable' },
+        { attempt_index: 0, component: 'output_tokens', cost_status: 'unavailable' },
+        { attempt_index: 1, component: 'input_tokens', cost_status: 'known' },
+        { attempt_index: 1, component: 'output_tokens', cost_status: 'known' },
+      ]);
+    }
   });
 
   it('leaves cost null when the provider returned no usage counts', async () => {

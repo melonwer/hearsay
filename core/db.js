@@ -356,6 +356,17 @@ export const MIGRATIONS = [
       CREATE INDEX idx_usage_components_response ON usage_components(response_id);
     `,
   },
+  {
+    version: 6,
+    sql: `
+      ALTER TABLE responses ADD COLUMN cost_known_subtotal_usd REAL;
+      ALTER TABLE responses ADD COLUMN cost_status TEXT
+        CHECK (cost_status IN ('known','partial','unavailable'));
+      ALTER TABLE responses ADD COLUMN cost_provenance TEXT
+        CHECK (cost_provenance IN ('computed','provider_reported','user_entered'));
+      ALTER TABLE responses ADD COLUMN cost_price_version TEXT;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

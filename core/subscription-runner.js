@@ -386,7 +386,7 @@ function storeResult(db, responseId, result, analyzeResponse, entities, options 
         `UPDATE responses SET model = ?, text = ?, tokens_in = ?, tokens_out = ?, target_status = ?, comparability_status = ?,
             comparability_reason = ?, web_status = ?, cli_executable = ?, cli_version = ?, execution_profile_hash = ?,
             prompt_envelope_version = ?, comparison_key = ?, location_control = ?, artifact_ref = ?,
-            safe_error_code = ?, error = ?
+            cost_status = 'unavailable', safe_error_code = ?, error = ?
           WHERE id = ?`,
         [
           result.model === null || result.model === undefined ? 'default' : String(result.model),
@@ -471,7 +471,8 @@ function storeResult(db, responseId, result, analyzeResponse, entities, options 
     dbRun(db, `UPDATE responses SET text = ?, model = ?, tokens_in = ?, tokens_out = ?,
       target_status = 'failed', answer_status = ?, comparability_status = 'non_comparable',
       comparability_reason = 'evidence_invalid', evidence_completeness = 'partial',
-      safe_error_code = 'evidence_invalid', error = 'evidence:invalid' WHERE id = ?`, [
+      cost_status = 'unavailable', safe_error_code = 'evidence_invalid',
+      error = 'evidence:invalid' WHERE id = ?`, [
       text !== null && Buffer.byteLength(text) <= EVIDENCE_LIMITS.answerBytes ? text : null,
       result.model === null || result.model === undefined ? 'default' : String(result.model),
       usageCount(usage.inputTokens ?? usage.input_tokens),
@@ -516,7 +517,7 @@ function storeFailure(db, responseId, code, result, analyzeResponse, entities, a
     `UPDATE responses SET target_status = 'failed', comparability_status = 'non_comparable',
        comparability_reason = ?, web_status = 'failed', answer_status = 'failed',
        evidence_completeness = 'unavailable', query_metadata_status = 'unavailable',
-       safe_error_code = ?, error = ?
+       cost_status = 'unavailable', safe_error_code = ?, error = ?
        WHERE id = ? AND target_status IN ('queued', 'running')`,
     [code.startsWith('web_search_') ? code : null, code, `subscription:${code}`, responseId],
   );
@@ -529,7 +530,8 @@ function storeCancelled(db, responseId) {
     `UPDATE responses SET target_status = 'cancelled', comparability_status = 'non_comparable',
        comparability_reason = 'cancelled', web_status = 'unavailable', safe_error_code = 'cancelled',
        answer_status = 'failed', evidence_completeness = 'unavailable',
-       query_metadata_status = 'unavailable', error = 'subscription:cancelled' WHERE id = ?`,
+       query_metadata_status = 'unavailable', cost_status = 'unavailable',
+       error = 'subscription:cancelled' WHERE id = ?`,
     [responseId],
   );
 }

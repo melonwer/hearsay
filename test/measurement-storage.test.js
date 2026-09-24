@@ -27,7 +27,7 @@ function advanceFixtureToV4(db) {
   }
 }
 
-test('populated v4 data survives v5 with a readable v4 backup and no invented revisions', (t) => {
+test('populated v4 data survives current migrations with a readable v4 backup and no invented revisions', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'hearsay-measurement-migration-'));
   const path = join(dir, 'hearsay.db');
   const oldDb = new DatabaseSync(path);
@@ -63,6 +63,42 @@ test('populated v4 data survives v5 with a readable v4 backup and no invented re
   assert.equal(userVersion(backup), 4);
   assert.equal(Number(get(backup, 'SELECT COUNT(*) AS n FROM responses')?.n), 2);
   backup.close();
+});
+
+test('populated v5 costs survive v6 without invented price provenance', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-cost-migration-'));
+  const path = join(dir, 'hearsay.db');
+  const oldDb = new DatabaseSync(path);
+  oldDb.exec(V1);
+  advanceFixtureToV4(oldDb);
+  const fifth = MIGRATIONS.find((item) => item.version === 5);
+  oldDb.exec('BEGIN');
+  oldDb.exec(String(fifth?.sql));
+  oldDb.exec('PRAGMA user_version = 5');
+  oldDb.exec('COMMIT');
+  run(oldDb, 'UPDATE responses SET cost_usd = ? WHERE id = 1', [0.123]);
+  oldDb.close();
+
+  const db = openDb(path);
+  t.after(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  assert.equal(userVersion(db), SCHEMA_VERSION);
+  assert.deepEqual({ ...get(db, `SELECT cost_usd, cost_known_subtotal_usd, cost_status,
+    cost_provenance, cost_price_version FROM responses WHERE id = 1`) }, {
+    cost_usd: 0.123, cost_known_subtotal_usd: null, cost_status: null,
+    cost_provenance: null, cost_price_version: null,
+  });
+  const backupName = readdirSync(dir).find((name) => /^hearsay\.db\.migration-.*\.v5\.db$/.test(name));
+  assert.ok(backupName);
+  const backup = new DatabaseSync(join(dir, backupName));
+  assert.equal(userVersion(backup), 5);
+  backup.close();
+  const exported = /** @type {Record<string, Record<string, unknown>[]>} */ (exportAll(db).tables);
+  assert.equal(exported.responses.find((row) => row.id === 1)?.cost_usd, 0.123);
+  assert.equal(exported.responses.find((row) => row.id === 1)?.cost_price_version, null);
+  assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
 });
 
 test('new evidence rows retain distinct queries, sources, citations, and attempt usage', (t) => {

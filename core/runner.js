@@ -13,7 +13,7 @@
 
 import { config as processConfig } from './config.js';
 import { all, get, isoNow, run as dbRun, transaction } from './db.js';
-import { costUsd } from './cost.js';
+import { priceUsage } from './cost.js';
 import { ProviderError } from './providers/shared.js';
 import { adapters as defaultAdapters } from './providers/index.js';
 import { benchmarkRevision, executionProfile } from './measurement-contract.js';
@@ -101,6 +101,7 @@ export function recoverStaleRuns(db, opts = {}) {
                 answer_status = 'failed',
                 evidence_completeness = 'unavailable',
                 query_metadata_status = 'unavailable',
+                cost_status = 'unavailable',
                 web_status = CASE
                   WHEN surface IN ('codex-agent', 'claude-code-agent') THEN 'failed'
                   ELSE COALESCE(web_status, 'not_applicable')
@@ -375,6 +376,7 @@ async function executeRun(options) {
         `UPDATE responses SET error = ?, created_at = ?, target_status = 'failed',
           comparability_status = 'non_comparable', comparability_reason = 'skipped_circuit',
           answer_status = 'failed', evidence_completeness = 'unavailable',
+          cost_status = 'unavailable',
           query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
         [SKIPPED_CIRCUIT, isoNow(now()), task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
           'skipped_circuit', task.responseId],
@@ -408,6 +410,7 @@ async function executeRun(options) {
         `UPDATE responses SET error = ?, created_at = ?, target_status = 'failed',
           comparability_status = 'non_comparable', comparability_reason = ?,
           answer_status = 'failed', evidence_completeness = 'unavailable',
+          cost_status = 'unavailable',
           query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
         [failure.toStorage(), isoNow(now()), `provider_${failure.kind}`,
           task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
@@ -436,13 +439,18 @@ async function executeRun(options) {
     consecutiveFatal.set(task.provider, 0);
     const tokensIn = answer.tokens?.input ?? null;
     const tokensOut = answer.tokens?.output ?? null;
-    // Prefer the model the API echoed (that is what was billed); fall back to the model
-    // we requested when the echo is a variant the price table does not carry.
-    const cost =
-      costUsd({ provider: task.provider, model: answer.model, tokensIn, tokensOut }, env) ??
-      costUsd({ provider: task.provider, model: task.model, tokensIn, tokensOut }, env);
-
     const effectiveModel = answer.model || task.model;
+    const pricedUsage = priceUsage({
+      provider: task.provider, model: effectiveModel, targetId: String(task.responseId),
+      searchPolicy: task.provider === 'perplexity' ? 'legacy' : 'off',
+      attempts: answer.billableAttempts ?? [{
+        attempt: 0, continuation: 0, inputTokens: tokensIn, outputTokens: tokensOut,
+        requestCompleted: true,
+      }],
+    }, env);
+    const cost = pricedUsage.computedCostUsd;
+    const priceVersions = [...new Set(pricedUsage.components.map((component) => component.priceVersion).filter(Boolean))];
+    const costPriceVersion = priceVersions.length === 1 ? priceVersions[0] : priceVersions.length > 1 ? 'mixed' : null;
     const analysis = analyzeResponse(answer.text, entities, answer.citations ?? []);
     const createdAt = isoNow(now());
 
@@ -453,31 +461,24 @@ async function executeRun(options) {
         dbRun(
           db,
           `UPDATE responses SET model = ?, latency_ms = ?, tokens_in = ?, tokens_out = ?,
-            cost_usd = ?, created_at = ?, comparison_key = ? WHERE id = ?`,
+            cost_usd = ?, cost_known_subtotal_usd = ?, cost_status = ?,
+            cost_provenance = 'computed', cost_price_version = ?,
+            created_at = ?, comparison_key = ? WHERE id = ?`,
           [
             effectiveModel,
             Number.isFinite(answer.latencyMs) ? Math.round(answer.latencyMs) : null,
             tokensIn,
             tokensOut,
             cost,
+            pricedUsage.knownSubtotalUsd,
+            pricedUsage.costStatus,
+            costPriceVersion,
             createdAt,
             `legacy:${task.provider}:${effectiveModel}`,
             task.responseId,
           ],
         );
 
-        const usageComponents = answer.usageComponents ?? [
-          ...(tokensIn === null ? [] : [{
-            targetId: String(task.responseId), attempt: 0, continuation: 0,
-            component: 'input_tokens', quantity: tokensIn, unit: 'tokens',
-            costUsd: null, costStatus: /** @type {const} */ ('partial'), priceVersion: null,
-          }]),
-          ...(tokensOut === null ? [] : [{
-            targetId: String(task.responseId), attempt: 0, continuation: 0,
-            component: 'output_tokens', quantity: tokensOut, unit: 'tokens',
-            costUsd: null, costStatus: /** @type {const} */ ('partial'), priceVersion: null,
-          }]),
-        ];
         const normalizedCitations = answer.answerCitations ?? (task.provider === 'perplexity' ? []
           : (analysis?.citations ?? []).map((citation) => ({
             url: String(pick(citation, ['url']) ?? ''),
@@ -491,7 +492,7 @@ async function executeRun(options) {
           actions: answer.searchActions ?? [],
           sources: answer.sources ?? [],
           citations: normalizedCitations,
-          usage: usageComponents.map((component) => ({ ...component, targetId: String(task.responseId) })),
+          usage: pricedUsage.components,
           at: createdAt,
         });
 
@@ -525,12 +526,15 @@ async function executeRun(options) {
       });
     } catch (error) {
       dbRun(db, `UPDATE responses SET text = ?, model = ?, tokens_in = ?, tokens_out = ?,
-        cost_usd = ?, created_at = ?, target_status = 'failed', answer_status = ?,
+        cost_usd = ?, cost_known_subtotal_usd = ?, cost_status = ?,
+        cost_provenance = 'computed', cost_price_version = ?,
+        created_at = ?, target_status = 'failed', answer_status = ?,
         comparability_status = 'non_comparable', comparability_reason = 'evidence_invalid',
         evidence_completeness = 'partial', safe_error_code = 'evidence_invalid',
         error = 'evidence:invalid' WHERE id = ?`, [
         Buffer.byteLength(answer.text) <= EVIDENCE_LIMITS.answerBytes ? answer.text : null,
-        effectiveModel, tokensIn, tokensOut, cost, createdAt,
+        effectiveModel, tokensIn, tokensOut, cost, pricedUsage.knownSubtotalUsd,
+        pricedUsage.costStatus, costPriceVersion, createdAt,
         answer.answerStatus ?? (answer.text.trim() === '' ? 'empty' : 'complete'), task.responseId,
       ]);
       addCost(task.provider, cost);
@@ -561,6 +565,7 @@ async function executeRun(options) {
         dbRun(db, `UPDATE responses SET target_status = 'failed',
           comparability_status = 'non_comparable', comparability_reason = 'storage_failed',
           answer_status = 'failed', evidence_completeness = 'unavailable',
+          cost_status = 'unavailable',
           safe_error_code = 'storage_failed', error = 'storage:failed'
           WHERE id = ? AND target_status IN ('queued','running')`, [task.responseId]);
         log(`hearsay: failed to record ${task.provider} response: ${err instanceof Error ? err.message : String(err)}`);

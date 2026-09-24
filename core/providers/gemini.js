@@ -21,7 +21,7 @@
  */
 
 import { config } from '../config.js';
-import { ProviderError, fetchWithRetry, requireKey, tokensOrUndefined, usageNumber } from './shared.js';
+import { ProviderError, billableAttempts, fetchWithRetry, requireKey, tokensOrUndefined, usageNumber } from './shared.js';
 
 /** @typedef {import('./shared.js').ProviderResult} ProviderResult */
 
@@ -86,5 +86,6 @@ export async function runPrompt(text, opts = {}) {
     model: typeof data.modelVersion === 'string' ? data.modelVersion : model,
     latencyMs,
     tokens: tokensOrUndefined(input, candidates === null ? null : candidates + thoughts),
+    billableAttempts: billableAttempts(res, input, candidates === null ? null : candidates + thoughts),
   };
 }

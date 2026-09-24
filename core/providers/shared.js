@@ -23,7 +23,7 @@
  * @property {import('../measurement-contract.js').SearchAction[]} [searchActions]
  * @property {import('../measurement-contract.js').SourceObservation[]} [sources]
  * @property {import('../measurement-contract.js').AnswerCitation[]} [answerCitations]
- * @property {import('../measurement-contract.js').UsageComponent[]} [usageComponents]
+ * @property {import('../cost.js').BillableAttempt[]} [billableAttempts] provider-reported attempt and continuation usage
  */
 
 /** @typedef {'auth'|'quota'|'timeout'|'other'} ProviderErrorKind */
@@ -135,15 +135,15 @@ function isAbort(err) {
  * @property {number} status
  * @property {string} text raw response body
  * @property {unknown} json parsed body, or null when the body was not JSON
+ * @property {number} retryCount prior HTTP 429 responses before this success
  */
 
 /**
- * Fetch with a hard timeout, one retry on transient failures, and error classification.
+ * Fetch with a hard timeout, one retry on an explicit rate limit, and error classification.
  *
  * Classification (§5.1): 401/403 → `auth`, 429 → `quota`, abort → `timeout`, else `other`.
- * Retried: 429, 5xx and network errors. Not retried: timeouts (the caller already waited
- * `timeoutMs`, and a panel run has hundreds of calls still to get through) and 4xx other
- * than 429.
+ * Retried: 429. Network and 5xx failures may have happened after a provider accepted
+ * the work, so replaying them could duplicate a logical target and unknown charges.
  *
  * The body is read inside the timeout window on purpose, so a stalled response stream
  * cannot outlive the abort signal. Hence the `FetchResult` return rather than a raw
@@ -173,7 +173,7 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
       } catch {
         json = null;
       }
-      result = { status: res.status, text, json };
+      result = { status: res.status, text, json, retryCount: attempt };
     } catch (err) {
       if (isAbort(err)) {
         clearTimeout(timer);
@@ -185,11 +185,6 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
     }
 
     if (networkError !== null) {
-      if (attempt < retries) {
-        attempt += 1;
-        await currentSleep(backoffMs(attempt));
-        continue;
-      }
       const message = networkError instanceof Error ? networkError.message : String(networkError);
       throw new ProviderError('other', 'Network request failed', safeDetail(message));
     }
@@ -201,8 +196,7 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
       throw new ProviderError('auth', `Rejected the API key (HTTP ${res.status})`, safeDetail(res.text));
     }
 
-    const transient = res.status === 429 || res.status >= 500;
-    if (transient && attempt < retries) {
+    if (res.status === 429 && attempt < retries) {
       attempt += 1;
       await currentSleep(backoffMs(attempt));
       continue;
@@ -213,6 +207,24 @@ export async function fetchWithRetry(url, init, { timeoutMs, retries = 1 }) {
     }
     throw new ProviderError('other', `Unexpected HTTP ${res.status}`, safeDetail(res.text));
   }
+}
+
+/**
+ * Preserve previous rate-limited attempts when pricing a successful response.
+ * Their token usage may be unknown even though the final attempt returned counts.
+ * @param {FetchResult} response
+ * @param {number|null} inputTokens
+ * @param {number|null} outputTokens
+ * @returns {import('../cost.js').BillableAttempt[]}
+ */
+export function billableAttempts(response, inputTokens, outputTokens) {
+  return [
+    ...Array.from({ length: response.retryCount }, (_, attempt) => ({
+      attempt, continuation: 0, inputTokens: null, outputTokens: null,
+      requestCompleted: false,
+    })),
+    { attempt: response.retryCount, continuation: 0, inputTokens, outputTokens, requestCompleted: true },
+  ];
 }
 
 /**
