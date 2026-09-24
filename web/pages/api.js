@@ -12,10 +12,11 @@
  */
 
 import { all, get, isoNow, run, transaction, getSetting, setSetting, SETTING_KEYS } from '../../core/db.js';
-import { PRICE_TABLE_VERSION } from '../../core/cost.js';
+import { estimateRunCost, PRICE_TABLE_VERSION } from '../../core/cost.js';
+import { apiExecutionBudget } from '../../core/execution-budget.js';
 import { stableIdentity } from '../../core/measurement-contract.js';
 import { sendJson, sendError } from '../router.js';
-import { cost, metrics, NotReadyError, providers, runner, soft, strict, suggest } from '../data.js';
+import { metrics, NotReadyError, providers, runner, soft, strict, suggest } from '../data.js';
 import {
   activePromptCount,
   brandEntity,
@@ -625,6 +626,7 @@ function previewBody(preview) {
     estimatedCost: preview.estimatedCost,
     usageModel: preview.usageModel,
     quoteId: preview.quoteId,
+    executionBudgets: preview.executionBudgets,
   };
 }
 
@@ -862,6 +864,7 @@ function configureSubscriptionSchedule({ db, config }, ctx) {
       samples: selection.samples ?? config.subscriptionSamples,
       targetCeiling: selection.targetCeiling,
       consentVersion: SCHEDULE_CONSENT_VERSION,
+      executionBudgetHash: stableIdentity(preview.executionBudgets),
     });
     return new WithStatus(201, schedule);
   } catch (error) {
@@ -924,39 +927,38 @@ function patchIntent({ db }, ctx) {
  * price table has no entry for a configured model (§19.6 #13).
  *
  * @param {Pick<ApiDeps, 'db'|'config'>} deps
- * @returns {{calls: number, estUsd: number|null, perProvider: {provider: string, calls: number, estUsd: number|null}[], quoteId:string}}
+ * @returns {{calls: number, estUsd: number|null, knownSubtotalUsd:number|null,
+ *   costStatus:'known'|'partial'|'unavailable', unpriced:string[],
+ *   perProvider: {provider: string, calls: number, estUsd: number|null}[],
+ *   quoteId:string, executionBudgets:ReturnType<typeof apiExecutionBudget>[]}}
  */
 export function costEstimate({ db, config }) {
   const prompts = activePromptCount(db);
   const enabled = config.enabledProviders;
-  const callsPerProvider = prompts * config.samples;
-  const quoteId = stableIdentity({
+  const executionBudgets = enabled.map(({ id }) => apiExecutionBudget(config, id));
+  const quoteInput = {
     kind: 'api-run-v1', priceTableVersion: PRICE_TABLE_VERSION,
     prompts: all(db, 'SELECT id, intent_id, text, category, origin FROM prompts WHERE active = 1 ORDER BY id'),
     entities: all(db, 'SELECT id, name, aliases, domains, is_self FROM entities WHERE archived_at IS NULL ORDER BY id'),
-    providers: enabled.map(({ id, model }) => ({ id, model })),
-    samples: config.samples, timeoutMs: config.timeoutMs, concurrency: config.concurrency,
-  });
+    executionBudgets, samples: config.samples, concurrency: config.concurrency,
+  };
 
-  /** @type {{calls?: number, estUsd?: number|null, perProvider?: {provider: string, calls: number, estUsd: number|null}[]}|null} */
-  const estimate = soft(
-    /** @type {*} */ (cost),
-    'estimateRunCost',
+  const estimate = estimateRunCost(
     { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) => ({ id, model })) },
-    null,
+    config.pricingEnv,
   );
-  if (estimate && typeof estimate === 'object' && Array.isArray(estimate.perProvider)) {
-    return {
-      calls: Number(estimate.calls ?? callsPerProvider * enabled.length),
-      estUsd: estimate.estUsd ?? null,
-      perProvider: estimate.perProvider,
-      quoteId,
-    };
-  }
+  const quoteId = stableIdentity({ ...quoteInput,
+    estimatedCosts: estimate.perProvider,
+    costStatus: estimate.costStatus,
+  });
   return {
-    calls: callsPerProvider * enabled.length,
-    estUsd: null,
-    perProvider: enabled.map((provider) => ({ provider: provider.id, calls: callsPerProvider, estUsd: null })),
+    calls: estimate.calls,
+    estUsd: estimate.estUsd,
+    knownSubtotalUsd: estimate.knownSubtotalUsd,
+    costStatus: estimate.costStatus,
+    unpriced: estimate.unpriced,
+    perProvider: estimate.perProvider,
+    executionBudgets,
     quoteId,
   };
 }
@@ -1198,7 +1200,11 @@ async function startRun({ db, config }, ctx) {
       status: 'quote_required',
       calls: estimate.calls,
       estUsd: estimate.estUsd,
+      knownSubtotalUsd: estimate.knownSubtotalUsd,
+      costStatus: estimate.costStatus,
+      unpriced: estimate.unpriced,
       perProvider: estimate.perProvider,
+      executionBudgets: estimate.executionBudgets,
       quoteId: estimate.quoteId,
       confirmHint: 'POST /api/run with this quote_id and {"confirm":true} to start',
     });
@@ -1222,7 +1228,8 @@ async function startRun({ db, config }, ctx) {
     });
     started = get(db, 'SELECT id FROM runs WHERE id > ? ORDER BY id DESC LIMIT 1', [before]);
   }
-  return new WithStatus(202, { runId: started ? Number(started.id) : null, estUsd: estimate.estUsd });
+  return new WithStatus(202, { runId: started ? Number(started.id) : null,
+    estUsd: estimate.estUsd, costStatus: estimate.costStatus });
 }
 
 /**

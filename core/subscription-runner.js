@@ -11,10 +11,8 @@ import { DemoModeError } from './runner.js';
 import { analyzeResponse as defaultAnalyzeResponse } from './analyze.js';
 import { discardArtifact } from './artifacts.js';
 import { CodexCliRunner, ClaudeCliRunner, SubscriptionAgentRunner } from './agent-runners.js';
-import {
-  CLAUDE_PROFILE_VERSION, CLAUDE_SURFACE, CODEX_PROFILE_VERSION, CODEX_SURFACE,
-  PROMPT_ENVELOPE_VERSION,
-} from './agent-profiles.js';
+import { CLAUDE_SURFACE, CODEX_SURFACE } from './agent-profiles.js';
+import { subscriptionExecutionBudget } from './execution-budget.js';
 import { benchmarkRevision, executionProfile, stableIdentity } from './measurement-contract.js';
 import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from './measurement-storage.js';
 import { normalizeSubscriptionEvidence } from './subscription-evidence.js';
@@ -142,7 +140,8 @@ function recordOptIn(db, surfaces) {
  *   options
  * @returns {{lane:'tracking'|'exploration', surfaces:string[], prompts:PromptTarget[], samples:number, totalTargets:number,
  *   perSurface:{surface:string, prompts:number, samples:number, invocations:number}[], firstUseSurfaces:string[],
- *   estimatedCost:null, usageModel:'included_plan_allowance_or_overage', quoteId:string}}
+ *   estimatedCost:null, usageModel:'included_plan_allowance_or_overage', quoteId:string,
+ *   executionBudgets:ReturnType<typeof subscriptionExecutionBudget>[]}}
  */
 export function subscriptionPreview(options) {
   const lane = options.lane ?? 'tracking';
@@ -151,19 +150,13 @@ export function subscriptionPreview(options) {
   const samples = Math.max(1, Math.min(10, Math.floor(options.samples ?? options.config.subscriptionSamples)));
   const prompts = selectPrompts(options.db, lane, options.promptIds);
   const perSurface = surfaces.map((surface) => ({ surface, prompts: prompts.length, samples, invocations: prompts.length * samples }));
+  const executionBudgets = surfaces.map((surface) => subscriptionExecutionBudget(
+    options.config, /** @type {typeof CODEX_SURFACE|typeof CLAUDE_SURFACE} */ (surface),
+  ));
   const quoteId = stableIdentity({
     kind: 'subscription-run-v1', lane, surfaces, prompts, samples,
     entities: all(options.db, 'SELECT id, name, aliases, domains, is_self FROM entities WHERE archived_at IS NULL ORDER BY id'),
-    profiles: surfaces.map((surface) => ({
-      surface,
-      executable: surface === CODEX_SURFACE
-        ? options.config.subscription.codex.executable : options.config.subscription.claudeCode.executable,
-      version: surface === CODEX_SURFACE ? CODEX_PROFILE_VERSION : CLAUDE_PROFILE_VERSION,
-    })),
-    envelopeVersion: PROMPT_ENVELOPE_VERSION,
-    timeoutMs: options.config.subscriptionTimeoutMs,
-    idleTimeoutMs: options.config.subscriptionIdleTimeoutMs,
-    maxOutputBytes: options.config.subscriptionMaxOutputBytes,
+    executionBudgets,
     concurrency: options.config.subscriptionConcurrency,
   });
   return {
@@ -177,6 +170,7 @@ export function subscriptionPreview(options) {
     estimatedCost: null,
     usageModel: 'included_plan_allowance_or_overage',
     quoteId,
+    executionBudgets,
   };
 }
 
@@ -217,18 +211,14 @@ function queueRun(options) {
         }),
       weighting: 'equal', scope: preview.lane,
     });
-    const profiles = new Map(preview.surfaces.map((surface) => [surface, executionProfile({
-      surface,
-      route: surface === CODEX_SURFACE ? 'codex-search-v1' : 'claude-code-search-v1',
-      model: 'default', searchPolicy: 'required', envelopeVersion: PROMPT_ENVELOPE_VERSION,
-      requestSettings: {
-        profileVersion: surface === CODEX_SURFACE ? CODEX_PROFILE_VERSION : CLAUDE_PROFILE_VERSION,
-        executable: surface === CODEX_SURFACE
-          ? options.config.subscription.codex.executable : options.config.subscription.claudeCode.executable,
-      },
-      limits: { timeoutMs: options.config.subscriptionTimeoutMs,
-        idleTimeoutMs: options.config.subscriptionIdleTimeoutMs,
-        maxOutputBytes: options.config.subscriptionMaxOutputBytes },
+    const profiles = new Map(preview.executionBudgets.map((budget) => [budget.surface, executionProfile({
+      surface: budget.surface, route: budget.route,
+      model: budget.model, searchPolicy: 'required', envelopeVersion: budget.envelopeVersion,
+      requestSettings: { profileVersion: budget.profileVersion, executable: budget.executable,
+        enabledTools: budget.enabledTools },
+      limits: { timeoutMs: budget.timeoutMs, idleTimeoutMs: budget.idleTimeoutMs,
+        maxOutputBytes: budget.maxOutputBytes, maxSearchCalls: budget.maxSearchCalls,
+        maxContinuations: budget.maxContinuations },
     })]));
     if (options.existingRunId === undefined) {
       const inserted = dbRun(
@@ -303,7 +293,7 @@ function queueRun(options) {
               prompt.promptOrigin,
             ],
           ).lastInsertRowid;
-          const profile = profiles.get(surface);
+          const profile = profiles.get(/** @type {typeof CODEX_SURFACE|typeof CLAUDE_SURFACE} */ (surface));
           if (!profile) throw new TypeError('Missing subscription execution profile');
           storeTargetDefinition(db, responseId, {
             profile, benchmark, analysisRevision: 'legacy-heuristic-v1',

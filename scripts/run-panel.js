@@ -14,6 +14,7 @@ import { openDb } from '../core/db.js';
 import { runPanel } from '../core/runner.js';
 import { costEstimate } from '../web/pages/api.js';
 import { getAdapter } from '../core/providers/index.js';
+import { apiExecutionBudget } from '../core/execution-budget.js';
 
 const { values } = parseArgs({
   options: {
@@ -37,12 +38,13 @@ if (values.prompt !== undefined) {
   for (const provider of config.enabledProviders) {
     const adapter = getAdapter(provider.id);
     if (adapter === null) continue; // registry and enabledProviders share ids; belt-and-braces for tsc
+    const budget = apiExecutionBudget(config, provider.id);
     const t0 = Date.now();
     try {
       // Same call shape core/runner.js uses — adapters resolve their own key.
       const result = await adapter.runPrompt(/** @type {string} */ (values.prompt), {
-        model: provider.model,
-        timeoutMs: config.timeoutMs,
+        model: budget.model,
+        timeoutMs: budget.timeoutMs,
       });
       process.stdout.write(`${provider.id} ${Date.now() - t0}ms: ${result.text.slice(0, 120).replace(/\n/g, ' ')}\n`);
     } catch (err) {

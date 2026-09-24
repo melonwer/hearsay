@@ -11,7 +11,9 @@
 import { statSync } from 'node:fs';
 
 import { html, layout, raw, SURFACE_LABEL, usd } from '../layout.js';
-import { cost, metrics, soft } from '../data.js';
+import { metrics, soft } from '../data.js';
+import { estimateRunCost } from '../../core/cost.js';
+import { apiExecutionBudget, subscriptionExecutionBudget } from '../../core/execution-budget.js';
 import { activePromptCount } from '../queries.js';
 import { get, getSetting, SETTING_KEYS } from '../../core/db.js';
 import { getSubscriptionSchedule } from '../../core/subscription-scheduler.js';
@@ -66,8 +68,13 @@ function humanSize(bytes) {
  * @property {number|null} dbBytes null until the file exists
  * @property {number} activePrompts
  * @property {number} calls calls one run would make (§4.2)
+ * @property {number} subscriptionSamples
  * @property {number|null} estUsd null when the price table has no entry — never a guess (§4.3)
+ * @property {number|null} knownSubtotalUsd
+ * @property {'known'|'partial'|'unavailable'} costStatus
  * @property {{provider: string, calls: number, estUsd: number|null}[]} perProvider
+ * @property {ReturnType<typeof apiExecutionBudget>[]} executionBudgets
+ * @property {ReturnType<typeof subscriptionExecutionBudget>[]} subscriptionBudgets
  * @property {{totalUsd: number|null, perProvider: {provider: string, usd: number|null, calls: number}[]}|null} spend
  * @property {number} spendDays window the actual-spend figure covers
  * @property {boolean} includeBranded branded prompts count towards SOV denominators (§6.7)
@@ -83,14 +90,10 @@ function humanSize(bytes) {
 export function buildView({ db, config }) {
   const prompts = activePromptCount(db);
   const enabled = config.enabledProviders;
-  const calls = prompts * enabled.length * config.samples;
 
-  /** @type {{calls: number, estUsd: number|null, perProvider: {provider: string, calls: number, estUsd: number|null}[]}|null} */
-  const estimate = soft(
-    /** @type {*} */ (cost),
-    'estimateRunCost',
+  const estimate = estimateRunCost(
     { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) => ({ id, model })) },
-    null,
+    config.pricingEnv,
   );
   /** @type {{totalUsd: number|null, perProvider: {provider: string, usd: number|null, calls: number}[]}|null} */
   const spend = soft(/** @type {*} */ (metrics), 'actualSpend', { db, now: new Date(), days: SPEND_DAYS }, null);
@@ -119,15 +122,20 @@ export function buildView({ db, config }) {
     })),
     runAt: config.runAt,
     samples: config.samples,
+    subscriptionSamples: config.subscriptionSamples,
     concurrency: config.concurrency,
     timeoutMs: config.timeoutMs,
     demo: config.demo,
     dbPath: config.dbPath,
     dbBytes: fileSize(config.dbPath),
     activePrompts: prompts,
-    calls: estimate ? Number(estimate.calls ?? calls) : calls,
-    estUsd: estimate ? estimate.estUsd : null,
-    perProvider: estimate?.perProvider ?? [],
+    calls: estimate.calls,
+    estUsd: estimate.estUsd,
+    knownSubtotalUsd: estimate.knownSubtotalUsd,
+    costStatus: estimate.costStatus,
+    perProvider: estimate.perProvider,
+    executionBudgets: enabled.map(({ id }) => apiExecutionBudget(config, id)),
+    subscriptionBudgets: config.subscriptionSurfaces.map((surface) => subscriptionExecutionBudget(config, surface)),
     spend,
     spendDays: SPEND_DAYS,
     includeBranded: Boolean(getSetting(db, SETTING_KEYS.INCLUDE_BRANDED_IN_SOV, false)),
@@ -161,6 +169,13 @@ function costPanel(view) {
       <td class="num">${usd(row.estUsd)}</td>
     </tr>`,
   );
+  const budgets = view.executionBudgets.map((budget) => html`<tr>
+    <td>${budget.surface}</td>
+    <td>${budget.route}<br /><span class="muted">${budget.model} · ${budget.endpoint}</span></td>
+    <td>${budget.searchPolicy}${budget.searchCallLimitEnforced ? ` · ${budget.maxSearchCalls} search calls` : ' · internal search count has no ceiling'}</td>
+    <td>${budget.timeoutMs} ms</td>
+    <td>${budget.answerTokenLimit === null ? 'not set' : `${budget.answerTokenLimit} tokens`}</td>
+  </tr>`);
 
   return html`<section class="card">
     <h2>API usage &amp; cost</h2>
@@ -173,11 +188,12 @@ function costPanel(view) {
       <dt>Estimated API cost per run</dt>
       <dd>
         ${view.estUsd === null
-          ? html`<span class="muted">not available — the price table has no entry for one of your models, and Hearsay
-              does not guess</span>`
+          ? view.knownSubtotalUsd === null
+            ? html`<span class="muted">unknown — Hearsay has no complete price for this selection</span>`
+            : html`<span class="muted">${usd(view.knownSubtotalUsd)} known subtotal plus unknown components</span>`
           : usd(view.estUsd)}
       </dd>
-      <dt>Actual API spend, last ${view.spendDays} days</dt>
+      <dt>Computed API usage cost, last ${view.spendDays} days</dt>
       <dd>${usd(view.spend ? view.spend.totalUsd : null)}</dd>
     </dl>
     ${perProvider.length === 0
@@ -194,10 +210,14 @@ function costPanel(view) {
             ${perProvider}
           </tbody>
         </table>`}
+    ${budgets.length === 0 ? '' : html`<table class="table">
+      <thead><tr><th>Surface</th><th>Endpoint profile / model</th><th>Search policy</th><th>Time limit</th><th>Answer limit</th></tr></thead>
+      <tbody>${budgets}</tbody>
+    </table>`}
     <p class="muted small">
-      Estimates and actual spend cover direct API usage only. Estimates use the token medians documented in the
-      methodology, priced from the table in core/cost.js. Actual API spend is the sum of the usage each provider
-      reported, so it is zero until a live API run happens. Subscription allowance and possible overage are shown
+      Estimates and computed usage costs cover direct API usage only. Estimates use the token medians documented in the
+      methodology, priced from the table in core/cost.js. Computed usage cost is not an invoice and can omit
+      attempts with unknown billing. Subscription allowance and possible overage are shown
       above and are not converted into this dollar figure.
     </p>
   </section>`;
@@ -221,7 +241,13 @@ function subscriptionPanel(view) {
     </section>`;
   }
   const schedule = view.subscriptionSchedule;
-  const targetCeiling = schedule?.targetCeiling ?? Math.max(1, view.activePrompts * view.samples);
+  const targetCeiling = schedule?.targetCeiling ?? Math.max(1, view.activePrompts * view.subscriptionSamples);
+  const budgets = view.subscriptionBudgets.map((budget) => html`<tr>
+    <td>${budget.surface}</td>
+    <td>${budget.executable}</td>
+    <td>${budget.timeoutMs} ms · ${budget.maxOutputBytes} bytes output</td>
+    <td>required · internal search count has no enforceable ceiling</td>
+  </tr>`);
   const onDemand = view.subscriptionRun
     ? html`<div class="subscription-run" data-subscription-run>
         <p>On-demand run ${view.subscriptionRun.id} is running · ${view.subscriptionRun.doneCalls}/${view.subscriptionRun.totalCalls} calls.</p>
@@ -231,7 +257,7 @@ function subscriptionPanel(view) {
     : html`<form class="inline-form" data-api-form="/api/subscription/run" data-subscription-run>
         <label><span>On-demand surfaces</span><input name="surfaces" data-list value="${view.subscriptionSurfaces.map((surface) => surface.id).join(',')}" required /></label>
         <input type="hidden" name="lane" value="tracking" />
-        <input type="hidden" name="samples" value="${Math.min(10, Math.max(1, view.samples))}" />
+        <input type="hidden" name="samples" value="${view.subscriptionSamples}" />
         <button type="submit" class="btn">Preview on-demand subscription run</button>
         <p class="muted small">A confirmation prompt appears before this uses signed-in plan allowance.</p>
         <p class="form-error" data-form-error hidden></p>
@@ -245,6 +271,10 @@ function subscriptionPanel(view) {
     <table class="table">
       <thead><tr><th>Surface</th><th>Status</th><th>Allowance</th></tr></thead>
       <tbody>${surfaces}</tbody>
+    </table>
+    <table class="table">
+      <thead><tr><th>Surface</th><th>CLI</th><th>Process limits</th><th>Search policy</th></tr></thead>
+      <tbody>${budgets}</tbody>
     </table>
     ${view.demo ? html`<p class="muted">Demo mode disables subscription calls and scheduling.</p>` : onDemand}
     ${view.demo
@@ -263,7 +293,7 @@ function subscriptionPanel(view) {
             <label><span>IANA timezone</span><input name="timezone" value="UTC" maxlength="80" required /></label>
             <label><span>Surfaces</span><input name="surfaces" data-list value="${view.subscriptionSurfaces.map((surface) => surface.id).join(',')}" required /></label>
             <input type="hidden" name="lane" value="tracking" />
-            <input type="hidden" name="samples" value="${view.samples}" />
+            <input type="hidden" name="samples" value="${view.subscriptionSamples}" />
             <label><span>Maximum targets per occurrence</span><input name="target_ceiling" type="number" min="1" value="${targetCeiling}" required /></label>
             <button type="submit" class="btn">Preview and enable schedule</button>
             <p class="muted small">A completed verified on-demand run for each selected surface is required before this persistent consent is saved.</p>

@@ -17,6 +17,7 @@ import { priceUsage } from './cost.js';
 import { ProviderError } from './providers/shared.js';
 import { adapters as defaultAdapters } from './providers/index.js';
 import { benchmarkRevision, executionProfile } from './measurement-contract.js';
+import { apiExecutionBudget } from './execution-budget.js';
 import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from './measurement-storage.js';
 // Namespace imports: these modules belong to another lane and may still be stubs while
 // Lane A is in flight. A namespace import never fails to resolve, so the runner stays
@@ -238,7 +239,7 @@ async function executeRun(options) {
     analyzeResponse = analyzeModule.analyzeResponse,
     evaluateAlerts = alertsModule.evaluate,
     now = () => new Date(),
-    env = process.env,
+    env = config.pricingEnv,
     log = (message) => process.stderr.write(`${message}\n`),
   } = options;
 
@@ -269,15 +270,18 @@ async function executeRun(options) {
 
   /** @type {Map<string, ReturnType<typeof executionProfile>>} */
   const profiles = new Map();
+  /** @type {Map<string, ReturnType<typeof apiExecutionBudget>>} */
+  const budgets = new Map();
   for (const provider of providers) {
-    const route = provider.id === 'openai' ? 'openai-chat-completions-v1'
-      : provider.id === 'anthropic' ? 'anthropic-messages-v1'
-        : provider.id === 'gemini' ? 'gemini-generate-content-v1' : 'perplexity-sonar-v1';
-    const policy = provider.id === 'perplexity' ? 'legacy' : 'off';
+    const budget = apiExecutionBudget(config, provider.id);
+    budgets.set(provider.id, budget);
     profiles.set(provider.id, executionProfile({
-      surface: `${provider.id}-api`, route, model: provider.model, searchPolicy: policy,
+      surface: budget.surface, route: budget.route, model: budget.model,
+      searchPolicy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
       envelopeVersion: API_PROMPT_ENVELOPE_VERSION,
-      requestSettings: { timeoutMs: config.timeoutMs },
+      requestSettings: { endpoint: budget.endpoint, enabledTools: budget.enabledTools },
+      limits: { timeoutMs: budget.timeoutMs, answerTokenLimit: budget.answerTokenLimit,
+        maxSearchCalls: budget.maxSearchCalls, maxContinuations: budget.maxContinuations },
     }));
   }
 
@@ -326,10 +330,11 @@ async function executeRun(options) {
         `legacy:${task.provider}:${task.model}`,
       ]).lastInsertRowid;
       const profile = profiles.get(task.provider);
-      if (!profile || !benchmark) throw new TypeError('Missing queued measurement definition');
+      const budget = budgets.get(task.provider);
+      if (!profile || !budget || !benchmark) throw new TypeError('Missing queued measurement definition');
       storeTargetDefinition(db, task.responseId, {
         profile, benchmark, analysisRevision: 'legacy-heuristic-v1',
-        searchPolicy: task.provider === 'perplexity' ? 'legacy' : 'off', at: startedAt,
+        searchPolicy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy), at: startedAt,
       });
     }
     return inserted.lastInsertRowid;
@@ -386,6 +391,8 @@ async function executeRun(options) {
       return;
     }
 
+    const budget = budgets.get(task.provider);
+    if (!budget) throw new TypeError('Missing execution budget for queued target');
     const adapter = adapters[task.provider];
     /** @type {ProviderResult|null} */
     let result = null;
@@ -396,7 +403,7 @@ async function executeRun(options) {
       if (!adapter || typeof adapter.runPrompt !== 'function') {
         throw new ProviderError('other', `No adapter registered for provider "${task.provider}"`);
       }
-      result = await adapter.runPrompt(task.promptText, { model: task.model, timeoutMs: config.timeoutMs });
+      result = await adapter.runPrompt(task.promptText, { model: budget.model, timeoutMs: budget.timeoutMs });
     } catch (err) {
       failure =
         err instanceof ProviderError
@@ -442,7 +449,7 @@ async function executeRun(options) {
     const effectiveModel = answer.model || task.model;
     const pricedUsage = priceUsage({
       provider: task.provider, model: effectiveModel, targetId: String(task.responseId),
-      searchPolicy: task.provider === 'perplexity' ? 'legacy' : 'off',
+      searchPolicy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
       attempts: answer.billableAttempts ?? [{
         attempt: 0, continuation: 0, inputTokens: tokensIn, outputTokens: tokensOut,
         requestCompleted: true,
@@ -486,7 +493,7 @@ async function executeRun(options) {
             sourceId: null, start: null, end: null,
           })));
         storeMeasurementEvidence(db, task.responseId, {
-          policy: task.provider === 'perplexity' ? 'legacy' : 'off',
+          policy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
           answerStatus: answer.answerStatus ?? (answer.text.trim() === '' ? 'empty' : 'complete'),
           answer: answer.text,
           actions: answer.searchActions ?? [],

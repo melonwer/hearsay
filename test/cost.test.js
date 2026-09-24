@@ -166,6 +166,7 @@ test('estimateRunCost multiplies prompts × providers × samples', () => {
   assert.equal(estimate.calls, 72);
   assert.deepEqual(estimate.assumedTokens, ESTIMATE_TOKENS);
   assert.deepEqual(estimate.unpriced, []);
+  assert.equal(estimate.costStatus, 'known');
 
   const perCallOpenai = 0.00004 + 0.0006;
   const perCallPerplexity = 0.0002 + 0.0005 + 0.005;
@@ -192,7 +193,9 @@ test('estimateRunCost reports unpriced providers instead of hiding them in the t
   assert.equal(estimate.calls, 4);
   assert.deepEqual(estimate.unpriced, ['gemini']);
   assert.equal(estimate.perProvider[1].estUsd, null);
-  assert.ok(Math.abs((estimate.estUsd ?? 0) - (0.00004 + 0.0006) * 2) < 1e-12);
+  assert.equal(estimate.estUsd, null);
+  assert.equal(estimate.costStatus, 'partial');
+  assert.ok(Math.abs((estimate.knownSubtotalUsd ?? 0) - (0.00004 + 0.0006) * 2) < 1e-12);
 });
 
 test('estimateRunCost with nothing priced returns null, not zero', () => {

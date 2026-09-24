@@ -210,7 +210,9 @@ export function priceUsage(input, env = process.env) {
 /**
  * @typedef {Object} RunEstimate
  * @property {number} calls total calls the run will make
- * @property {number|null} estUsd sum over priced providers; null when nothing is priced
+ * @property {number|null} estUsd complete computed estimate, null if any provider is unpriced
+ * @property {number|null} knownSubtotalUsd sum over priced providers
+ * @property {'known'|'partial'|'unavailable'} costStatus
  * @property {ProviderEstimate[]} perProvider
  * @property {(ProviderId|string)[]} unpriced providers whose model has no known price
  * @property {{input: number, output: number}} assumedTokens what the estimate assumes per call
@@ -257,7 +259,10 @@ export function estimateRunCost(input, env = process.env) {
 
   return {
     calls: callsPerProvider * input.providers.length,
-    estUsd: priced === 0 ? null : total,
+    estUsd: priced === input.providers.length && priced > 0 ? total : null,
+    knownSubtotalUsd: priced === 0 ? null : total,
+    costStatus: priced === input.providers.length && priced > 0 ? 'known'
+      : priced > 0 ? 'partial' : 'unavailable',
     perProvider,
     unpriced,
     assumedTokens: { input: tokensIn, output: tokensOut },

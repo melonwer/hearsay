@@ -36,6 +36,7 @@ import { resolvePortFilePath } from './port-discovery.js';
  * @property {number} timeoutMs per-call timeout
  * @property {boolean} demo demo mode: no live calls, no scheduler, banner shown
  * @property {number} confirmUsd Run-cost confirm threshold in USD (SPEC §3.3); 0 = every run quotes first.
+ * @property {Record<string, string|undefined>} pricingEnv resolved nonsecret price overrides
  * @property {Record<ProviderId, ProviderConfig>} providers
  * @property {ProviderConfig[]} enabledProviders
  * @property {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} subscription
@@ -205,6 +206,14 @@ export function maskSecret(secret) {
  * @returns {Config}
  */
 export function buildConfig(env) {
+  /** @type {Record<string, string|undefined>} */
+  const pricingEnv = {};
+  for (const id of PROVIDER_IDS) {
+    for (const suffix of ['IN', 'OUT', 'REQUEST']) {
+      const key = `HEARSAY_PRICE_${id.toUpperCase()}_${suffix}`;
+      if (env[key] !== undefined) pricingEnv[key] = env[key];
+    }
+  }
   /** @type {Partial<Record<ProviderId, ProviderConfig>>} */
   const providers = {};
   for (const def of PROVIDER_DEFAULTS) {
@@ -255,6 +264,7 @@ export function buildConfig(env) {
     timeoutMs: intIn(env.HEARSAY_TIMEOUT_MS, 45000, 1000, 600000),
     demo: String(env.HEARSAY_DEMO ?? '').trim() === '1',
     confirmUsd: floatIn(env.HEARSAY_CONFIRM_USD, 1, 0),
+    pricingEnv,
     providers: registry,
     enabledProviders: PROVIDER_IDS.map((id) => registry[id]).filter((p) => p.enabled),
     subscription,

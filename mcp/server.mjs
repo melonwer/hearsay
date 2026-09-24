@@ -132,7 +132,7 @@ const TOOLS = [
     name: 'hearsay_cost_estimate',
     readOnly: true,
     description:
-      'Preview what one measurement panel run would cost before spending anything: total API calls and estimated USD per provider, from the live price table. Costs go to the user’s own provider keys.',
+      'Preview exact API targets, route budgets, priced components, and unknown costs before spending anything. The computed estimate uses a checked price table and is not an invoice or a hard dollar cap.',
     inputSchema: obj({}),
     call: () => ({ method: 'GET', path: '/api/cost/estimate' }),
   },
@@ -178,7 +178,7 @@ const TOOLS = [
     name: 'hearsay_subscription_preview',
     readOnly: true,
     description:
-      'Preview an explicitly selected Codex agent or Claude Code agent measurement: prompts, samples, exact target count, first-use allowance consent, and included-plan/overage usage model. This never starts a CLI or model request.',
+      'Preview an explicitly selected Codex agent or Claude Code agent measurement: prompts, samples, exact target count, process limits, first-use consent, and included-plan/overage usage. Internal CLI web-search calls have no enforceable ceiling. This never starts a CLI or model request.',
     inputSchema: obj({ surfaces: SUBSCRIPTION_SURFACES, lane: SUBSCRIPTION_LANE, prompt_ids: { type: 'array', items: { type: 'integer', minimum: 1 } }, samples: { type: 'integer', minimum: 1, maximum: 10 } }),
     call: (a) => ({ method: 'POST', path: '/api/subscription/preview', body: { surfaces: a?.surfaces, lane: a?.lane, prompt_ids: a?.prompt_ids, samples: a?.samples } }),
   },

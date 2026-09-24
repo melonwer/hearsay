@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 
 import { get, isoNow, run, SETTING_KEYS, setSetting } from './db.js';
+import { stableIdentity } from './measurement-contract.js';
 import { AGENT_SURFACES } from './subscription-model.js';
 import { subscriptionPreview } from './subscription-runner.js';
 import { recoverStaleRuns } from './runner.js';
@@ -62,6 +63,7 @@ function stableScheduleErrorCode(error) {
  * @property {string} consentedAt UTC ISO
  * @property {string} createdAt UTC ISO
  * @property {string} revisionHash
+ * @property {string|null} executionBudgetHash hash of approved execution budgets for new schedules
  */
 
 export class SubscriptionScheduleError extends Error {
@@ -215,6 +217,7 @@ function revisionInput(schedule) {
     samples: schedule.samples,
     targetCeiling: schedule.targetCeiling,
     graceMinutes: schedule.graceMinutes,
+    executionBudgetHash: schedule.executionBudgetHash ?? null,
   };
 }
 
@@ -225,7 +228,7 @@ export function scheduleRevisionHash(schedule) {
 
 /**
  * @param {Db} db
- * @param {{runAt:string,timeZone:string,surfaces:string[],lane?:ScheduleLane,promptIds?:number[],samples?:number,targetCeiling:number,graceMinutes?:number,consentVersion:string,now?:Date}} input
+ * @param {{runAt:string,timeZone:string,surfaces:string[],lane?:ScheduleLane,promptIds?:number[],samples?:number,targetCeiling:number,graceMinutes?:number,consentVersion:string,executionBudgetHash?:string|null,now?:Date}} input
  * @returns {SubscriptionSchedule}
  */
 export function saveSubscriptionSchedule(db, input) {
@@ -246,6 +249,10 @@ export function saveSubscriptionSchedule(db, input) {
   const graceMinutes = Number(input.graceMinutes ?? DEFAULT_SUBSCRIPTION_GRACE_MINUTES);
   if (!Number.isInteger(graceMinutes) || graceMinutes < 0 || graceMinutes > 1440) throw new SubscriptionScheduleError('graceMinutes must be an integer between 0 and 1440');
   if (input.consentVersion !== SCHEDULE_CONSENT_VERSION) throw new SubscriptionScheduleError('A current subscription schedule consent is required');
+  if (input.executionBudgetHash !== undefined && input.executionBudgetHash !== null &&
+      !/^[a-f0-9]{64}$/.test(input.executionBudgetHash)) {
+    throw new SubscriptionScheduleError('executionBudgetHash must be a SHA-256 identity');
+  }
   const now = input.now ?? new Date();
   const existing = getSubscriptionSchedule(db);
   /** @type {SubscriptionSchedule} */
@@ -261,6 +268,7 @@ export function saveSubscriptionSchedule(db, input) {
     targetCeiling,
     graceMinutes,
     consentVersion: SCHEDULE_CONSENT_VERSION,
+    executionBudgetHash: input.executionBudgetHash ?? null,
     consentedAt: isoNow(now),
     createdAt: existing?.createdAt ?? isoNow(now),
     revisionHash: '',
@@ -427,6 +435,19 @@ export async function subscriptionScheduleTick(options) {
         status: 'failed',
         totalCalls: 0,
         error: 'schedule_budget_exceeded',
+      });
+      changed ||= failed !== null;
+      continue;
+    }
+    if (schedule.executionBudgetHash &&
+        stableIdentity(preview.executionBudgets ?? []) !== schedule.executionBudgetHash) {
+      const failed = claimOccurrence(options.db, schedule, {
+        occurrenceDate,
+        scheduledFor,
+        startedAt: isoNow(now),
+        status: 'failed',
+        totalCalls: 0,
+        error: 'schedule_configuration_invalid',
       });
       changed ||= failed !== null;
       continue;

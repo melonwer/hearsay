@@ -485,7 +485,8 @@ test('settings puts subscription surfaces before API panels and distinguishes al
   assert.ok(costAt > providersAt, 'API providers should precede API cost');
   assert.match(body, /plan allowance|Allowance consented/);
   assert.match(body, /possible overage/);
-  assert.match(body, /Actual API spend/);
+  assert.match(body, /Computed API usage cost/);
+  assert.match(body, /internal search count has no enforceable ceiling/);
   assert.match(body, /direct API usage only/);
 });
 

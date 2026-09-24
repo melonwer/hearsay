@@ -699,6 +699,21 @@ describe('runner (§8.1)', () => {
     assert.ok(all(db, 'SELECT cost_status FROM responses').every((r) => r.cost_status === 'unavailable'));
   });
 
+  it('records usage at the configured override price without a separate runner env', async () => {
+    const config = buildConfig({
+      OPENAI_API_KEY: 'k', OPENAI_MODEL: 'private-deployment-1', HEARSAY_SAMPLES: '1',
+      HEARSAY_PRICE_OPENAI_IN: '3', HEARSAY_PRICE_OPENAI_OUT: '7',
+    });
+    const summary = await runPanel({
+      db, config, adapters: { openai: fakeAdapter() }, analyzeResponse: fakeAnalyze,
+    });
+    assert.equal(summary.costUsd, 2 * 0.0041);
+    const rows = all(db, 'SELECT cost_usd, cost_status, cost_price_version FROM responses');
+    assert.equal(rows.length, 2);
+    assert.ok(rows.every((row) => row.cost_usd === 0.0041 && row.cost_status === 'known'));
+    assert.ok(rows.every((row) => String(row.cost_price_version).startsWith('override:')));
+  });
+
   it('retains a known subtotal when one attempt has unknown billing', async () => {
     const config = buildConfig({ OPENAI_API_KEY: 'k', HEARSAY_SAMPLES: '1' });
     const adapter = fakeAdapter({ model: 'gpt-5.6-luna' });

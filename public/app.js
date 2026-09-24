@@ -309,7 +309,11 @@ async function triggerRun(button) {
   // SPEC §3.3: the server is the single source of truth for the cost gate — this
   // handler only relays the quote and echoes the human's yes as {confirm:true}.
   if (first.data && first.data.status === 'quote_required') {
-    const usd = first.data.estUsd === null ? 'unknown cost' : `≈ $${Number(first.data.estUsd).toFixed(2)}`;
+    const usd = first.data.estUsd === null
+      ? first.data.knownSubtotalUsd === null
+        ? 'unknown cost'
+        : `at least $${Number(first.data.knownSubtotalUsd).toFixed(2)} plus unknown costs`
+      : `≈ $${Number(first.data.estUsd).toFixed(2)}`;
     if (!window.confirm(`This run makes ${first.data.calls} API calls (${usd}). Start it?`)) {
       button.removeAttribute('disabled');
       return;
@@ -386,8 +390,9 @@ function initApiForms() {
       }
       if (form.hasAttribute('data-subscription-schedule') && first.data?.status === 'schedule_confirmation_required') {
         const targets = Number(first.data.totalTargets ?? 0);
+        const ceiling = Number(first.data.targetCeiling ?? targets);
         const surfaces = Array.isArray(first.data.surfaces) ? first.data.surfaces.join(', ') : 'selected surfaces';
-        if (!window.confirm(`Enable ${surfaces} at ${first.data.runAt} for up to ${targets} current targets per occurrence? This uses subscription allowance.`)) return;
+        if (!window.confirm(`Enable ${surfaces} at ${first.data.runAt} for ${targets} current target(s), with a ceiling of ${ceiling} per occurrence? This uses subscription allowance. Internal web searches have no enforceable call ceiling.`)) return;
         const confirmed = await api(url, method, { ...payload, confirm: true, quote_id: first.data.quoteId });
         if (!confirmed.ok) {
           showError(form, confirmed.data);
@@ -397,7 +402,7 @@ function initApiForms() {
       if (form.hasAttribute('data-subscription-run') && first.data?.status === 'quote_required') {
         const targets = Number(first.data.totalTargets ?? 0);
         const surfaces = Array.isArray(first.data.surfaces) ? first.data.surfaces.join(', ') : 'selected surfaces';
-        if (!window.confirm(`Run ${surfaces} for ${targets} target(s)? This uses subscription allowance.`)) return;
+        if (!window.confirm(`Run ${surfaces} for ${targets} target(s)? This uses subscription allowance. Internal web searches have no enforceable call ceiling.`)) return;
         const confirmed = await api(url, method, { ...payload, confirm: true, quote_id: first.data.quoteId });
         if (!confirmed.ok) {
           showError(form, confirmed.data);

@@ -32,7 +32,7 @@ export const ANTHROPIC_VERSION = '2023-06-01';
  * figure (§5.2): long enough for a full recommendation answer, short enough to keep a
  * panel run cheap.
  */
-const MAX_TOKENS = 1024;
+export const MAX_TOKENS = 1024;
 
 /**
  * @param {string} text the prompt, sent verbatim as the single user message

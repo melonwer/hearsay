@@ -128,6 +128,8 @@ test('run gate: HEARSAY_CONFIRM_USD=0 always quotes; confirm:true starts', async
     assert.equal(quote.body.status, 'quote_required');
     assert.equal(typeof quote.body.calls, 'number');
     assert.ok(Array.isArray(quote.body.perProvider));
+    assert.equal(quote.body.executionBudgets[0].searchPolicy, 'off');
+    assert.equal(quote.body.executionBudgets[0].maxSearchCalls, 0);
     // a quote must not have created a run
     assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
     const go = await api(app.base, 'POST', '/api/run', { confirm: true, quote_id: quote.body.quoteId });
@@ -177,6 +179,22 @@ test('run gate: unknown model cost quotes even below call threshold', async () =
     assert.equal(status, 200);
     assert.equal(body.status, 'quote_required');
     assert.equal(body.estUsd, null);
+  } finally {
+    await app.close();
+  }
+});
+
+test('run quote uses configured price overrides for an unlisted model', async () => {
+  const app = await bootRunnable({
+    OPENAI_MODEL: 'private-deployment-1', HEARSAY_CONFIRM_USD: '0',
+    HEARSAY_PRICE_OPENAI_IN: '3', HEARSAY_PRICE_OPENAI_OUT: '7',
+  });
+  try {
+    const { status, body } = await api(app.base, 'POST', '/api/run', {});
+    assert.equal(status, 200);
+    assert.equal(body.costStatus, 'known');
+    assert.equal(body.estUsd, 0.0041);
+    assert.equal(body.unpriced.length, 0);
   } finally {
     await app.close();
   }
@@ -592,6 +610,8 @@ test('subscription preview and run quote expose exact agent surface without API 
     assert.equal(preview.body.totalTargets, 2);
     assert.equal(preview.body.perSurface[0].surface, 'codex-agent');
     assert.equal(preview.body.usageModel, 'included_plan_allowance_or_overage');
+    assert.equal(preview.body.executionBudgets[0].maxSearchCalls, null);
+    assert.equal(preview.body.executionBudgets[0].searchCallLimitEnforced, false);
     const quote = await api(app.base, 'POST', '/api/subscription/run', { surfaces: ['codex-agent'] });
     assert.equal(quote.status, 200);
     assert.equal(quote.body.status, 'quote_required');

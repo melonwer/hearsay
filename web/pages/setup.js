@@ -11,7 +11,7 @@
  */
 
 import { html, layout, SURFACE_LABEL, usd } from '../layout.js';
-import { cost, soft } from '../data.js';
+import { estimateRunCost } from '../../core/cost.js';
 import { activePromptCount, brandEntity, listEntities } from '../queries.js';
 
 /**
@@ -105,14 +105,10 @@ export function buildView({ db, config }, query) {
   const competitors = entities.filter((entity) => entity.is_self !== 1);
   const prompts = activePromptCount(db);
   const enabled = config.enabledProviders;
-  const calls = prompts * enabled.length * config.samples;
 
-  /** @type {{calls: number, estUsd: number|null}|null} */
-  const estimate = soft(
-    /** @type {*} */ (cost),
-    'estimateRunCost',
+  const estimate = estimateRunCost(
     { promptCount: prompts, samples: config.samples, providers: enabled.map(({ id, model }) => ({ id, model })) },
-    null,
+    config.pricingEnv,
   );
 
   return {
@@ -133,8 +129,8 @@ export function buildView({ db, config }, query) {
     samples: config.samples,
     subscriptionSurfaces: config.subscriptionSurfaces,
     subscriptionSamples: config.subscriptionSamples,
-    calls: estimate ? Number(estimate.calls ?? calls) : calls,
-    estUsd: estimate ? estimate.estUsd : null,
+    calls: estimate.calls,
+    estUsd: estimate.estUsd,
     starter: starterPack({ brand: brand?.name ?? null, competitors: competitors.map((entity) => entity.name) }),
   };
 }

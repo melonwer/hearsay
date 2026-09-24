@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { openDb, all, get, run } from '../core/db.js';
+import { stableIdentity } from '../core/measurement-contract.js';
 import {
   DEFAULT_SUBSCRIPTION_GRACE_MINUTES,
   SCHEDULE_CONSENT_VERSION,
@@ -129,6 +130,33 @@ test('a due occurrence is claimed before the runner and remains single across re
     assert.deepEqual(all(db, 'SELECT status, occurrence_local_date FROM runs ORDER BY id').map((row) => ({ ...row })), [
       { status: 'done', occurrence_local_date: '2026-08-10' },
     ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('a changed execution budget stops a consented scheduled occurrence before CLI work', async () => {
+  const db = openDb(':memory:');
+  try {
+    run(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-09T00:00:00Z']);
+    run(db, `INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin)
+      VALUES(?,?,?,?,?,?,?,?)`, [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-09T00:00:00Z', 'tracking', 'user_authored']);
+    const approved = [{ surface: 'codex-agent', timeoutMs: 120000, maxSearchCalls: null }];
+    saveSubscriptionSchedule(db, {
+      runAt: '07:00', timeZone: 'Europe/Berlin', surfaces: ['codex-agent'], lane: 'tracking',
+      promptIds: [1], samples: 1, targetCeiling: 1, consentVersion: SCHEDULE_CONSENT_VERSION,
+      executionBudgetHash: stableIdentity(approved), now: new Date('2026-08-09T06:00:00Z'),
+    });
+    let calls = 0;
+    assert.equal(await subscriptionScheduleTick({
+      db, config: config(), now: new Date('2026-08-10T05:05:00Z'),
+      preview: () => ({ totalTargets: 1, executionBudgets: [{ ...approved[0], timeoutMs: 90000 }] }),
+      runSubscription: async () => { calls += 1; },
+    }), true);
+    assert.equal(calls, 0);
+    assert.deepEqual({ ...get(db, 'SELECT status, error FROM runs WHERE schedule_key = ?', ['subscription-agent']) }, {
+      status: 'failed', error: 'schedule_configuration_invalid',
+    });
   } finally {
     db.close();
   }
