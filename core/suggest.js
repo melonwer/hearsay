@@ -220,48 +220,50 @@ export function starterPack(input) {
   const brandName = String(input?.brand?.name ?? '').trim();
   const audience = String(input?.audience ?? '').trim() || 'a small team';
   const job = String(input?.productJob ?? '').trim() || 'this work';
-  const category = String(input?.categoryHint ?? '').trim() || 'tools for this work';
+  const category = String(input?.categoryHint ?? '').trim();
   const rival = (input?.competitors ?? []).map((c) => String(c?.name ?? '').trim()).find(Boolean);
   const brandSubject = brandName || 'this product';
+  const options = category ? `${category} for ${audience}` : `options for ${audience} to ${job}`;
+  const optionGroup = category || `options to ${job}`;
   /** @type {SuggestedIntent[]} */
   const intents = [
     {
       label: 'Find options', category: 'general', paraphrases: [
-        `What are the best ${category} for ${audience}?`,
-        `Which ${category} should ${audience} consider?`,
-        `What options can help ${audience} with ${job}?`,
+        `What are the best ${options}?`,
+        `Which ${optionGroup} should ${audience} consider?`,
+        `What options can help ${audience} with this goal: ${job}?`,
       ],
     },
     {
       label: 'Match the job', category: 'use-case', paraphrases: [
-        `Which ${category} work well for ${audience} doing ${job}?`,
-        `How can ${audience} choose a tool for ${job}?`,
-        `What features matter most to ${audience} for ${job}?`,
+        `Which ${optionGroup} can help ${audience} with this goal: ${job}?`,
+        `What should ${audience} look for when choosing ${optionGroup}?`,
+        `What features of ${optionGroup} matter most for this goal: ${job}?`,
       ],
     },
     {
       label: 'Compare options', category: 'comparison', paraphrases: rival ? [
-        `How does ${rival} compare with other ${category} for ${audience}?`,
-        `What are the main alternatives to ${rival} for ${job}?`,
+        `How does ${rival} compare with other ${optionGroup} for ${audience}?`,
+        `What are the main alternatives to ${rival} for this goal: ${job}?`,
         `When should ${audience} choose ${rival} over another option?`,
       ] : [
-        `How should ${audience} compare ${category}?`,
-        `What tradeoffs should ${audience} consider among ${category}?`,
-        `Which differences matter most when choosing ${category} for ${job}?`,
+        `How should ${audience} compare ${optionGroup}?`,
+        `What tradeoffs should ${audience} consider among ${optionGroup}?`,
+        `Which differences matter most when choosing ${optionGroup} for this goal: ${job}?`,
       ],
     },
     {
       label: 'Understand cost', category: 'pricing', paraphrases: [
-        `How much should ${audience} budget for ${category}?`,
-        `What does it usually cost to get help with ${job}?`,
-        `How can ${audience} compare the price of ${category}?`,
+        `How much should ${audience} budget for ${optionGroup}?`,
+        `What does it usually cost to get help with this goal: ${job}?`,
+        `How can ${audience} compare the price of ${optionGroup}?`,
       ],
     },
     {
       label: brandName ? `Consider ${brandName}` : 'Consider a provider',
       category: brandName ? 'branded' : 'general', paraphrases: [
         `Is ${brandSubject} a good fit for ${audience}?`,
-        `How does ${brandSubject} help with ${job}?`,
+        `How does ${brandSubject} help with this goal: ${job}?`,
         `What should ${audience} know before choosing ${brandSubject}?`,
       ],
     },

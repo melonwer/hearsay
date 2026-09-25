@@ -1,4 +1,4 @@
-import { containsAlias } from './analyze.js';
+import { containsAlias, MIN_ALIAS_LENGTH } from './analyze.js';
 import { all, get, isoNow, run, transaction } from './db.js';
 import { benchmarkRevision, stableIdentity } from './measurement-contract.js';
 import { PROMPT_CATEGORIES } from './suggest.js';
@@ -85,7 +85,10 @@ function normalizePayload(value) {
       contextNotes: boundedString(context.contextNotes, 'context.contextNotes', 2000),
     },
     brand: entityInput(input.brand, 'brand'),
-    competitors: competitors.map((item, index) => entityInput(item, `competitors[${index}]`)),
+    competitors: competitors.map((item, index) => {
+      if (!item) throw new BenchmarkDraftError('invalid_draft', `competitors[${index}] must be an entity`);
+      return entityInput(item, `competitors[${index}]`);
+    }),
     intents: intents.map((item, index) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) {
         throw new BenchmarkDraftError('invalid_draft', `intents[${index}] must be a group`);
@@ -103,6 +106,9 @@ function normalizePayload(value) {
             throw new BenchmarkDraftError('invalid_draft', `intents[${index}].paraphrases[${entryIndex}] must be a question`);
           }
           const row = /** @type {Record<string, unknown>} */ (phrase);
+          if (row.selected !== undefined && typeof row.selected !== 'boolean') {
+            throw new BenchmarkDraftError('invalid_draft', `intents[${index}].paraphrases[${entryIndex}].selected must be true or false`);
+          }
           return {
             text: boundedString(row.text, `intents[${index}].paraphrases[${entryIndex}].text`, 1000),
             sourceNote: boundedString(row.sourceNote, `intents[${index}].paraphrases[${entryIndex}].sourceNote`, MAX_SOURCE_NOTE),
@@ -138,6 +144,15 @@ function entitySnapshot(db) {
       aliases: /** @type {string[]} */ (JSON.parse(String(row.aliases))),
       domains: /** @type {string[]} */ (JSON.parse(String(row.domains))),
     }));
+}
+
+/** @param {string} value @returns {string} */
+function normalizedDomain(value) {
+  const domain = value.trim().toLowerCase().replace(/\.$/u, '');
+  if (!/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/u.test(domain)) {
+    throw new BenchmarkDraftError('invalid_draft', `Invalid domain: ${value}`);
+  }
+  return domain;
 }
 
 /** @param {Db} db @param {number} id */
@@ -195,19 +210,46 @@ function reviewPayload(payload, current) {
   /** @type {{path:string,message:string}[]} */
   const validationErrors = [];
   const context = /** @type {Record<string, string>} */ (payload.context);
-  for (const field of ['audience', 'productJob', 'desiredConversion', 'languagePreference', 'marketContext']) {
+  for (const field of ['audience', 'productJob', 'desiredConversion']) {
     if (!context[field]) validationErrors.push({ path: `context.${field}`, message: `${field} is required` });
   }
   const brand = /** @type {{name:string,aliases?:string[],domains?:string[]}|null} */ (payload.brand);
   const existingBrand = current.find((entity) => entity.role === 'brand');
   if (!brand?.name && !existingBrand) validationErrors.push({ path: 'brand.name', message: 'Brand is required' });
   const names = new Set();
+  const domains = new Map();
+  for (const entity of current) for (const domain of entity.domains) {
+    domains.set(normalizedDomain(domain), duplicateKey(entity.name));
+  }
   for (const [index, entity] of [brand, .../** @type {Array<{name:string,aliases?:string[],domains?:string[]}>} */ (payload.competitors)].entries()) {
     if (!entity) continue;
     if (!entity.name) validationErrors.push({ path: index === 0 ? 'brand.name' : `competitors[${index - 1}].name`, message: 'Name is required' });
     const key = duplicateKey(entity.name);
     if (key && names.has(key)) validationErrors.push({ path: 'competitors', message: `Duplicate entity: ${entity.name}` });
     names.add(key);
+    for (const alias of entity.aliases ?? []) {
+      if (alias.length < MIN_ALIAS_LENGTH) {
+        validationErrors.push({ path: index === 0 ? 'brand.aliases' : `competitors[${index - 1}].aliases`,
+          message: `Aliases must be at least ${MIN_ALIAS_LENGTH} characters` });
+      }
+    }
+    for (const rawDomain of entity.domains ?? []) {
+      try {
+        const domain = normalizedDomain(rawDomain);
+        const owner = domains.get(domain);
+        if (owner && owner !== key) {
+          validationErrors.push({ path: index === 0 ? 'brand.domains' : `competitors[${index - 1}].domains`,
+            message: `Domain ${domain} belongs to another entity` });
+        }
+        domains.set(domain, key);
+      } catch (error) {
+        validationErrors.push({ path: index === 0 ? 'brand.domains' : `competitors[${index - 1}].domains`,
+          message: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  }
+  if (brand?.name && existingBrand && duplicateKey(brand.name) !== duplicateKey(existingBrand.name)) {
+    validationErrors.push({ path: 'brand.name', message: 'A different brand is already configured' });
   }
   const brandAliases = [brand?.name ?? existingBrand?.name ?? '', ...(brand?.aliases ?? existingBrand?.aliases ?? [])].filter(Boolean);
   /** @type {{label:string,category:string,paraphrases:{text:string,sourceNote:string,category:string}[]}[]} */
@@ -256,6 +298,21 @@ function reviewPayload(payload, current) {
   return { selectedIntents, selectedQuestionCount, byCategory, retaggedBranded, validationErrors };
 }
 
+/** @param {Db} db @param {ReturnType<typeof reviewPayload>} summary */
+function projectedPanel(db, summary) {
+  const rows = all(db, 'SELECT text, tracking_state, active FROM prompts');
+  const active = new Set(rows.filter((row) => row.tracking_state === 'tracking' && Number(row.active) === 1)
+    .map((row) => duplicateKey(String(row.text))));
+  for (const intent of summary.selectedIntents) for (const phrase of intent.paraphrases) {
+    const key = duplicateKey(phrase.text);
+    if (rows.some((row) => duplicateKey(String(row.text)) === key && row.tracking_state === 'exploration')) {
+      summary.validationErrors.push({ path: 'intents', message: `Question already exists in exploration: ${phrase.text}` });
+    }
+    active.add(key);
+  }
+  return active.size;
+}
+
 /** @param {Db} db @param {number} id */
 export function reviewDraft(db, id) {
   const draft = getDraft(db, id);
@@ -266,6 +323,7 @@ export function reviewDraft(db, id) {
     draftId: id,
     revision: draft.revision,
     reviewHash: stableIdentity({ id, revision: draft.revision, payload: draft.payload, entities: current }),
+    projectedActiveQuestionCount: projectedPanel(db, summary),
     ...summary,
   };
 }
@@ -283,14 +341,15 @@ function upsertEntity(db, entity, isSelf) {
     }
     run(db, `UPDATE entities SET aliases = ?, domains = ?, archived_at = NULL WHERE id = ?`,
       [JSON.stringify(entity.aliases ?? JSON.parse(String(existing.aliases))),
-        JSON.stringify(entity.domains ?? JSON.parse(String(existing.domains))), Number(existing.id)]);
+        JSON.stringify(entity.domains?.map(normalizedDomain) ?? JSON.parse(String(existing.domains))), Number(existing.id)]);
     return false;
   }
   if (isSelf && get(db, 'SELECT id FROM entities WHERE is_self = 1 AND archived_at IS NULL')) {
     throw new BenchmarkDraftError('entity_conflict', 'A different brand is already configured', 409);
   }
   run(db, `INSERT INTO entities(name, aliases, domains, is_self, created_at)
-    VALUES(?, ?, ?, ?, ?)`, [entity.name, JSON.stringify(entity.aliases ?? []), JSON.stringify(entity.domains ?? []), isSelf ? 1 : 0, now]);
+    VALUES(?, ?, ?, ?, ?)`, [entity.name, JSON.stringify(entity.aliases ?? []),
+      JSON.stringify(entity.domains?.map(normalizedDomain) ?? []), isSelf ? 1 : 0, now]);
   return true;
 }
 
@@ -340,6 +399,18 @@ export function assertReviewedSelection(db, promptIds) {
       throw new BenchmarkDraftError('review_required', 'Tracking questions or entities changed; review the panel before running', 409);
     }
   }
+}
+
+/** @param {Db} db @returns {string|null} */
+export function recordCurrentBenchmarkRevision(db) {
+  const questions = all(db, `SELECT id, intent_id, category, text FROM prompts
+    WHERE tracking_state = 'tracking' AND active = 1 ORDER BY id`)
+    .map((row) => ({ id: Number(row.id), intentId: Number(row.intent_id), category: String(row.category), text: String(row.text) }));
+  if (!questions.length) return null;
+  const benchmark = benchmarkRevision({ questions, entities: entitySnapshot(db), weighting: 'equal', scope: 'tracking' });
+  run(db, 'INSERT OR IGNORE INTO benchmark_revisions(id, snapshot_json, created_at) VALUES(?, ?, ?)',
+    [benchmark.id, JSON.stringify(benchmark.snapshot), isoNow()]);
+  return benchmark.id;
 }
 
 /** @param {Db} db @param {number} id @param {number} expectedRevision @param {string} reviewHash
@@ -396,26 +467,24 @@ export function approveDraft(db, id, expectedRevision, reviewHash) {
       }
     }
     for (const promptId of reviewedPromptIds) reviewTrackingPrompt(db, promptId);
-    const questions = all(db, `SELECT p.*, i.label AS intent_label FROM prompts p
+    const reviewedQuestions = all(db, `SELECT p.*, i.label AS intent_label FROM prompts p
       JOIN intents i ON i.id = p.intent_id
       WHERE p.tracking_state = 'tracking' AND p.active = 1 AND p.approval_fingerprint IS NOT NULL ORDER BY p.id`)
       .filter((row) => row.approval_fingerprint === promptFingerprint(db, row))
       .map((row) => ({ id: Number(row.id), intentId: Number(row.intent_id), category: String(row.category), text: String(row.text) }));
-    const benchmark = benchmarkRevision({ questions, entities: entitySnapshot(db), weighting: 'equal', scope: 'tracking' });
+    const benchmarkId = recordCurrentBenchmarkRevision(db);
     const now = isoNow();
-    run(db, 'INSERT OR IGNORE INTO benchmark_revisions(id, snapshot_json, created_at) VALUES(?, ?, ?)',
-      [benchmark.id, JSON.stringify(benchmark.snapshot), now]);
     const receipt = {
       draftId: id,
       created,
       skipped,
       retaggedBranded: review.retaggedBranded,
-      benchmarkRevisionId: benchmark.id,
-      activeQuestionCount: questions.length,
+      benchmarkRevisionId: /** @type {string} */ (benchmarkId),
+      activeQuestionCount: reviewedQuestions.length,
     };
     run(db, `UPDATE benchmark_drafts SET status = 'approved', review_hash = ?,
       approved_benchmark_id = ?, approval_receipt_json = ?, approved_at = ?, updated_at = ? WHERE id = ?`,
-      [reviewHash, benchmark.id, JSON.stringify(receipt), now, now, id]);
+      [reviewHash, benchmarkId, JSON.stringify(receipt), now, now, id]);
     return receipt;
   });
 }

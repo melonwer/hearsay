@@ -7,6 +7,7 @@ import {
   assertReviewedSelection,
   createDraft,
   getDraft,
+  recordCurrentBenchmarkRevision,
   reviewDraft,
   reviewTrackingPrompt,
   updateDraft,
@@ -116,12 +117,17 @@ test('question and entity edits invalidate exact review fingerprints while old s
     const receipt = approveDraft(db, draft.id, 1, review.reviewHash);
     const ids = selectedIds(db);
     const snapshotBefore = String(get(db, 'SELECT snapshot_json FROM benchmark_revisions WHERE id = ?', [receipt.benchmarkRevisionId])?.snapshot_json);
+    run(db, 'UPDATE prompts SET source_note = ? WHERE id = ?', ['Updated private note', ids[0]]);
+    assert.equal(recordCurrentBenchmarkRevision(db), receipt.benchmarkRevisionId);
     run(db, 'UPDATE prompts SET text = ? WHERE id = ?', ['Which meeting notes app is best for operations teams?', ids[0]]);
     assert.throws(() => assertReviewedSelection(db, ids), /review the panel/);
+    const editedQuestionRevision = recordCurrentBenchmarkRevision(db);
+    assert.notEqual(editedQuestionRevision, receipt.benchmarkRevisionId);
     reviewTrackingPrompt(db, ids[0]);
     assertReviewedSelection(db, ids);
     run(db, 'UPDATE entities SET aliases = ? WHERE is_self = 1', [JSON.stringify(['Notewell AI', 'NW'])]);
     assert.throws(() => assertReviewedSelection(db, ids), /review the panel/);
+    assert.notEqual(recordCurrentBenchmarkRevision(db), editedQuestionRevision);
     assert.equal(String(get(db, 'SELECT snapshot_json FROM benchmark_revisions WHERE id = ?', [receipt.benchmarkRevisionId])?.snapshot_json), snapshotBefore);
   } finally { db.close(); }
 });
@@ -142,6 +148,49 @@ test('name-only entity drafts preserve existing aliases and domains', () => {
     const brand = get(db, 'SELECT aliases, domains FROM entities WHERE is_self = 1');
     assert.deepEqual(JSON.parse(String(brand?.aliases)), ['Notewell AI']);
     assert.deepEqual(JSON.parse(String(brand?.domains)), ['notewell.io']);
+  } finally { db.close(); }
+});
+
+test('language and market are optional planning context at approval', () => {
+  const db = openDb(':memory:');
+  try {
+    const draft = createDraft(db, {
+      ...payload,
+      context: { audience: 'Operations teams', productJob: 'summarize meetings', desiredConversion: 'start a trial' },
+    });
+    const review = reviewDraft(db, draft.id);
+    assert.deepEqual(review.validationErrors, []);
+    const receipt = approveDraft(db, draft.id, 1, review.reviewHash);
+    assert.equal(receipt.activeQuestionCount, 2);
+  } finally { db.close(); }
+});
+
+test('conflicting domains and short aliases reject approval with no partial writes', () => {
+  const db = openDb(':memory:');
+  try {
+    const bad = structuredClone(payload);
+    bad.brand.aliases = ['NW'];
+    bad.competitors = [{ name: 'Jotta', domains: ['notewell.io'] }];
+    const draft = createDraft(db, bad);
+    const review = reviewDraft(db, draft.id);
+    assert.ok(review.validationErrors.some((item) => /Aliases must be at least/.test(item.message)));
+    assert.ok(review.validationErrors.some((item) => /belongs to another entity/.test(item.message)));
+    assert.throws(() => approveDraft(db, draft.id, 1, review.reviewHash), /Aliases must be at least/);
+    assert.equal(get(db, 'SELECT COUNT(*) AS n FROM entities')?.n, 0);
+    assert.equal(get(db, 'SELECT COUNT(*) AS n FROM prompts')?.n, 0);
+  } finally { db.close(); }
+});
+
+test('review previews the full active panel after appending questions', () => {
+  const db = openDb(':memory:');
+  try {
+    run(db, 'INSERT INTO intents(label, created_at) VALUES(?, ?)', ['Earlier intent', '2026-01-01T00:00:00Z']);
+    run(db, `INSERT INTO prompts(intent_id, text, category, active, created_at, tracking_state)
+      VALUES(1, ?, 'general', 1, ?, 'tracking')`, ['What is a good meeting app?', '2026-01-01T00:00:00Z']);
+    const draft = createDraft(db, payload);
+    const review = reviewDraft(db, draft.id);
+    assert.equal(review.selectedQuestionCount, 2);
+    assert.equal(review.projectedActiveQuestionCount, 3);
   } finally { db.close(); }
 });
 
