@@ -585,6 +585,28 @@ export const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'follow-up snapshots are immutable'); END;
     `,
   },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE intervention_reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        plan_id INTEGER NOT NULL REFERENCES follow_up_plans(id),
+        snapshot_id INTEGER NOT NULL REFERENCES follow_up_review_snapshots(id),
+        selection_mode TEXT NOT NULL CHECK (selection_mode IN ('full_benchmark','common_subset')),
+        report_json TEXT NOT NULL,
+        judgment TEXT NOT NULL CHECK (judgment IN ('promising','not_useful','inconclusive')),
+        rationale TEXT NOT NULL,
+        author TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_intervention_reviews_opportunity ON intervention_reviews(opportunity_id, id);
+      CREATE TRIGGER intervention_reviews_no_update BEFORE UPDATE ON intervention_reviews
+        BEGIN SELECT RAISE(ABORT, 'intervention reviews are immutable'); END;
+      CREATE TRIGGER intervention_reviews_no_delete BEFORE DELETE ON intervention_reviews
+        BEGIN SELECT RAISE(ABORT, 'intervention reviews are immutable'); END;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

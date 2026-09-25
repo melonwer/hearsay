@@ -140,6 +140,16 @@ const TOOLS = [
     call: (a) => ({ method: 'GET', path: `/api/opportunities/${a.id}` }),
   },
   {
+    name: 'hearsay_intervention_comparison',
+    readOnly: true,
+    description: 'Read a descriptive comparison of one saved baseline and review snapshot. Full benchmark is the default; common subset explicitly drops missing prompt cells. Returns counts, coverage, uncertainty intervals, query/source/citation changes, and comparability reasons. It cannot review an action or start a run.',
+    inputSchema: obj({ opportunity_id: { type: 'integer', minimum: 1 },
+      plan_id: { type: 'integer', minimum: 1 }, snapshot_id: { type: 'integer', minimum: 1 },
+      mode: { type: 'string', enum: ['full_benchmark', 'common_subset'] } },
+    ['opportunity_id', 'plan_id', 'snapshot_id']),
+    call: (a) => ({ method: 'GET', path: `/api/opportunities/${a.opportunity_id}/follow-up/${a.plan_id}/reviews/${a.snapshot_id}/comparison${query(a, ['mode'])}` }),
+  },
+  {
     name: 'hearsay_opportunity_propose',
     description: 'Save an assistant-authored opportunity proposal from exact scoped answer, query, source, or citation IDs. The server validates every ID and derives observed facts; your hypothesis stays labeled and a human must accept it before it enters the action queue. This never publishes or starts a measurement run.',
     inputSchema: obj({

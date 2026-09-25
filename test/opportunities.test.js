@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { get, openDb, run } from '../core/db.js';
 import { createQueryTheme, setQueryThemeAssignment } from '../core/evidence-report.js';
 import { captureFollowUpReview, saveFollowUpPlan } from '../core/follow-up.js';
+import { compareIntervention, saveInterventionReview } from '../core/intervention-comparison.js';
 import { appendCorrection } from '../core/interpretations.js';
 import { listMeasurementSeries } from '../core/metrics.js';
 import { attachOpportunityPageEvidence, combineOpportunities, createOpportunity,
@@ -316,4 +317,221 @@ test('historical shipment flags a late baseline and preserves each date edit', (
   const last = changed.events.at(-1);
   assert.equal(last?.details.previous.shippedAt, '2026-09-09T00:00:00Z');
   assert.equal(last?.details.shippedAt, '2026-09-08T00:00:00Z');
+});
+
+test('saved comparison gives each benchmark prompt equal weight despite unequal repeats', (t) => {
+  const { db, series, answer } = fixture(t);
+  run(db, "INSERT INTO prompts(id,intent_id,text,category,active,created_at) VALUES(3,1,'How private is the tool?','general',1,?)", [START]);
+  run(db, 'UPDATE benchmark_revisions SET snapshot_json = ? WHERE id = ?', [
+    JSON.stringify({ questions: [
+      { id: 1, intentId: 1, text: 'Which tool works?', category: 'general' },
+      { id: 2, intentId: 2, text: 'Which other tool?', category: 'general' },
+      { id: 3, intentId: 1, text: 'How private is the tool?', category: 'general' },
+    ], entities: [{ id: 1, role: 'brand', name: 'Acme' }], weighting: 'equal' }), 'benchmark-a',
+  ]);
+  answer(10, 3, 3, '2026-09-04T10:00:00Z');
+  for (const responseId of [1, 10]) {
+    const mentionId = run(db, `INSERT INTO mentions(response_id,entity_id,
+      first_index,occurrences,rank,recommended,snippet) VALUES(?,1,0,1,1,0,'Acme')`, [responseId]).lastInsertRowid;
+    run(db, `INSERT INTO mention_interpretations(mention_id,analysis_revision,method,stance,
+      rule_id,evidence_start,evidence_end,created_at)
+      VALUES(?,'stance-en-v1','positive_stance','neutral','fixture',0,1,?)`, [mentionId, START]);
+  }
+  run(db, `INSERT INTO answer_citations(response_id,url,provenance,ordinal)
+    VALUES(1,'https://acme.example/guide','text_link',1)`);
+  const item = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [1], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-05T00:00:00Z' });
+  const planned = review(db, { id: item.id, status: 'planned', owner: 'Product team',
+    reviewDate: '2026-09-22', author: 'user', now: '2026-09-06T00:00:00Z' });
+  const plan = saveFollowUpPlan(db, { id: item.id, expectedVersion: planned.recordVersion,
+    baselineStart: START, baselineEnd: END, intentIds: [1], comparisonIntentIds: [],
+    primaryMetric: 'brand_mention_rate', expectedDirection: 'increase',
+    reviewStart: '2026-09-11T00:00:00Z', reviewEnd: '2026-09-20T00:00:00Z',
+    observationDelayDays: 0, author: 'user', now: '2026-09-07T00:00:00Z' });
+  const shipped = review(db, { id: item.id, status: 'shipped',
+    changeDescription: 'Published a product comparison', shippedAt: '2026-09-10T00:00:00Z',
+    author: 'user', now: '2026-09-10T01:00:00Z' });
+  answer(11, 3, 1, '2026-09-12T10:00:00Z');
+  for (const id of [12, 13, 14]) answer(id, 3, 3, `2026-09-${id + 1}T10:00:00Z`);
+  const reviewMentionId = run(db, `INSERT INTO mentions(response_id,entity_id,first_index,occurrences,rank,
+    recommended,snippet) VALUES(11,1,0,1,1,0,'Acme')`).lastInsertRowid;
+  run(db, `INSERT INTO mention_interpretations(mention_id,analysis_revision,method,stance,
+    rule_id,evidence_start,evidence_end,created_at)
+    VALUES(?,'stance-en-v1','positive_stance','neutral','fixture',0,1,?)`, [reviewMentionId, START]);
+  const capture = captureFollowUpReview(db, { id: item.id, planId: plan.id,
+    expectedVersion: shipped.recordVersion, author: 'user', now: '2026-09-21T00:00:00Z' });
+  const full = compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: capture.id });
+  assert.equal(full.status, 'observed_decrease');
+  assert.deepEqual(full.scope.expectedPromptIds, [1, 3]);
+  assert.deepEqual([full.metric.before.n, full.metric.before.hits, full.metric.before.rate], [4, 2, 2 / 3]);
+  assert.deepEqual([full.metric.after.n, full.metric.after.hits, full.metric.after.rate], [4, 1, 1 / 2]);
+  assert.equal(Math.round(full.metric.deltaPercentagePoints * 100) / 100, -16.67);
+  assert.equal(full.metric.before.perPrompt[0].interval.n, 3);
+  assert.equal(full.scope.baseline.dataCutoff, '2026-09-07T00:00:00Z');
+  assert.equal(full.scope.review.dataCutoff, '2026-09-21T00:00:00Z');
+  assert.equal(full.coverage.before.comparableAnswers, 4);
+  assert.equal(full.coverage.after.comparableAnswers, 4);
+  assert.equal(full.coverage.before.answersWithSourceObservations, 3);
+  assert.equal(full.coverage.after.answersWithSourceObservations, 0);
+  assert.equal(full.warnings.some((warning) => warning.includes('metadata coverage changed')), true);
+  assert.deepEqual(full.changes.queries.find((row) => row.key === 'best tool')?.beforeResponseIds
+    .slice().sort((a, b) => a - b), [1, 2, 3]);
+  assert.equal(full.changes.citations[0].beforeResponses, 1);
+  assert.equal(full.changes.citations[0].afterResponses, 0);
+  assert.throws(() => review(db, { id: item.id, status: 'reviewed', author: 'user',
+    now: '2026-09-22T00:00:00Z' }), /saved human judgment/);
+  const userReview = saveInterventionReview(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: capture.id, expectedVersion: getOpportunity(db, item.id).recordVersion,
+    judgment: 'inconclusive', rationale: 'The series is small and other changes may matter.',
+    author: 'user', now: '2026-09-22T00:00:00Z' });
+  assert.equal(userReview.judgment, 'inconclusive');
+  assert.equal(getOpportunity(db, item.id)?.status, 'reviewed');
+  assert.equal(userReview.report.metric.before.rate, 2 / 3);
+  assert.equal(userReview.report.scope.baseline.correctionCutoff, 0);
+  assert.equal(userReview.report.scope.review.correctionCutoff, 0);
+});
+
+test('missing full-benchmark cells require an explicit common subset; zero samples differ from zero mentions', (t) => {
+  const { db, series, answer } = fixture(t);
+  run(db, "INSERT INTO prompts(id,intent_id,text,category,active,created_at) VALUES(3,1,'How private is the tool?','general',1,?)", [START]);
+  run(db, 'UPDATE benchmark_revisions SET snapshot_json = ? WHERE id = ?', [
+    JSON.stringify({ questions: [
+      { id: 1, intentId: 1, text: 'Which tool works?', category: 'general' },
+      { id: 3, intentId: 1, text: 'How private is the tool?', category: 'general' },
+    ], entities: [{ id: 1, role: 'brand', name: 'Acme' }], weighting: 'equal' }), 'benchmark-a',
+  ]);
+  answer(10, 3, 3, '2026-09-04T10:00:00Z');
+  const item = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [1], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-05T00:00:00Z' });
+  const planned = review(db, { id: item.id, status: 'planned', owner: 'Product team',
+    reviewDate: '2026-09-22', author: 'user', now: '2026-09-06T00:00:00Z' });
+  const plan = saveFollowUpPlan(db, { id: item.id, expectedVersion: planned.recordVersion,
+    baselineStart: START, baselineEnd: END, intentIds: [1], comparisonIntentIds: [],
+    primaryMetric: 'brand_mention_rate', expectedDirection: 'increase',
+    reviewStart: '2026-09-11T00:00:00Z', reviewEnd: '2026-09-20T00:00:00Z',
+    observationDelayDays: 0, author: 'user', now: '2026-09-07T00:00:00Z' });
+  const shipped = review(db, { id: item.id, status: 'shipped',
+    changeDescription: 'Published comparison', shippedAt: '2026-09-10T00:00:00Z',
+    author: 'user', now: '2026-09-10T01:00:00Z' });
+  const empty = captureFollowUpReview(db, { id: item.id, planId: plan.id,
+    expectedVersion: shipped.recordVersion, author: 'user', now: '2026-09-21T00:00:00Z' });
+  assert.equal(compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: empty.id }).status, 'insufficient_data');
+  answer(11, 3, 1, '2026-09-11T00:00:00Z');
+  answer(12, 3, 1, '2026-09-20T00:00:00Z');
+  const oneCell = captureFollowUpReview(db, { id: item.id, planId: plan.id,
+    expectedVersion: getOpportunity(db, item.id).recordVersion,
+    author: 'user', now: '2026-09-22T00:00:00Z' });
+  const full = compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: oneCell.id });
+  const common = compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: oneCell.id, mode: 'common_subset' });
+  assert.equal(full.status, 'insufficient_data');
+  assert.equal(full.metric.after.rate, null);
+  assert.equal(common.status, 'observed_no_difference');
+  assert.deepEqual(common.scope.selectedPromptIds, [1]);
+  assert.deepEqual(common.scope.droppedCells, [
+    { promptId: 3, baselineHasAnswer: true, reviewHasAnswer: false },
+  ]);
+  assert.deepEqual([common.metric.before.n, common.metric.before.hits, common.metric.before.rate], [3, 0, 0]);
+  assert.deepEqual([common.metric.after.n, common.metric.after.hits, common.metric.after.rate], [1, 0, 0]);
+  assert.deepEqual(oneCell.answers.map((answer) => answer.responseId), [11]);
+});
+
+test('changed profile metadata and analysis revisions remain incomparable', (t) => {
+  const { db, series, answer } = fixture(t);
+  const item = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [1], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-05T00:00:00Z' });
+  const planned = review(db, { id: item.id, status: 'planned', owner: 'Product team',
+    reviewDate: '2026-09-22', author: 'user', now: '2026-09-06T00:00:00Z' });
+  const plan = saveFollowUpPlan(db, { id: item.id, expectedVersion: planned.recordVersion,
+    baselineStart: START, baselineEnd: END, intentIds: [1], comparisonIntentIds: [],
+    primaryMetric: 'brand_mention_rate', expectedDirection: 'increase',
+    reviewStart: '2026-09-11T00:00:00Z', reviewEnd: '2026-09-20T00:00:00Z',
+    observationDelayDays: 0, author: 'user', now: '2026-09-07T00:00:00Z' });
+  const shipped = review(db, { id: item.id, status: 'shipped',
+    changeDescription: 'Published comparison', shippedAt: '2026-09-10T00:00:00Z',
+    author: 'user', now: '2026-09-10T01:00:00Z' });
+  answer(8, 3, 1, '2026-09-12T10:00:00Z');
+  run(db, `UPDATE execution_profiles SET snapshot_json='{"model":"alias-v2"}' WHERE id='profile-a'`);
+  const capture = captureFollowUpReview(db, { id: item.id, planId: plan.id,
+    expectedVersion: shipped.recordVersion, author: 'user', now: '2026-09-21T00:00:00Z' });
+  const drift = compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: capture.id });
+  assert.equal(drift.status, 'incomparable');
+  assert.equal(drift.reasons.some((reason) => reason.includes('profile metadata changed')), true);
+  const changedPanel = { ...structuredClone(capture), id: undefined };
+  changedPanel.promptPanel.questions[0].text = 'A revised buyer question';
+  const panelSnapshotId = run(db, `INSERT INTO follow_up_review_snapshots(plan_id,snapshot_json,author,captured_at)
+    VALUES(?,?,?,?)`, [plan.id, JSON.stringify(changedPanel), 'fixture', '2026-09-21T00:30:00Z']).lastInsertRowid;
+  const panelReport = compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: panelSnapshotId });
+  assert.equal(panelReport.reasons.some((reason) => reason.includes('prompt panel changed')), true);
+  const changedRevision = { ...structuredClone(capture), id: undefined };
+  changedRevision.series.analysisRevision = 'stance-en-v2';
+  const revisionSnapshotId = run(db, `INSERT INTO follow_up_review_snapshots(plan_id,snapshot_json,author,captured_at)
+    VALUES(?,?,?,?)`, [plan.id, JSON.stringify(changedRevision), 'fixture', '2026-09-21T01:00:00Z']).lastInsertRowid;
+  const revisionReport = compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: revisionSnapshotId });
+  assert.equal(revisionReport.status, 'incomparable');
+  assert.equal(revisionReport.reasons.some((reason) => reason.includes('analysis revision')), true);
+});
+
+test('saved human review pins corrected stance and flags another shipped action on the intent', (t) => {
+  const { db, series, answer } = fixture(t);
+  run(db, "UPDATE responses SET text='Acme is a useful comparison' WHERE id=1");
+  const baselineMentionId = run(db, `INSERT INTO mentions(response_id,entity_id,first_index,
+    occurrences,rank,recommended,snippet) VALUES(1,1,0,1,1,1,'Acme')`).lastInsertRowid;
+  run(db, `INSERT INTO mention_interpretations(mention_id,analysis_revision,method,stance,
+    rule_id,evidence_start,evidence_end,created_at)
+    VALUES(?,'stance-en-v1','positive_stance','positive','fixture',0,4,?)`, [baselineMentionId, START]);
+  const item = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [1], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-05T00:00:00Z' });
+  const other = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [3], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-05T00:00:00Z' });
+  const planned = review(db, { id: item.id, status: 'planned', owner: 'Product team',
+    reviewDate: '2026-09-22', author: 'user', now: '2026-09-06T00:00:00Z' });
+  const plan = saveFollowUpPlan(db, { id: item.id, expectedVersion: planned.recordVersion,
+    baselineStart: START, baselineEnd: END, intentIds: [1], comparisonIntentIds: [],
+    primaryMetric: 'positive_stance_rate', expectedDirection: 'increase',
+    reviewStart: '2026-09-11T00:00:00Z', reviewEnd: '2026-09-20T00:00:00Z',
+    observationDelayDays: 0, author: 'user', now: '2026-09-07T00:00:00Z' });
+  const shipped = review(db, { id: item.id, status: 'shipped',
+    changeDescription: 'Published comparison', shippedAt: '2026-09-10T00:00:00Z',
+    author: 'user', now: '2026-09-10T01:00:00Z' });
+  review(db, { id: other.id, status: 'planned', owner: 'Product team', reviewDate: '2026-09-22',
+    author: 'user', now: '2026-09-11T00:00:00Z' });
+  review(db, { id: other.id, status: 'shipped', changeDescription: 'Changed the same buyer page',
+    shippedAt: '2026-09-12T00:00:00Z', author: 'user', now: '2026-09-12T01:00:00Z' });
+  answer(8, 3, 1, '2026-09-13T10:00:00Z');
+  run(db, "UPDATE responses SET text='Acme is unsuitable here' WHERE id=8");
+  const reviewMentionId = run(db, `INSERT INTO mentions(response_id,entity_id,first_index,
+    occurrences,rank,recommended,snippet) VALUES(8,1,0,1,1,0,'Acme')`).lastInsertRowid;
+  const interpretationId = run(db, `INSERT INTO mention_interpretations(mention_id,analysis_revision,
+    method,stance,rule_id,evidence_start,evidence_end,created_at)
+    VALUES(?,'stance-en-v1','positive_stance','negative','fixture',0,4,?)`, [reviewMentionId, START]).lastInsertRowid;
+  const capture = captureFollowUpReview(db, { id: item.id, planId: plan.id,
+    expectedVersion: shipped.recordVersion, author: 'user', now: '2026-09-21T00:00:00Z' });
+  const report = compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: capture.id });
+  assert.equal(report.status, 'observed_decrease');
+  assert.deepEqual([report.metric.before.rate, report.metric.after.rate], [1 / 3, 0]);
+  assert.deepEqual(report.confounders.map((action) => action.opportunityId), [other.id]);
+  const saved = saveInterventionReview(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: capture.id, expectedVersion: getOpportunity(db, item.id).recordVersion,
+    judgment: 'inconclusive', rationale: 'A second page changed during the review window.',
+    author: 'user', now: '2026-09-22T00:00:00Z' });
+  appendCorrection(db, { responseId: 8, interpretationId, previousCorrectionId: null,
+    replacement: 'positive', reason: 'Reviewed the saved answer',
+    requestId: 'c14-later-correction', at: '2026-09-23T00:00:00Z' });
+  assert.equal(compareIntervention(db, { opportunityId: item.id, planId: plan.id,
+    snapshotId: capture.id }).metric.after.rate, 0);
+  assert.equal(getOpportunity(db, item.id)?.interventionReviews[0].report.metric.after.rate, 0);
+  assert.equal(saved.report.scope.review.correctionCutoff, 0);
 });

@@ -128,26 +128,33 @@ try {
     .map((/** @type {{responseId:number}} */ answer) => answer.responseId), [3]);
   await page.locator('.opportunity-card').first().getByText('Follow-up plans (1)').click();
   await page.locator('.opportunity-card').first().getByText('Saved review snapshots (1)').waitFor();
-  await page.locator('.opportunity-card').first().getByText('Review and prioritize').click();
-  await page.locator('.opportunity-card').first().locator('[name="status"]').selectOption('reviewed');
-  const completed = page.waitForResponse((response) => response.url().includes('/api/opportunities/')
-    && response.request().method() === 'PATCH');
-  await page.locator('.opportunity-card').first().getByRole('button', { name: 'Save review' }).click();
-  assert.equal((await completed).status(), 200);
-  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM runs').get()?.n, 3);
-  await page.locator('.opportunity-card').first().getByText('Follow-up plans (1)').click();
   await page.locator('.opportunity-card').first().getByText('Saved review snapshots (1)').click();
+  await page.locator('.opportunity-comparison-report').first().waitFor();
+  await page.getByRole('link', { name: 'Common prompt subset' }).first().click();
+  await page.getByText('explicit common subset').first().waitFor();
+  await page.getByRole('link', { name: 'Full saved benchmark' }).first().click();
+  await page.getByText('full saved benchmark').first().waitFor();
+  const reviewForm = page.locator('.opportunity-snapshot').first().locator('form');
+  await reviewForm.locator('[name="judgment"]').selectOption('inconclusive');
+  await reviewForm.locator('[name="rationale"]').fill('The saved review has one answer; the panel needs more observations.');
+  const completed = page.waitForResponse((response) => response.url().includes('/reviews/')
+    && response.request().method() === 'POST');
+  await reviewForm.getByRole('button', { name: 'Save human review' }).click();
+  assert.equal((await completed).status(), 201);
+  const reviewedRecord = await page.request.get(`${base}/api/opportunities/1`);
+  assert.equal((await reviewedRecord.json()).status, 'reviewed');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM runs').get()?.n, 3);
+  await page.locator('.opportunity-comparison-report').first().waitFor();
   if (process.env.HEARSAY_CAPTURE_OPPORTUNITIES === '1') {
-    await page.screenshot({ path: '/tmp/hearsay-c13-light.png', fullPage: true });
+    await page.screenshot({ path: '/tmp/hearsay-c14-light.png', fullPage: true });
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
-    await page.screenshot({ path: '/tmp/hearsay-c13-dark.png', fullPage: true });
+    await page.screenshot({ path: '/tmp/hearsay-c14-dark.png', fullPage: true });
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
-  await page.locator('.opportunity-card').first().getByText('Follow-up plans (1)').click();
-  await page.locator('.opportunity-card').first().getByText('Saved review snapshots (1)').click();
+  await page.locator('.opportunity-comparison-report').first().waitFor();
   if (process.env.HEARSAY_CAPTURE_OPPORTUNITIES === '1') {
-    await page.screenshot({ path: '/tmp/hearsay-c13-narrow.png', fullPage: true });
+    await page.screenshot({ path: '/tmp/hearsay-c14-narrow.png', fullPage: true });
   }
   const overflow = await page.evaluate(() => ({
     width: document.documentElement.scrollWidth,
@@ -157,7 +164,7 @@ try {
       .slice(0, 8).map((element) => `${element.tagName}.${element.className}`),
   }));
   assert.equal(overflow.width > overflow.viewport, false, JSON.stringify(overflow));
-  process.stdout.write('Evidence link, review gate, follow-up plan, shipped action, saved snapshot, reviewed state, and narrow layout passed.\n');
+  process.stdout.write('Evidence link, review gate, follow-up plan, shipped action, descriptive report, human review, and narrow layout passed.\n');
 } finally {
   await browser.close();
   await app.close();

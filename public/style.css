@@ -512,8 +512,8 @@ p {
 .opportunity-support summary,
 .opportunity-review-grid summary { cursor: pointer; }
 .opportunity-support ul { margin: 8px 0; }
-.opportunity-review-grid { display: grid; gap: 10px; margin-top: 12px; }
-.opportunity-review-grid > details { border-top: 1px solid var(--border); padding-top: 10px; }
+.opportunity-review-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 12px; }
+.opportunity-review-grid > details { min-width: 0; border-top: 1px solid var(--border); padding-top: 10px; }
 .opportunity-form { display: grid; gap: 10px; margin-top: 10px; }
 .opportunity-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .opportunity-form label { display: grid; gap: 4px; min-width: 0; }
@@ -536,6 +536,22 @@ p {
 .opportunity-follow-up h4 { margin: 4px 0; overflow-wrap: anywhere; }
 .opportunity-follow-up li { overflow-wrap: anywhere; }
 .opportunity-warning { color: var(--ink); font-weight: 600; }
+.opportunity-snapshot { border-top: 1px solid var(--border); padding: 12px 0; min-width: 0; }
+.opportunity-snapshot h5 { font-size: 14px; margin: 0 0 6px; }
+.opportunity-snapshot blockquote { margin: 6px 0 12px; overflow-wrap: anywhere; }
+.opportunity-comparison-modes { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0; }
+.opportunity-comparison-modes a[aria-current='page'] { color: var(--ink); font-weight: 700; text-decoration: underline; }
+.opportunity-comparison-report { border: 1px solid var(--border); border-radius: 8px; padding: 12px; min-width: 0; }
+.opportunity-comparison-report > details { border-top: 1px solid var(--border); padding: 10px 0; }
+.opportunity-comparison-report > details > summary { cursor: pointer; }
+.opportunity-report-notes ul { margin: 6px 0 12px; padding-left: 24px; }
+.opportunity-table-scroll { max-width: 100%; overflow-x: auto; margin: 10px 0; }
+.opportunity-table-scroll table { min-width: 600px; width: 100%; border-collapse: collapse; }
+.opportunity-table-scroll caption { text-align: left; font-weight: 600; padding: 4px 0; }
+.opportunity-table-scroll th,
+.opportunity-table-scroll td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.opportunity-table-scroll th { font-size: 13px; }
+.opportunity-table-scroll td { font-variant-numeric: tabular-nums; }
 .opportunity-combine-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding: 8px 0; }
 .opportunity-combine-form span { min-width: 0; overflow-wrap: anywhere; }
 .opportunity-combine-form .form-error { grid-column: 1 / -1; }

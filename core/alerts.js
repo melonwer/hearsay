@@ -2,13 +2,16 @@
  * Alert rules engine (§9).
  *
  * `evaluate(db, runId)` runs once per finished run and writes at most one row per
- * `(type, entity_id, prompt_id, provider)` per 7 days. Four rules, all comparative:
+ * `(type, entity_id, prompt_id, provider, surface)` per 7 days. Legacy runs retain four
+ * comparative rules:
  *
  *   LOST_RECOMMENDATION    serious  recommended in each of the 2 previous runs, 0 now
  *   GAINED_RECOMMENDATION  good     0 in each of the 2 previous runs, ≥1 now
  *   OVERTAKEN              warning  competitor's 7-day SOV passed the brand's
  *   MENTION_DROP           warning  per-provider mention rate ≤ previous run − 25 pts
  *
+ * New tracking series report collection problems as MEASUREMENT_HEALTH alerts. Their
+ * visibility changes belong in the scoped comparison report, without business severity.
  * Every `detail` carries the numbers behind the claim ("3/9 → 0/9 samples"), because an
  * alert a user cannot check is a scare, not a measurement (§9, §19.6 #4).
  *
@@ -27,7 +30,7 @@ import { eligibilitySql, surfaceLabel } from './subscription-model.js';
  * @typedef {Object} CreatedAlert
  * @property {number} id
  * @property {'good'|'warning'|'serious'} severity
- * @property {'LOST_RECOMMENDATION'|'GAINED_RECOMMENDATION'|'OVERTAKEN'|'MENTION_DROP'} type
+ * @property {'LOST_RECOMMENDATION'|'GAINED_RECOMMENDATION'|'OVERTAKEN'|'MENTION_DROP'|'MEASUREMENT_HEALTH'} type
  * @property {number|null} entityId
  * @property {number|null} promptId
  * @property {string|null} provider
@@ -272,7 +275,7 @@ function alreadyReported(db, key, since) {
  * Candidate alert, before dedup.
  * @typedef {Object} Candidate
  * @property {'good'|'warning'|'serious'} severity
- * @property {'LOST_RECOMMENDATION'|'GAINED_RECOMMENDATION'|'OVERTAKEN'|'MENTION_DROP'} type
+ * @property {'LOST_RECOMMENDATION'|'GAINED_RECOMMENDATION'|'OVERTAKEN'|'MENTION_DROP'|'MEASUREMENT_HEALTH'} type
  * @property {number|null} entityId
  * @property {number|null} promptId
  * @property {string|null} provider
@@ -280,6 +283,92 @@ function alreadyReported(db, key, since) {
  * @property {string} title
  * @property {string} detail
  */
+
+/**
+ * Persist alert candidates after the shared dedup check.
+ * @param {Db} db
+ * @param {number} runId
+ * @param {string} now
+ * @param {string|null} fallbackSurface
+ * @param {Candidate[]} candidates
+ * @returns {CreatedAlert[]}
+ */
+function persistCandidates(db, runId, now, fallbackSurface, candidates) {
+  const since = daysBefore(now, DEDUP_DAYS);
+  /** @type {CreatedAlert[]} */
+  const created = [];
+  for (const candidate of candidates) {
+    const surface = candidate.surface ?? fallbackSurface;
+    const key = {
+      type: candidate.type,
+      entityId: candidate.entityId,
+      promptId: candidate.promptId,
+      provider: candidate.provider,
+      surface,
+    };
+    if (alreadyReported(db, key, since)) continue;
+    const result = exec(
+      db,
+      `INSERT INTO alerts(created_at, run_id, severity, type, entity_id, prompt_id, provider, surface, title, detail, acknowledged)
+       VALUES(?,?,?,?,?,?,?,?,?,?,0)`,
+      [now, runId, candidate.severity, candidate.type, candidate.entityId,
+        candidate.promptId, candidate.provider, surface, candidate.title, candidate.detail],
+    );
+    created.push({ id: result.lastInsertRowid, ...candidate, surface });
+  }
+  return created;
+}
+
+/**
+ * New-series alerts describe collection health only. Failed or unusable targets cannot
+ * establish a visibility change, even when the remaining answer mentions no brand.
+ * @param {Db} db
+ * @param {number} runId
+ * @param {string|null} selectedSurface
+ * @returns {Candidate[]}
+ */
+function measurementHealth(db, runId, selectedSurface) {
+  const rows = all(db, `SELECT surface, target_status, comparability_status, web_status,
+      answer_status, text, error
+    FROM responses WHERE run_id = ? AND lane = 'tracking'
+      AND benchmark_revision_id IS NOT NULL
+      ${selectedSurface === null ? '' : 'AND surface = ?'}
+    ORDER BY surface, id`, selectedSurface === null ? [runId] : [runId, selectedSurface]);
+  /** @type {Map<string, {total:number, comparable:number, failed:number, cancelled:number, incomplete:number, nonComparable:number}>} */
+  const bySurface = new Map();
+  for (const row of rows) {
+    const surface = String(row.surface ?? 'unknown');
+    const counts = bySurface.get(surface) ?? {
+      total: 0, comparable: 0, failed: 0, cancelled: 0, incomplete: 0, nonComparable: 0,
+    };
+    counts.total += 1;
+    const status = String(row.target_status ?? '');
+    if (status === 'failed' || row.error !== null && row.error !== undefined) counts.failed += 1;
+    else if (status === 'cancelled') counts.cancelled += 1;
+    else if (status !== 'completed' || !['complete', ''].includes(String(row.answer_status ?? ''))
+      || typeof row.text !== 'string' || row.text.trim() === '') counts.incomplete += 1;
+    else if (String(row.comparability_status) !== 'comparable' ||
+      AGENT_SURFACES.includes(surface) && String(row.web_status) !== 'verified') counts.nonComparable += 1;
+    else counts.comparable += 1;
+    bySurface.set(surface, counts);
+  }
+  /** @type {Candidate[]} */
+  const candidates = [];
+  for (const [surface, counts] of bySurface) {
+    if (counts.comparable === counts.total) continue;
+    candidates.push({
+      severity: 'warning',
+      type: 'MEASUREMENT_HEALTH',
+      entityId: null,
+      promptId: null,
+      provider: null,
+      surface,
+      title: truncate(`Measurement incomplete on ${surfaceLabel(surface)}`, TITLE_MAX),
+      detail: `${counts.comparable}/${counts.total} tracking targets were comparable on ${surfaceLabel(surface)} in run ${runId}; ${counts.failed} failed, ${counts.cancelled} cancelled, ${counts.incomplete} incomplete, and ${counts.nonComparable} completed without comparable evidence. This is a collection issue, not a measured visibility loss.`,
+    });
+  }
+  return candidates;
+}
 
 /**
  * Evaluate the alert rules for a finished run and persist whatever survives dedup (§9).
@@ -321,6 +410,14 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
   const runRow = get(db, 'SELECT id, trigger FROM runs WHERE id = ?', [Number(runId)]);
   if (!runRow) return [];
   const trigger = String(runRow.trigger);
+
+  const newSeries = Number(get(db, `SELECT COUNT(*) AS n FROM responses
+    WHERE run_id = ? AND lane = 'tracking' AND benchmark_revision_id IS NOT NULL
+      AND (? IS NULL OR surface = ?)`, [Number(runId), surface, surface])?.n ?? 0) > 0;
+  if (newSeries) {
+    return persistCandidates(db, Number(runId), now, surface,
+      measurementHealth(db, Number(runId), surface));
+  }
 
   const brandRow = get(db, 'SELECT id, name FROM entities WHERE is_self = 1 AND archived_at IS NULL ORDER BY id LIMIT 1');
   if (!brandRow) return [];
@@ -439,37 +536,5 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
     }
   }
 
-  // --- persist whatever survives the 7-day dedup ------------------------------------
-  const since = daysBefore(now, DEDUP_DAYS);
-  /** @type {CreatedAlert[]} */
-  const created = [];
-  for (const candidate of candidates) {
-    const key = {
-      type: candidate.type,
-      entityId: candidate.entityId,
-      promptId: candidate.promptId,
-      provider: candidate.provider,
-      surface,
-    };
-    if (alreadyReported(db, key, since)) continue;
-    const result = exec(
-      db,
-      `INSERT INTO alerts(created_at, run_id, severity, type, entity_id, prompt_id, provider, surface, title, detail, acknowledged)
-       VALUES(?,?,?,?,?,?,?,?,?,?,0)`,
-      [
-        now,
-        Number(runId),
-        candidate.severity,
-        candidate.type,
-        candidate.entityId,
-        candidate.promptId,
-        candidate.provider,
-        surface,
-        candidate.title,
-        candidate.detail,
-      ],
-    );
-    created.push({ id: result.lastInsertRowid, ...candidate, surface });
-  }
-  return created;
+  return persistCandidates(db, Number(runId), now, surface, candidates);
 }

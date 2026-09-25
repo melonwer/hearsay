@@ -369,6 +369,7 @@ export function getOpportunity(db, id) {
   const pages = all(db, 'SELECT * FROM opportunity_page_evidence WHERE opportunity_id = ? ORDER BY id', [id]);
   const events = all(db, 'SELECT * FROM opportunity_events WHERE opportunity_id = ? ORDER BY id', [id]);
   const followUpPlans = all(db, 'SELECT * FROM follow_up_plans WHERE opportunity_id = ? ORDER BY version', [id]);
+  const interventionReviews = all(db, 'SELECT * FROM intervention_reviews WHERE opportunity_id = ? ORDER BY id', [id]);
   let staleEvidence = false;
   try {
     validateEvidence(intentEvidenceReport(db, { series: item.series, intentId: item.intentId }), item.evidence);
@@ -376,6 +377,11 @@ export function getOpportunity(db, id) {
   }
   catch { staleEvidence = true; }
   return { ...item, staleEvidence,
+    interventionReviews: interventionReviews.map((review) => ({ id: Number(review.id),
+      planId: Number(review.plan_id), snapshotId: Number(review.snapshot_id),
+      selectionMode: String(review.selection_mode), report: JSON.parse(String(review.report_json)),
+      judgment: String(review.judgment), rationale: String(review.rationale),
+      author: String(review.author), createdAt: String(review.created_at) })),
     followUpPlans: followUpPlans.map((plan) => ({
       id: Number(plan.id), version: Number(plan.version),
       supersedesId: plan.supersedes_id === null ? null : Number(plan.supersedes_id),
@@ -673,8 +679,8 @@ export function reviewOpportunity(db, input) {
     throw new OpportunityError('Shipment details require shipped or reviewed status');
   }
   if (status === 'reviewed' && (current.status !== 'shipped' && current.status !== 'reviewed'
-    || !current.followUpPlans.at(-1)?.reviewSnapshots.length)) {
-    throw new OpportunityError('Review requires a shipped action and a captured follow-up snapshot');
+    || !current.interventionReviews.some((review) => review.planId === current.followUpPlans.at(-1)?.id))) {
+    throw new OpportunityError('Review requires a saved human judgment on the latest follow-up plan');
   }
   transaction(db, () => {
     run(db, `UPDATE opportunities SET status=?,priority=?,effort_band=?,owner=?,review_date=?,

@@ -42,6 +42,80 @@ function brandId(db, revisionId) {
   return row ? Number(row.id) : null;
 }
 
+/** @param {Db} db @param {string|null} revisionId @param {number[]} intentIds */
+function promptPanel(db, revisionId, intentIds) {
+  if (revisionId) {
+    const row = get(db, 'SELECT snapshot_json FROM benchmark_revisions WHERE id = ?', [revisionId]);
+    if (!row) throw new OpportunityError('Saved benchmark revision is unavailable');
+    const snapshot = JSON.parse(String(row.snapshot_json));
+    if (!Array.isArray(snapshot.questions)) throw new OpportunityError('Saved benchmark has no question panel');
+    return { source: 'benchmark_revision', weighting: snapshot.weighting ?? 'equal',
+      questions: snapshot.questions.filter((/** @type {{intentId?:number}} */ question) => intentIds.includes(Number(question.intentId)))
+        .map((/** @type {{id:number,intentId:number,text:string,category?:string}} */ question) => ({
+          promptId: Number(question.id), intentId: Number(question.intentId),
+          text: String(question.text), category: String(question.category ?? 'general'),
+        })).sort((/** @type {{promptId:number}} */ a, /** @type {{promptId:number}} */ b) => a.promptId - b.promptId) };
+  }
+  return { source: 'legacy_current_panel', weighting: 'equal',
+    questions: all(db, `SELECT id AS prompt_id, intent_id, text, category FROM prompts
+      WHERE intent_id IN (${intentIds.map(() => '?').join(',')}) ORDER BY id`, intentIds)
+      .map((row) => ({ promptId: Number(row.prompt_id), intentId: Number(row.intent_id),
+        text: String(row.text), category: String(row.category) })) };
+}
+
+/** @param {Db} db @param {string|null} profileId */
+function profileSnapshot(db, profileId) {
+  if (!profileId) return null;
+  const row = get(db, 'SELECT snapshot_json FROM execution_profiles WHERE id = ?', [profileId]);
+  return row ? JSON.parse(String(row.snapshot_json)) : null;
+}
+
+/** @param {Db} db @param {import('./metrics.js').MeasurementSeries} series @param {number[]} promptIds @param {string} capturedAt */
+function targetsSnapshot(db, series, promptIds, capturedAt) {
+  if (!promptIds.length) return [];
+  const result = [];
+  for (let offset = 0; offset < promptIds.length; offset += 500) {
+    const chunk = promptIds.slice(offset, offset + 500);
+    result.push(...all(db, `SELECT r.id, r.prompt_id, r.provider, r.model, r.target_status,
+        r.comparability_status, r.answer_status, r.web_status, r.query_metadata_status,
+        r.safe_error_code, x.status AS run_status
+      FROM responses r JOIN runs x ON x.id = r.run_id
+      WHERE r.lane = 'tracking' AND r.created_at >= ? AND r.created_at < ?
+        AND r.created_at <= ? AND r.surface IS ? AND r.execution_profile_id IS ?
+        AND r.benchmark_revision_id IS ? AND r.analysis_revision IS ?
+        AND r.comparison_key IS ? AND r.search_policy IS ?
+        AND r.prompt_id IN (${chunk.map(() => '?').join(',')}) ORDER BY r.id`, [
+      series.start, series.end, capturedAt, series.surface, series.executionProfileId,
+      series.benchmarkRevisionId, series.analysisRevision, series.comparisonKey,
+      series.searchPolicy, ...chunk,
+    ]).map((row) => ({ responseId: Number(row.id), promptId: Number(row.prompt_id),
+      provider: String(row.provider), model: String(row.model),
+      targetStatus: row.target_status === null ? null : String(row.target_status),
+      comparabilityStatus: row.comparability_status === null ? null : String(row.comparability_status),
+      answerStatus: row.answer_status === null ? null : String(row.answer_status),
+      webStatus: row.web_status === null ? null : String(row.web_status),
+      queryMetadataStatus: row.query_metadata_status === null ? null : String(row.query_metadata_status),
+      safeErrorCode: row.safe_error_code === null ? null : String(row.safe_error_code),
+      runStatus: String(row.run_status) })));
+  }
+  if (result.length > 20000) throw new OpportunityError('Snapshot exceeds 20000 targets; narrow the window');
+  return result.sort((a, b) => a.responseId - b.responseId);
+}
+
+/** @param {Db} db @param {import('./metrics.js').MeasurementSeries} series @param {number[]} intentIds @param {string} capturedAt */
+function measurementSnapshot(db, series, intentIds, capturedAt) {
+  const panel = promptPanel(db, series.benchmarkRevisionId, intentIds);
+  if (panel.weighting !== 'equal' || panel.questions.length === 0) {
+    throw new OpportunityError('Saved benchmark needs an equal-weight prompt panel');
+  }
+  return { series, windowStart: series.start, windowEnd: series.end,
+    capturedAt, dataCutoff: capturedAt,
+    correctionCutoff: Number(get(db, 'SELECT COALESCE(MAX(id),0) AS id FROM mention_corrections')?.id ?? 0),
+    promptPanel: panel, executionProfileSnapshot: profileSnapshot(db, series.executionProfileId),
+    targets: targetsSnapshot(db, series, panel.questions.map((/** @type {{promptId:number}} */ question) => question.promptId), capturedAt),
+    answers: answersSnapshot(db, series, intentIds, capturedAt) };
+}
+
 /** @param {Db} db @param {import('./metrics.js').MeasurementSeries} series @param {number[]} intentIds @param {string} capturedAt */
 function answersSnapshot(db, series, intentIds, capturedAt) {
   const report = intentEvidenceReport(db, { series });
@@ -145,12 +219,11 @@ export function saveFollowUpPlan(db, input) {
   if (allIntents.some((id) => !availableIntents.has(id))) {
     throw new OpportunityError('Selected intent is outside the saved benchmark');
   }
-  const answers = answersSnapshot(db, series, allIntents, at);
+  const baseline = measurementSnapshot(db, series, allIntents, at);
+  const answers = baseline.answers;
   if (!answers.some((answer) => answer.intentId !== null && intentIds.includes(answer.intentId))) {
     throw new OpportunityError('Baseline needs a comparable completed answer for the primary intent');
   }
-  const baseline = { series, windowStart: baselineStart, windowEnd: baselineEnd,
-    capturedAt: at, dataCutoff: at, answers };
   const previous = current.followUpPlans.at(-1);
   const retrospective = !!current.shippedAt && at >= current.shippedAt;
   const baselineAfterPublication = !!current.shippedAt && baselineEnd > current.shippedAt;
@@ -190,9 +263,10 @@ export function captureFollowUpReview(db, input) {
   if (at < plan.reviewWindow.start) throw new OpportunityError('Review window has not started');
   const series = { ...plan.baseline.series, start: plan.reviewWindow.start,
     end: plan.reviewWindow.end };
-  const answers = answersSnapshot(db, series, [...plan.intentIds, ...plan.comparisonIntentIds], at);
-  const snapshot = { windowStart: series.start, windowEnd: series.end, dataCutoff: at,
-    series, answers, seriesChanges: observedSeriesChanges(db, series.surface, series.start, series.end, at),
+  const measurement = measurementSnapshot(db, series, [...plan.intentIds, ...plan.comparisonIntentIds], at);
+  const answers = measurement.answers;
+  const snapshot = { ...measurement,
+    seriesChanges: observedSeriesChanges(db, series.surface, series.start, series.end, at),
     partialWindow: at < series.end };
   const snapshotId = transaction(db, () => {
     advanceOpportunityVersion(db, current, at);

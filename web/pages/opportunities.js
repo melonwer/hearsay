@@ -1,6 +1,7 @@
 import { listEvidenceIntents } from '../../core/evidence-report.js';
 import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metrics.js';
 import { deriveOpportunityCandidates, listOpportunities } from '../../core/opportunities.js';
+import { compareIntervention } from '../../core/intervention-comparison.js';
 import { emptyState, html, layout, raw, SURFACE_LABEL } from '../layout.js';
 
 /** @param {string|null} value */
@@ -49,8 +50,24 @@ export function buildView({ db }, params) {
     ? deriveOpportunityCandidates(db, { series, intentId }) : [];
   const opportunities = series ? listOpportunities(db, { series, includeDismissed: true }) : [];
   const selected = opportunities.filter((item) => intentId === null || item.intentId === intentId);
+  const comparisonPlanId = positiveInt(params.get('comparison_plan_id'));
+  const comparisonSnapshotId = positiveInt(params.get('comparison_snapshot_id'));
+  const requestedMode = params.get('comparison_mode');
+  /** @type {Map<number, ReturnType<typeof compareIntervention>>} */
+  const comparisons = new Map();
+  for (const item of selected) {
+    for (const plan of item.followUpPlans ?? []) {
+      for (const snapshot of plan.reviewSnapshots ?? []) {
+        const mode = plan.id === comparisonPlanId && snapshot.id === comparisonSnapshotId
+          && requestedMode === 'common_subset' ? 'common_subset' : 'full_benchmark';
+        comparisons.set(snapshot.id, compareIntervention(db, { opportunityId: item.id,
+          planId: plan.id, snapshotId: snapshot.id, mode }));
+      }
+    }
+  }
   return {
     days, seriesOptions, series, intents, intentId, candidates, opportunities: selected,
+    comparisons, comparisonPlanId, comparisonSnapshotId,
     prefill: {
       responseIds: params.get('response_ids') ?? '', queryIds: params.get('query_ids') ?? '',
       sourceIds: params.get('source_ids') ?? '', citationIds: params.get('citation_ids') ?? '',
@@ -155,12 +172,101 @@ function manualForm(view) {
   </section>`;
 }
 
-/** @param {ReturnType<typeof listOpportunities>[number]} item */
-function followUpSection(item) {
+/** @param {number|null} rate */
+function percentage(rate) { return rate === null ? 'unavailable' : `${(rate * 100).toFixed(1)}%`; }
+
+/** @param {number|null} value */
+function pointChange(value) {
+  return value === null ? 'unavailable' : `${value > 0 ? '+' : ''}${value.toFixed(1)} percentage points`;
+}
+
+/** @param {ReturnType<typeof compareIntervention>['metric']['before']} side @param {string} label */
+function metricRows(side, label) {
+  return html`<tr><th scope="row">${label}</th><td>${side.hits}/${side.n} answers</td>
+    <td>${side.observedPromptCount}/${side.promptCount} prompts</td><td>${percentage(side.rate)}</td></tr>`;
+}
+
+/** @param {ReturnType<typeof compareIntervention>['coverage']['before']} side @param {string} label */
+function coverageRows(side, label) {
+  return html`<tr><th scope="row">${label}</th>
+    <td>${side.targetCoverageKnown ? `${side.attemptedTargets} targets, ${side.failedTargets} failed, ${side.incompleteTargets} incomplete` : 'target attempts unavailable'}</td>
+    <td>${side.comparableAnswers} answers</td>
+    <td>${side.queryMetadataAvailable} available, ${side.queryMetadataUnavailable} unavailable, ${side.queryMetadataNotApplicable} other (${percentage(side.queryMetadataAvailableRate)})</td>
+    <td>${side.answersWithSourceObservations}/${side.comparableAnswers} (${percentage(side.sourceObservationCoverageRate)})</td>
+    <td>${side.answersWithAnswerCitations}/${side.comparableAnswers} (${percentage(side.citationCoverageRate)})</td></tr>`;
+}
+
+/** @param {string} key */
+function layerLabel(key) {
+  if (!key.startsWith('[')) return key;
+  try {
+    const [provenance, url] = JSON.parse(key);
+    return `${url} (${provenance})`;
+  } catch { return key; }
+}
+
+/** @param {ReturnType<typeof compareIntervention>} report @param {'queries'|'sources'|'citations'} layer @param {string} label */
+function changedLayer(report, layer, label) {
+  const rows = report.changes[layer];
+  return html`<details class="opportunity-layer-changes"><summary>${label} (${rows.length} distinct)</summary>
+    ${rows.length ? html`<div class="opportunity-table-scroll"><table><thead><tr><th scope="col">Observed ${label.toLowerCase()}</th><th scope="col">Baseline</th><th scope="col">Review</th><th scope="col">Receipt IDs</th></tr></thead>
+      <tbody>${rows.map((row) => html`<tr><th scope="row">${layerLabel(row.key)}</th>
+        <td>${row.beforeResponses} answers (${percentage(row.beforeIncidenceRate)})</td>
+        <td>${row.afterResponses} answers (${percentage(row.afterIncidenceRate)})</td>
+        <td>Before: ${row.beforeResponseIds.join(', ') || 'none'} · after: ${row.afterResponseIds.join(', ') || 'none'}</td></tr>`)}</tbody></table></div>`
+      : html`<p class="muted">No ${label.toLowerCase()} in the selected answers.</p>`}
+  </details>`;
+}
+
+/** @param {ReturnType<typeof compareIntervention>} report */
+function comparisonReport(report) {
+  const status = ({ incomparable: 'Incomparable', insufficient_data: 'Insufficient data',
+    observed_increase: 'Observed increase', observed_decrease: 'Observed decrease',
+    observed_no_difference: 'No observed difference' })[report.status] ?? report.status;
+  return html`<div class="opportunity-comparison-report">
+    <p><strong>${status}</strong> · ${report.metric.id.replaceAll('_', ' ')} · ${report.selectionMode === 'common_subset' ? 'explicit common subset' : 'full saved benchmark'} · ${pointChange(report.metric.deltaPercentagePoints)}</p>
+    <p class="muted small">Baseline ${report.scope.baseline.start} to ${report.scope.baseline.end} UTC; review ${report.scope.review.start} to ${report.scope.review.end} UTC. Both end times are exclusive. Data cutoffs: ${report.scope.baseline.dataCutoff} and ${report.scope.review.dataCutoff}.</p>
+    <p class="muted small">Series ${report.scope.seriesId} · benchmark ${report.scope.benchmarkRevisionId ?? 'legacy'} · profile ${report.scope.executionProfileId ?? 'legacy'} · selected prompts ${report.scope.selectedPromptIds.length}/${report.scope.expectedPromptIds.length}</p>
+    ${report.reasons.length ? html`<div class="opportunity-report-notes"><strong>Comparability reasons</strong><ul>${report.reasons.map((reason) => html`<li>${reason}</li>`)}</ul></div>` : ''}
+    ${report.warnings.length ? html`<div class="opportunity-report-notes"><strong>Review warnings</strong><ul>${report.warnings.map((warning) => html`<li>${warning}</li>`)}</ul></div>` : ''}
+    ${report.scope.droppedCells.length ? html`<p class="opportunity-warning">Dropped prompt cells: ${report.scope.droppedCells.map((cell) => `#${cell.promptId} (baseline ${cell.baselineHasAnswer ? 'present' : 'missing'}, review ${cell.reviewHasAnswer ? 'present' : 'missing'})`).join('; ')}</p>` : ''}
+    ${report.scope.missingCells.length ? html`<p class="opportunity-warning">Missing selected prompt cells: ${report.scope.missingCells.map((cell) => `#${cell.promptId}`).join(', ')}</p>` : ''}
+    <div class="opportunity-table-scroll"><table><caption>Primary metric, equal prompt weighting</caption><thead><tr><th scope="col">Window</th><th scope="col">Answer hits</th><th scope="col">Prompts observed</th><th scope="col">Mean prompt rate</th></tr></thead><tbody>
+      ${metricRows(report.metric.before, 'Baseline')}${metricRows(report.metric.after, 'Review')}
+    </tbody></table></div>
+    <details><summary>Per-prompt counts and Wilson intervals</summary>
+      <p class="muted small">${report.metric.intervalMeaning}</p>
+      <div class="opportunity-table-scroll"><table><thead><tr><th scope="col">Prompt ID</th><th scope="col">Baseline</th><th scope="col">Review</th></tr></thead><tbody>
+        ${report.metric.before.perPrompt.map((before) => {
+          const after = report.metric.after.perPrompt.find((cell) => cell.promptId === before.promptId);
+          return html`<tr><th scope="row">#${before.promptId}</th>
+            <td>${before.hits}/${before.n} · ${percentage(before.rate)} · Wilson ${percentage(before.interval.lo)} to ${percentage(before.interval.hi)}</td>
+            <td>${after ? html`${after.hits}/${after.n} · ${percentage(after.rate)} · Wilson ${percentage(after.interval.lo)} to ${percentage(after.interval.hi)}` : 'unavailable'}</td></tr>`;
+        })}</tbody></table></div>
+    </details>
+    ${report.comparison ? html`<details><summary>Optional comparison intents</summary>
+      <p class="muted small">The user selected intent IDs ${report.scope.comparisonIntentIds.join(', ')} as an unchanged reference. Hearsay cannot verify that assumption.</p>
+      <div class="opportunity-table-scroll"><table><thead><tr><th scope="col">Window</th><th scope="col">Answer hits</th><th scope="col">Prompts observed</th><th scope="col">Mean prompt rate</th></tr></thead><tbody>
+        ${metricRows(report.comparison.before, 'Baseline')}${metricRows(report.comparison.after, 'Review')}
+      </tbody></table></div>
+    </details>` : ''}
+    <details><summary>Capture and metadata coverage</summary><div class="opportunity-table-scroll"><table><thead><tr><th scope="col">Window</th><th scope="col">Targets</th><th scope="col">Comparable answers</th><th scope="col">Query metadata</th><th scope="col">Source observations</th><th scope="col">Answer citations</th></tr></thead><tbody>
+      ${coverageRows(report.coverage.before, 'Baseline')}${coverageRows(report.coverage.after, 'Review')}
+    </tbody></table></div></details>
+    ${changedLayer(report, 'queries', 'Queries')}${changedLayer(report, 'sources', 'Sources')}${changedLayer(report, 'citations', 'Citations')}
+    ${report.confounders.length ? html`<details><summary>Other shipped actions (${report.confounders.length})</summary><ul>${report.confounders.map((action) => html`<li>Opportunity #${action.opportunityId} · intent #${action.intentId} · shipped ${action.shippedAt} · ${action.target} · ${action.changeDescription}</li>`)}</ul></details>` : ''}
+    <p class="muted">${report.interpretation}</p>
+  </div>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view @param {ReturnType<typeof listOpportunities>[number]} item */
+function followUpSection(view, item) {
   const plans = item.followUpPlans ?? [];
   const latest = plans.at(-1);
   const canPlan = ['planned', 'in_progress', 'shipped', 'reviewed'].includes(item.status);
-  return html`<details><summary>Follow-up plans (${plans.length})</summary>
+  const comparisonSelected = plans.some((plan) => plan.id === view.comparisonPlanId
+    && plan.reviewSnapshots.some((snapshot) => snapshot.id === view.comparisonSnapshotId));
+  return html`<details${comparisonSelected ? raw(' open') : ''}><summary>Follow-up plans (${plans.length})</summary>
     <p class="muted">Select the question and baseline before shipping when possible. Saving or capturing a plan only uses stored observations. It does not start a run, publish a change, or edit a schedule.</p>
     <p class="muted">If you need more observations, <a href="/settings">review the run estimate and preview an on-demand run in Settings</a>. Starting that run requires a separate confirmation.</p>
     ${latest ? html`<p class="muted">A revised plan creates a new version. Earlier baselines, dates, and review snapshots remain in the history above.</p>` : ''}
@@ -172,11 +278,32 @@ function followUpSection(item) {
       <p>Review window: ${plan.reviewWindow.start} to ${plan.reviewWindow.end} UTC, end exclusive · observation delay ${plan.reviewWindow.observationDelayDays} day${plan.reviewWindow.observationDelayDays === 1 ? '' : 's'}</p>
       ${plan.retrospective ? html`<p class="opportunity-warning">Retrospective baseline and metric selection. Interpret changes with care.</p>` : ''}
       ${plan.baselineAfterPublication ? html`<p class="opportunity-warning">The baseline window includes time after the recorded ship time.</p>` : ''}
-      ${plan.reviewSnapshots.length ? html`<details><summary>Saved review snapshots (${plan.reviewSnapshots.length})</summary>
-        <ul>${plan.reviewSnapshots.map((snapshot) => html`<li>Captured ${snapshot.capturedAt} · ${snapshot.windowStart} to ${snapshot.windowEnd} UTC, end exclusive · ${snapshot.answers.length} saved answers
-          ${snapshot.partialWindow ? html`<span class="opportunity-warning"> · review window is still open</span>` : ''}
-          ${snapshot.seriesChanges.length ? html`<ul>${snapshot.seriesChanges.map((/** @type {{count:number,surface:string,model:string,benchmarkRevisionId:string|null,executionProfileId:string|null,analysisRevision:string|null,searchPolicy:string|null}} */ series) => html`<li>${series.count} target${series.count === 1 ? '' : 's'} · ${series.surface} · model ${series.model} · benchmark ${series.benchmarkRevisionId ?? 'legacy'} · profile ${series.executionProfileId ?? 'legacy'} · analysis ${series.analysisRevision ?? 'legacy'} · policy ${series.searchPolicy ?? 'legacy'}${series.executionProfileId !== plan.baseline.series.executionProfileId || series.benchmarkRevisionId !== plan.baseline.series.benchmarkRevisionId ? html` <strong class="opportunity-warning">Profile or benchmark differs from baseline</strong>` : ''}</li>`)}</ul>` : ''}
-        </li>`)}</ul>
+      ${plan.reviewSnapshots.length ? html`<details${comparisonSelected && plan.id === view.comparisonPlanId ? raw(' open') : ''}><summary>Saved review snapshots (${plan.reviewSnapshots.length})</summary>
+        ${plan.reviewSnapshots.map((snapshot) => {
+          const report = view.comparisons.get(snapshot.id);
+          if (!report) return '';
+          const reviews = (item.interventionReviews ?? []).filter((review) => review.snapshotId === snapshot.id);
+          return html`<article class="opportunity-snapshot" id="opportunity-snapshot-${snapshot.id}">
+            <h5>Captured ${snapshot.capturedAt}</h5>
+            <p class="muted small">${snapshot.windowStart} to ${snapshot.windowEnd} UTC, end exclusive · ${snapshot.answers.length} saved answers${snapshot.partialWindow ? html` · <span class="opportunity-warning">review window was still open</span>` : ''}</p>
+            ${snapshot.seriesChanges.length ? html`<details><summary>Series variants seen during the review window (${snapshot.seriesChanges.length})</summary><ul>${snapshot.seriesChanges.map((/** @type {{count:number,surface:string,model:string,benchmarkRevisionId:string|null,executionProfileId:string|null,analysisRevision:string|null,searchPolicy:string|null}} */ series) => html`<li>${series.count} target${series.count === 1 ? '' : 's'} · ${series.surface} · model ${series.model} · benchmark ${series.benchmarkRevisionId ?? 'legacy'} · profile ${series.executionProfileId ?? 'legacy'} · analysis ${series.analysisRevision ?? 'legacy'} · policy ${series.searchPolicy ?? 'legacy'}${series.executionProfileId !== plan.baseline.series.executionProfileId || series.benchmarkRevisionId !== plan.baseline.series.benchmarkRevisionId ? html` <strong class="opportunity-warning">Profile or benchmark differs from baseline</strong>` : ''}</li>`)}</ul></details>` : ''}
+            <nav class="opportunity-comparison-modes" aria-label="Comparison selection for snapshot ${snapshot.id}">
+              <a href="${selectionUrl(view, { comparison_plan_id: plan.id, comparison_snapshot_id: snapshot.id, comparison_mode: 'full_benchmark' })}#opportunity-snapshot-${snapshot.id}"${report.selectionMode === 'full_benchmark' ? raw(' aria-current="page"') : ''}>Full saved benchmark</a>
+              <a href="${selectionUrl(view, { comparison_plan_id: plan.id, comparison_snapshot_id: snapshot.id, comparison_mode: 'common_subset' })}#opportunity-snapshot-${snapshot.id}"${report.selectionMode === 'common_subset' ? raw(' aria-current="page"') : ''}>Common prompt subset</a>
+            </nav>
+            ${comparisonReport(report)}
+            ${reviews.length ? html`<details><summary>Human reviews (${reviews.length})</summary><ul>${reviews.map((review) => html`<li>${review.createdAt} · ${review.author} · ${review.judgment.replaceAll('_', ' ')} · ${review.selectionMode.replaceAll('_', ' ')} · ${review.report.status.replaceAll('_', ' ')}<blockquote>${review.rationale}</blockquote></li>`)}</ul></details>` : ''}
+            ${['shipped', 'reviewed'].includes(item.status) && plan.id === latest?.id ? html`<form data-api-form="/api/opportunities/${item.id}/follow-up/${plan.id}/reviews/${snapshot.id}" class="opportunity-form">
+              <input type="hidden" name="expected_version" value="${item.recordVersion}" />
+              <input type="hidden" name="mode" value="${report.selectionMode}" />
+              <label><span>Your judgment</span><select name="judgment" required><option value="">Choose a judgment</option><option value="promising">Promising</option><option value="not_useful">Not useful</option><option value="inconclusive">Inconclusive</option></select></label>
+              <label><span>Rationale</span><textarea name="rationale" rows="3" maxlength="4000" required placeholder="Explain what the saved observations do and do not support"></textarea></label>
+              <p class="muted small">Your review records a judgment about these observations. It does not prove that the shipped action caused a change.</p>
+              <button type="submit" class="btn btn-sm">Save human review</button>
+              <p class="form-error" data-form-error role="alert" hidden></p>
+            </form>` : ''}
+          </article>`;
+        })}
       </details>` : html`<p class="muted small">No review snapshot captured yet.</p>`}
       ${['shipped', 'reviewed'].includes(item.status) && plan.id === plans.at(-1)?.id ? html`<form data-api-form="/api/opportunities/${item.id}/follow-up/${plan.id}/capture" class="opportunity-form">
         <input type="hidden" name="expected_version" value="${item.recordVersion}" />
@@ -214,7 +341,7 @@ function availableStatuses(current) {
     investigate: ['investigate', 'planned', 'dismissed', 'no_action'],
     planned: ['planned', 'in_progress', 'shipped', 'investigate', 'dismissed', 'no_action'],
     in_progress: ['in_progress', 'planned', 'shipped', 'dismissed', 'no_action'],
-    shipped: ['shipped', 'reviewed'], reviewed: ['reviewed'],
+    shipped: ['shipped'], reviewed: ['reviewed'],
     dismissed: ['dismissed', 'investigate'], no_action: ['no_action', 'investigate'],
   };
   return /** @type {Record<string,string[]>} */ (transitions)[current] ?? [current];
@@ -282,7 +409,7 @@ function opportunityCard(view, item) {
           <p class="form-error" data-form-error role="alert" hidden></p>
         </form>
       </details>`}
-      ${followUpSection(item)}
+      ${followUpSection(view, item)}
       <details><summary>Page evidence (${pageEvidence.length})</summary>
         <p class="muted">A manual excerpt records what you or an assistant supplied. It is separate from provider-observed retrieval.</p>
         ${pageEvidence.map((entry) => html`<div class="opportunity-page-evidence">

@@ -31,6 +31,8 @@ test('opportunities API and page keep exact evidence scope and ordinary reads do
     const at = '2026-09-02T10:00:00Z';
     const start = '2026-09-01T00:00:00Z';
     const end = '2026-09-10T00:00:00Z';
+    dbRun(app.db, `INSERT INTO entities(name,aliases,domains,is_self,created_at)
+      VALUES('Acme','[]','[]',1,?)`, [start]);
     const runId = dbRun(app.db, `INSERT INTO runs(started_at,trigger,status)
       VALUES(?,'manual','done')`, [at]).lastInsertRowid;
     const responseId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
@@ -98,6 +100,43 @@ test('opportunities API and page keep exact evidence scope and ordinary reads do
       { expected_version: shipped.body.recordVersion });
     assert.equal(captured.status, 201);
     assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n), runCount);
+    const snapshotId = captured.body.id;
+    const reportPath = `/api/opportunities/${selected.body.id}/follow-up/${withPlan.body.followUpPlans[0].id}/reviews/${snapshotId}`;
+    const report = await api(app.base, 'GET', `${reportPath}/comparison`);
+    assert.equal(report.status, 200);
+    assert.equal(report.body.selectionMode, 'full_benchmark');
+    assert.equal(report.body.status, 'insufficient_data', JSON.stringify(report.body.reasons));
+    assert.equal(report.body.metric.before.n, 1);
+    assert.equal(report.body.metric.after.n, 0);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM intervention_reviews')?.n), 0);
+    const subset = await api(app.base, 'GET', `${reportPath}/comparison?mode=common_subset`);
+    assert.equal(subset.status, 200);
+    assert.equal(subset.body.selectionMode, 'common_subset');
+    assert.deepEqual(subset.body.scope.droppedCells.map((cell) => cell.promptId), [prompt.id]);
+    const capturedRecord = await api(app.base, 'GET', `/api/opportunities/${selected.body.id}`);
+    const reportPage = await fetch(`${app.base}/opportunities?${selection}`).then((response) => response.text());
+    assert.match(reportPage, /Full saved benchmark/);
+    assert.match(reportPage, /Insufficient data/);
+    assert.doesNotMatch(reportPage, /<option value="reviewed"/);
+    const bypassReview = await api(app.base, 'PATCH', `/api/opportunities/${selected.body.id}`, {
+      expected_version: capturedRecord.body.recordVersion, status: 'reviewed',
+    });
+    assert.equal(bypassReview.status, 400);
+    const humanReview = await api(app.base, 'POST', reportPath, {
+      expected_version: capturedRecord.body.recordVersion, judgment: 'inconclusive',
+      rationale: 'No review answer was captured for the saved prompt panel.', mode: 'full_benchmark',
+    });
+    assert.equal(humanReview.status, 201);
+    assert.equal(humanReview.body.judgment, 'inconclusive');
+    const reviewedRecord = await api(app.base, 'GET', `/api/opportunities/${selected.body.id}`);
+    assert.equal(reviewedRecord.body.status, 'reviewed');
+    assert.equal(reviewedRecord.body.interventionReviews[0].report.status, 'insufficient_data');
+    const staleReview = await api(app.base, 'POST', reportPath, {
+      expected_version: capturedRecord.body.recordVersion, judgment: 'promising',
+      rationale: 'A stale form must not overwrite the saved review.',
+    });
+    assert.equal(staleReview.status, 409);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n), runCount);
     const secondResponseId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
       created_at,surface,lane,target_status,comparability_status,comparison_key,analysis_revision,
       search_policy,answer_status,web_status,query_metadata_status,prompt_text_snapshot)
@@ -118,11 +157,12 @@ test('opportunities API and page keep exact evidence scope and ordinary reads do
       .then((response) => response.text());
     assert.match(withPending, /Pending assistant proposals/);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 7);
+    assert.equal(exported.body.exportFormatVersion, 8);
     assert.equal(exported.body.tables.opportunities.length, 2);
-    assert.equal(exported.body.tables.opportunity_events.length, 6);
+    assert.equal(exported.body.tables.opportunity_events.length, 7);
     assert.equal(exported.body.tables.follow_up_plans.length, 1);
     assert.equal(exported.body.tables.follow_up_review_snapshots.length, 1);
+    assert.equal(exported.body.tables.intervention_reviews.length, 1);
   } finally {
     await app.close();
   }
@@ -180,7 +220,7 @@ test('evidence API and page expose the same scoped receipts without rendering st
     assert.deepEqual(themed.body.report.themeGroups.map((group) => [group.label, group.responseIncidence]),
       [['Pricing & <review>', 1]]);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 7);
+    assert.equal(exported.body.exportFormatVersion, 8);
     assert.equal(exported.body.tables.query_themes.length, 1);
     assert.equal(exported.body.tables.query_theme_assignments.length, 1);
 
@@ -533,7 +573,7 @@ test('draft review rejects placeholders and duplicates, then approves a keyless 
     assert.deepEqual((await api(app.base, 'GET', '/api/prompts')).body.map((row) => row.source_note),
       ['From buyer email', 'From sales call']);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 7);
+    assert.equal(exported.body.exportFormatVersion, 8);
     assert.equal(exported.body.tables.benchmark_drafts.length, 1);
     assert.ok(JSON.stringify(exported.body.tables.benchmark_drafts).includes('From buyer email'));
     assert.ok(!String(get(app.db, 'SELECT snapshot_json FROM benchmark_revisions ORDER BY created_at DESC LIMIT 1')?.snapshot_json)

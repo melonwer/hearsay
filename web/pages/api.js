@@ -42,6 +42,7 @@ import { OpportunityError, deriveOpportunityCandidates, generateOpportunityCandi
   attachOpportunityPageEvidence, reviewOpportunityPageEvidence,
   combineOpportunities } from '../../core/opportunities.js';
 import { saveFollowUpPlan, captureFollowUpReview } from '../../core/follow-up.js';
+import { compareIntervention, saveInterventionReview } from '../../core/intervention-comparison.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
@@ -1853,6 +1854,20 @@ export function registerApiRoutes(router, deps) {
     return captureFollowUpReview(db, { id: idParam(ctx.params.id),
       planId: idParam(ctx.params.plan_id),
       expectedVersion: opportunityId(body.expected_version, 'expected_version'),
+      author: 'user', now: isoNow() });
+  }, 201));
+  router.add('GET', '/api/opportunities/:id/follow-up/:plan_id/reviews/:snapshot_id/comparison', json((ctx) =>
+    compareIntervention(db, { opportunityId: idParam(ctx.params.id),
+      planId: idParam(ctx.params.plan_id), snapshotId: idParam(ctx.params.snapshot_id),
+      mode: ctx.url.searchParams.get('mode') ?? undefined })));
+  router.add('POST', '/api/opportunities/:id/follow-up/:plan_id/reviews/:snapshot_id', json((ctx) => {
+    const body = asObject(ctx.body);
+    return saveInterventionReview(db, { opportunityId: idParam(ctx.params.id),
+      planId: idParam(ctx.params.plan_id), snapshotId: idParam(ctx.params.snapshot_id),
+      mode: /** @type {string|undefined} */ (str(body.mode, 'mode', { max: 30 })),
+      expectedVersion: opportunityId(body.expected_version, 'expected_version'),
+      judgment: /** @type {string} */ (str(body.judgment, 'judgment', { max: 30, required: true })),
+      rationale: /** @type {string} */ (str(body.rationale, 'rationale', { max: 4000, required: true })),
       author: 'user', now: isoNow() });
   }, 201));
   router.add('POST', '/api/opportunities/:id/page-evidence', json((ctx) => {

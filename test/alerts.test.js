@@ -81,6 +81,13 @@ function addRun(db, runRow) {
   ]);
 }
 
+/** @param {Db} db */
+function addTrackingDefinition(db) {
+  exec(db, 'INSERT INTO benchmark_revisions(id, snapshot_json, created_at) VALUES(?,?,?)', [
+    'test-benchmark', '{}', '2026-07-01T00:00:00Z',
+  ]);
+}
+
 /**
  * Write one response per sample.
  *
@@ -165,6 +172,75 @@ test('new stance revisions suppress lost/gained heuristic recommendation alerts'
   const alerts = evaluate(db, 3, { now: '2026-07-26T08:00:00Z' });
   assert.equal(alerts.some((alert) => alert.type === 'LOST_RECOMMENDATION' ||
     alert.type === 'GAINED_RECOMMENDATION'), false);
+});
+
+test('tracking series suppress business alerts for one positive-to-zero flip and a larger drop', (t) => {
+  const db = threeRunDb(t);
+  addTrackingDefinition(db);
+  exec(db, `UPDATE responses SET lane = 'tracking', surface = provider || '-api',
+    target_status = 'completed', comparability_status = 'comparable',
+    comparison_key = 'same-profile', analysis_revision = 'stance-en-v1',
+    benchmark_revision_id = 'test-benchmark'`);
+
+  const alerts = evaluate(db, 3, { now: '2026-07-26T08:00:00Z' });
+  assert.deepEqual(alerts, [], 'valid tracking observations are described in the comparison report');
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS n FROM alerts').get()?.n), 0);
+});
+
+test('tracking failures produce scoped operational health, not visibility loss', (t) => {
+  const db = newDb(t);
+  addPrompt(db, 1, 'prompt');
+  addRun(db, { id: 1, at: '2026-07-26T07:00:00Z', status: 'partial' });
+  addSamples(db, {
+    runId: 1, promptId: 1, provider: 'openai', at: '2026-07-26T07:00:00Z',
+    samples: ['mention', 'empty', 'empty', 'empty'],
+  });
+  addTrackingDefinition(db);
+  exec(db, `UPDATE responses SET lane = 'tracking', surface = 'openai-api',
+    comparison_key = 'same-profile', target_status = 'completed',
+    comparability_status = 'comparable', benchmark_revision_id = 'test-benchmark' WHERE run_id = 1`);
+  exec(db, `UPDATE responses SET target_status = 'failed', comparability_status = 'non_comparable',
+    error = 'provider:error' WHERE run_id = 1 AND sample_idx = 1`);
+  exec(db, `UPDATE responses SET comparability_status = 'non_comparable'
+    WHERE run_id = 1 AND sample_idx = 2`);
+  exec(db, `UPDATE responses SET target_status = 'queued', comparability_status = NULL
+    WHERE run_id = 1 AND sample_idx = 3`);
+  exec(db, 'UPDATE entities SET is_self = 0 WHERE id = ?', [BRAND]);
+
+  const alerts = evaluate(db, 1, { now: NOW, surface: 'openai-api' });
+  assert.deepEqual(alerts.map(({ type, severity, surface }) => [type, severity, surface]),
+    [['MEASUREMENT_HEALTH', 'warning', 'openai-api']]);
+  assert.match(alerts[0].detail, /1\/4 tracking targets were comparable/);
+  assert.match(alerts[0].detail, /1 failed, 0 cancelled, 1 incomplete, and 1 completed without comparable evidence/);
+  assert.match(alerts[0].detail, /collection issue, not a measured visibility loss/);
+  assert.deepEqual(evaluate(db, 1, { now: NOW, surface: 'openai-api' }), [], 'health dedup is surface scoped');
+});
+
+test('existing legacy alert rows remain after newer tracking observations', (t) => {
+  const db = threeRunDb(t);
+  const historical = evaluate(db, 3, { now: NOW });
+  assert.ok(historical.some((alert) => alert.type === 'LOST_RECOMMENDATION'));
+  addRun(db, { id: 4, at: '2026-07-27T07:00:00Z' });
+  addSamples(db, { runId: 4, promptId: 1, provider: 'openai', at: '2026-07-27T07:00:00Z', samples: ['empty'] });
+  addTrackingDefinition(db);
+  exec(db, `UPDATE responses SET lane = 'tracking', surface = 'openai-api',
+    target_status = 'completed', comparability_status = 'comparable',
+    comparison_key = 'new-profile', benchmark_revision_id = 'test-benchmark' WHERE run_id = 4`);
+
+  assert.deepEqual(evaluate(db, 4, { now: '2026-07-27T12:00:00Z' }), []);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM alerts WHERE type = 'LOST_RECOMMENDATION'").get()?.n), 1);
+});
+
+test('upgraded legacy tracking rows keep their historical alert rules', (t) => {
+  const db = threeRunDb(t);
+  exec(db, `UPDATE responses SET lane = 'tracking', surface = provider || '-api',
+    target_status = 'completed', comparability_status = 'comparable',
+    comparison_key = 'legacy:' || provider || ':test-model'`);
+
+  const alerts = evaluate(db, 3, { now: NOW });
+  assert.equal(ofType(alerts, 'LOST_RECOMMENDATION').length, 1);
+  assert.equal(ofType(alerts, 'MENTION_DROP').length, 1);
+  assert.equal(ofType(alerts, 'MEASUREMENT_HEALTH').length, 0);
 });
 
 const NOW = '2026-07-26T12:00:00Z';
