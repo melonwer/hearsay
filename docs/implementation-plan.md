@@ -6,7 +6,7 @@ Repository: https://github.com/melonwer/hearsay
 
 Reviewed baseline: `d7c9573a8ed045cd5727be4a6cc2e900898a6856` (also the current `main` when this plan was prepared). Database schema at this baseline: version 4.
 
-## Implementation progress (24 September 2026)
+## Implementation progress (25 September 2026)
 
 The checkboxes track completed commit gates. A partial C03 implementation is committed, but C03 remains open until its full acceptance and validation criteria pass. See [implementation-review.md](implementation-review.md) for evidence and remaining gates.
 
@@ -16,8 +16,8 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [ ] C03 — search budgets and usage accounting (in progress through `7ae20df`)
 - [x] C04 — OpenAI search evidence adapter (`b647107`)
 - [x] C05 — Anthropic search evidence and bounded continuation (`7ae20df`)
-- [ ] C06 — Gemini grounding evidence adapter
-- [ ] C07 — Perplexity and subscription evidence provenance
+- [ ] C06 — Gemini grounding evidence adapter (held for legal review; grounding disabled)
+- [x] C07 — Perplexity and subscription evidence provenance
 - [ ] C08 — conservative recommendation classification
 - [ ] C09 — exact series metrics and dashboard scope
 - [ ] C10 — question, search, source, and answer report; Release A gate
