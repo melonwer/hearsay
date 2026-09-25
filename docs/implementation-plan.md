@@ -18,16 +18,16 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [x] C05 — Anthropic search evidence and bounded continuation (`7ae20df`)
 - [ ] C06 — Gemini grounding evidence adapter (held for legal review; grounding disabled)
 - [x] C07 — Perplexity and subscription evidence provenance
-- [x] C08 — conservative recommendation classification
+- [x] C08 — conservative recommendation classification (all 24 fixture labels approved by user 2026-09-25)
 - [x] C09 — exact series metrics and dashboard scope
 - [x] C10 — question, search, source, and answer report
 - [ ] Release A gate — C03 usage accounting and C06 legal review remain open
 - [x] C11 — buyer-focused benchmark setup
 - [x] C12 — reviewable evidence-linked opportunities
-- [ ] C13 — interventions and follow-up plans
-- [ ] C14 — descriptive intervention comparisons
-- [ ] C15 — outcome records and weekly review
-- [ ] C16 — demo separation and tracking health
+- [x] C13 — interventions and follow-up plans
+- [x] C14 — descriptive intervention comparisons (`a5d5f1b`)
+- [x] C15 — outcome records and weekly review (`960b039`, `32644a6`)
+- [x] C16 — demo separation and tracking health (`3422f93`, `285e412`)
 - [ ] C17 — workflow documentation and Release B gate
 - [ ] E01–E16 — end-to-end acceptance scenarios
 
