@@ -47,7 +47,13 @@ try {
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await page.goto(base);
     await page.getByRole('heading', { name: 'Your brand' }).waitFor();
-    run(real.db, "INSERT INTO entities(name, is_self, created_at) VALUES('My Real Brand', 1, '2026-09-25T00:00:00Z')");
+    await page.locator('form[data-api-form="/api/entities"]').first()
+      .locator('[name="name"]').fill('My Real Brand');
+    const savedBrand = page.waitForResponse((response) => response.url().endsWith('/api/entities')
+      && response.request().method() === 'POST');
+    await page.getByRole('button', { name: 'Save brand' }).click();
+    assert.equal((await savedBrand).status(), 201);
+    assert.equal(Number(real.db.prepare("SELECT COUNT(*) AS n FROM entities WHERE name = 'My Real Brand'").get()?.n), 1);
     run(real.db, "INSERT INTO intents(label, created_at) VALUES('Buying question', '2026-09-25T00:00:00Z')");
     run(real.db, "INSERT INTO prompts(intent_id, text, tracking_state, created_at) VALUES(1, 'Which tool?', 'tracking', '2026-09-25T00:00:00Z')");
     reviewTrackingPrompt(real.db, 1);

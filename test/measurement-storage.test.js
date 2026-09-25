@@ -5,11 +5,13 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { MIGRATIONS, SCHEMA_VERSION, all, get, openDb, run, userVersion } from '../core/db.js';
+import { MIGRATIONS, SCHEMA_VERSION, SETTING_KEYS, all, get, openDb, run, setSetting, userVersion } from '../core/db.js';
 import { artifactAvailability, cleanupArtifacts, createArtifactStore, writeArtifact } from '../core/artifacts.js';
+import { buildConfig } from '../core/config.js';
 import { benchmarkRevision, executionProfile } from '../core/measurement-contract.js';
 import { storeMeasurementEvidence, storeTargetDefinition } from '../core/measurement-storage.js';
 import { recoverStaleRuns } from '../core/runner.js';
+import { startScheduler } from '../core/scheduler.js';
 import { exportAll } from '../web/queries.js';
 
 const V1 = readFileSync(new URL('./fixtures/schema-v1-subscription.sql', import.meta.url), 'utf8');
@@ -299,5 +301,58 @@ test('interrupted target recovery keeps its definition and invents no evidence',
     analysis_revision: 'rules-v1', query_metadata_status: 'unavailable',
   });
   assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_queries WHERE response_id = ?', [targetId])?.n), 0);
+  assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
+});
+
+test('upgraded data, interrupted target, and old schedule survive restart without a paid catch-up', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-upgrade-restart-'));
+  const path = join(dir, 'hearsay.db');
+  const oldDb = new DatabaseSync(path);
+  oldDb.exec(V1);
+  advanceFixtureToV4(oldDb);
+  oldDb.close();
+
+  const migrated = openDb(path);
+  assert.equal(userVersion(migrated), SCHEMA_VERSION);
+  const promptId = Number(get(migrated, 'SELECT id FROM prompts ORDER BY id LIMIT 1')?.id);
+  const interruptedRun = run(migrated, `INSERT INTO runs(started_at,trigger,status,total_calls,done_calls)
+    VALUES('2026-09-25T05:00:00Z','manual','running',1,0)`).lastInsertRowid;
+  const targetId = run(migrated, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,created_at,
+    surface,lane,target_status,comparability_status,search_policy,answer_status)
+    VALUES(?,?,'openai','fixture',0,'2026-09-25T05:00:00Z','openai-api','tracking',
+      'running','non_comparable','off','incomplete')`, [interruptedRun, promptId]).lastInsertRowid;
+  setSetting(migrated, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, '2026-09-24');
+  migrated.close();
+
+  const db = openDb(path);
+  t.after(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  assert.equal(recoverStaleRuns(db, { now: new Date('2026-09-25T08:00:00Z') }), 1);
+  assert.equal(get(db, 'SELECT target_status FROM responses WHERE id = ?', [targetId])?.target_status, 'failed');
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM responses WHERE id <= 2')?.n), 2);
+  assert.equal(get(db, 'SELECT text FROM responses WHERE id = 1')?.text, 'Acme is a good option.');
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_events WHERE response_id = ?', [targetId])?.n), 0);
+
+  const config = buildConfig({ OPENAI_API_KEY: 'fixture-key', HEARSAY_RUN_AT: '07:00',
+    HEARSAY_OPENAI_SEARCH_POLICY: 'required' });
+  let clock = new Date(2026, 8, 25, 8, 0, 0);
+  /** @type {import('../core/config.js').Config[]} */
+  const calledWith = [];
+  const scheduler = startScheduler({ db, config, now: () => clock,
+    runPanel: async (options) => { calledWith.push(options.config ?? config); } });
+  t.after(() => scheduler.stop());
+  assert.equal(await scheduler.tick(), false);
+  assert.equal(await scheduler.tick(), false);
+  assert.equal(calledWith.length, 0);
+  assert.equal(Number(get(db, "SELECT COUNT(*) AS n FROM runs WHERE trigger = 'cron' AND status = 'missed'")?.n), 1);
+
+  clock = new Date(2026, 8, 26, 7, 0, 0);
+  assert.equal(await scheduler.tick(), true);
+  assert.equal(calledWith.length, 1);
+  assert.equal(calledWith[0].apiSearchPolicies.openai, 'off');
+  assert.equal(await scheduler.tick(), false);
+  assert.equal(calledWith.length, 1);
   assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
 });

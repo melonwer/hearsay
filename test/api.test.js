@@ -782,6 +782,16 @@ test('OpenAI search run requires its forecast quote and persists separate eviden
     const page = await fetch(`${app.base}/answers`).then((result) => result.text());
     assert.match(page, /Reported sources/);
     assert.match(page, /https:\/\/example\.net\/citation/);
+    const listed = await api(app.base, 'GET', '/api/series?days=30');
+    const selected = listed.body.series.find((item) => item.surface === 'openai-api'
+      && item.searchPolicy === 'required');
+    assert.equal(selected.comparableAnswers, 1);
+    const dashboard = await fetch(`${app.base}/?series_id=${selected.id}`)
+      .then((result) => result.text());
+    assert.match(dashboard, /OpenAI API/);
+    assert.match(dashboard, new RegExp(`series_id=${selected.id}`));
+    const exact = await api(app.base, 'GET', `/api/series/summary?series_id=${selected.id}`);
+    assert.equal(exact.body.series.comparableAnswers, 1);
   } finally {
     await app.close();
   }

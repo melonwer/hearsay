@@ -954,6 +954,10 @@ describe('runner (§8.1)', () => {
     assert.equal(row?.cost_status, 'partial');
     assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_events WHERE response_id = ?', [row?.id])?.n), 1);
     assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM source_observations WHERE response_id = ?', [row?.id])?.n), 1);
+    assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_queries WHERE response_id = ?', [row?.id])?.n), 1);
+    const attempts = all(db, 'SELECT DISTINCT attempt_index, continuation_index FROM usage_components WHERE response_id = ? ORDER BY attempt_index, continuation_index', [row?.id]);
+    assert.deepEqual(attempts.map((item) => [item.attempt_index, item.continuation_index]), [[0, 0], [0, 1]]);
+    assert.equal(Number(get(db, 'SELECT SUM(quantity) AS n FROM usage_components WHERE response_id = ? AND component = ?', [row?.id, 'input_tokens'])?.n), 20);
   });
 
   it('leaves cost null when the provider returned no usage counts', async () => {
