@@ -637,6 +637,8 @@ test('fixture data reaches the dashboard, prompts and alerts pages', async (t) =
   assert.ok(prompts.includes('Which AI note taker do small sales teams actually recommend?'), 'both paraphrases');
   assert.ok(prompts.includes('id="prompt-panel-review"'), 'existing panels have an explicit review action');
   assert.ok(prompts.includes('review needed'), 'legacy prompts are not presented as newly reviewed');
+  assert.ok(prompts.includes('<summary>Edit question</summary>'), 'wording can be edited through a reviewable form');
+  assert.ok(prompts.includes('name="reviewed" required'), 'the edit requires a visible review confirmation');
 
   const alerts = await (await fetch(`${app.base}/alerts`)).text();
   assert.ok(alerts.includes('Notewell mention rate fell on ChatGPT'), 'the alert title should render');

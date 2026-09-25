@@ -370,7 +370,7 @@ function formPayload(form) {
       payload[name] = value === '' ? [] : value.split(',').map((part) => part.trim()).filter((part) => part !== '');
     } else if (field.hasAttribute('data-bool')) {
       payload[name] = value === 'true' || value === '1';
-    } else if (value !== '') {
+    } else if (value !== '' || field.hasAttribute('data-include-empty')) {
       payload[name] = value;
     }
   }

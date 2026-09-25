@@ -161,6 +161,25 @@ function intentBlock(view, intent) {
           : ''}
         ${prompt.reviewed ? html`<span class="tag">reviewed</span>` : html`<span class="tag">review needed</span>`}
         ${prompt.source_note ? html`<span class="muted small">Source note: ${prompt.source_note}</span>` : ''}
+        <details>
+          <summary>Edit question</summary>
+          <form class="inline-form" data-api-form="/api/prompts/${prompt.id}" data-method="PATCH">
+            <label class="grow">
+              <span>Exact question</span>
+              <input type="text" name="text" value="${prompt.text}" maxlength="300" required />
+            </label>
+            <label class="grow">
+              <span>Source note (local only)</span>
+              <input type="text" name="source_note" value="${prompt.source_note ?? ''}" maxlength="1000" data-include-empty />
+            </label>
+            <label class="check">
+              <input type="checkbox" name="reviewed" required />
+              <span>I reviewed this exact question for tracking</span>
+            </label>
+            <button type="submit" class="btn btn-sm">Save question</button>
+            <p class="form-error" data-form-error role="alert" hidden></p>
+          </form>
+        </details>
       </td>
       <td><span data-current-category="${prompt.category}">${categorySelect(view.categories, prompt.category, `category-${prompt.id}`)}</span></td>
       <td>
