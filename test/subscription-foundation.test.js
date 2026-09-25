@@ -281,6 +281,25 @@ test('artifact refs are generated, permissioned, readable, and retention-cleanab
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('raw event artifacts keep unknown fields after redaction and enforce their byte ceiling', () => {
+  const { dir } = tempDb();
+  try {
+    const store = createArtifactStore(dir, { maxBytes: 1024 });
+    const ref = writeArtifact(store, 1, [{ type: 'future_search_event',
+      query: 'Acme reviews', results: [{ url: 'https://example.org/review' }],
+      authorization: 'Bearer private-token',
+    }]);
+    assert.deepEqual(readArtifact(store, ref), [{ type: 'future_search_event',
+      query: 'Acme reviews', results: [{ url: 'https://example.org/review' }],
+      authorization: '[REDACTED]',
+    }]);
+    assert.throws(() => writeArtifact(store, 2, [{ text: 'x'.repeat(2048) }]), /exceeds 1024 bytes/);
+    assert.equal(readdirSync(join(dir, 'artifacts')).length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('search events retain verified search separately from fetches and citations', () => {
   const db = openDb(':memory:');
   try {

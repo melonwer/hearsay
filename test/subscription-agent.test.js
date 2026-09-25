@@ -156,6 +156,25 @@ test('explicitly rate-limited searches are failed rather than verified', () => {
 test('parsers reject malformed or oversized event lines', () => {
   assert.throws(() => parseCodexJsonl('{"type":"broken"\n'), /malformed event/i);
   assert.throws(() => parseCodexJsonl(`${'x'.repeat(100)}\n`, { maxLineBytes: 32 }), /line limit/i);
+  assert.throws(() => parseCodexJsonl(`${'\n'.repeat(1024)}`, { maxOutputBytes: 100 }), /output limit/i);
+  assert.throws(() => parseCodexJsonl(`${JSON.stringify({ type: 'x' })}\n${JSON.stringify({ type: 'y' })}`, { maxEvents: 1 }), /event count limit/i);
+});
+
+test('failed terminal CLI events do not verify a search', () => {
+  const codex = parseCodexJsonl(JSON.stringify({ type: 'item.failed', item: {
+    type: 'web_search_call', id: 'ws-1', action: { query: 'Acme' },
+  } }));
+  assert.equal(codex.webStatus, 'failed');
+  assert.equal(codex.errorCode, 'web_search_failed');
+  assert.equal(codex.searchEvents[0].status, 'failed');
+
+  const claude = parseClaudeStreamJsonl([
+    { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'ws-1', name: 'WebSearch', input: { query: 'Acme' } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'ws-1', is_error: true, status: 'denied' }] } },
+  ].map(JSON.stringify).join('\n'));
+  assert.equal(claude.webStatus, 'failed');
+  assert.equal(claude.searchEvents[0].status, 'denied');
+  assert.equal(claude.errorCode, 'web_search_denied');
 });
 
 test('safe process invocation uses an allowlisted environment, isolated cwd, and stdin', async () => {

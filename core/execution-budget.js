@@ -59,7 +59,7 @@ export function apiExecutionBudget(config, providerId) {
     maxContinuations: providerId === 'anthropic' && searchPolicy === 'auto' ? 1 : 0,
     timeoutMs: config.timeoutMs,
     answerTokenLimit: definition.answerTokenLimit,
-    maxOutputBytes: (providerId === 'openai' && searchPolicy !== 'off' || providerId === 'anthropic' && searchPolicy === 'auto')
+    maxOutputBytes: (providerId === 'openai' && searchPolicy !== 'off' || providerId === 'anthropic' && searchPolicy === 'auto' || providerId === 'perplexity')
       ? 2 * 1024 * 1024 : null,
   };
 }

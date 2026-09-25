@@ -361,7 +361,7 @@ describe('adapters (§5.2)', () => {
     assert.equal(result.citations, undefined, 'Gemini generateContent has no native citation array');
   });
 
-  it('perplexity: fixture → ProviderResult with native citations mapped and deduped', async () => {
+  it('perplexity: retrieved results and final references remain separate', async () => {
     const { calls } = stubFetch([{ status: 200, body: fixture('perplexity') }]);
     const result = await perplexity.runPrompt('best AI meeting notes tool?', {
       apiKey: FAKE_KEY,
@@ -375,6 +375,17 @@ describe('adapters (§5.2)', () => {
     assert.match(result.text, /^Based on recent reviews/);
     assert.equal(result.model, 'sonar');
     assert.deepEqual(result.tokens, { input: 26, output: 144 });
+    assert.deepEqual(result.sources?.map(({ url, provenance, order }) => [url, provenance, order]), [
+      ['https://reviewradar.io/best-ai-meeting-notes', 'search_result', 0],
+      ['https://worktools.dev/guides/meeting-notes-2026', 'search_result', 1],
+      ['https://notewell.io/customers', 'search_result', 2],
+    ]);
+    assert.deepEqual(result.answerCitations?.map(({ url, provenance, sourceId }) => [url, provenance, sourceId]), [
+      ['https://reviewradar.io/best-ai-meeting-notes', 'explicit_reference', 'search-result:0'],
+      ['https://worktools.dev/guides/meeting-notes-2026', 'explicit_reference', 'search-result:1'],
+      ['https://notewell.io/customers', 'explicit_reference', 'search-result:2'],
+    ]);
+    assert.equal(result.searchActions, undefined);
     assert.deepEqual(result.citations, [
       { url: 'https://reviewradar.io/best-ai-meeting-notes' },
       { url: 'https://worktools.dev/guides/meeting-notes-2026' },
@@ -382,17 +393,57 @@ describe('adapters (§5.2)', () => {
     ]);
   });
 
-  it('perplexity: falls back to the flat citations array when search_results is absent', async () => {
+  it('perplexity: citations remain explicit when search_results is absent', async () => {
     const payload = fixture('perplexity');
     delete payload.search_results;
     stubFetch([{ status: 200, body: payload }]);
     const result = await perplexity.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 });
+    assert.deepEqual(result.sources, []);
+    assert.ok(result.answerCitations?.every(({ sourceId }) => sourceId === null));
     // The fixture's citations array repeats the first URL — dedupe must collapse it.
     assert.deepEqual(result.citations, [
       { url: 'https://reviewradar.io/best-ai-meeting-notes' },
       { url: 'https://worktools.dev/guides/meeting-notes-2026' },
       { url: 'https://notewell.io/customers' },
     ]);
+  });
+
+  it('perplexity: two results and one different citation produce two sources and one reference', async () => {
+    const payload = fixture('perplexity');
+    payload.search_results = payload.search_results.slice(0, 2);
+    payload.citations = ['https://reference.example/final'];
+    payload.choices[0].message.content = 'Recommended [1].';
+    stubFetch([{ status: 200, body: payload }]);
+    const result = await perplexity.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 });
+    assert.equal(result.sources?.length, 2);
+    assert.deepEqual(result.answerCitations, [{
+      url: 'https://reference.example/final', provenance: 'explicit_reference', sourceId: null,
+      start: 12, end: 15,
+    }]);
+    assert.deepEqual(result.citations, [{ url: 'https://reference.example/final' }]);
+    assert.equal(result.searchActions, undefined);
+  });
+
+  it('perplexity: a failed or truncated choice is not a complete answer', async () => {
+    const payload = fixture('perplexity');
+    payload.choices[0].finish_reason = 'length';
+    stubFetch([{ status: 200, body: payload }]);
+    const result = await perplexity.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 });
+    assert.equal(result.answerStatus, 'truncated');
+  });
+
+  it('perplexity: invalid numeric references never attach a wrong source', async () => {
+    const payload = fixture('perplexity');
+    payload.citations = [' https://reviewradar.io/best-ai-meeting-notes ', 'file:///private'];
+    payload.choices[0].message.content = 'See [2], then [1], and unsupported [3].';
+    payload.choices[0].finish_reason = null;
+    stubFetch([{ status: 200, body: payload }]);
+    const result = await perplexity.runPrompt('q', { apiKey: FAKE_KEY, timeoutMs: 1000 });
+    assert.equal(result.answerStatus, 'incomplete');
+    assert.deepEqual(result.answerCitations, [{
+      url: 'https://reviewradar.io/best-ai-meeting-notes', provenance: 'explicit_reference',
+      sourceId: 'search-result:0', start: 14, end: 17,
+    }]);
   });
 
   it('no adapter sends a system prompt or a temperature (§5.1)', async () => {
@@ -544,6 +595,30 @@ describe('runner (§8.1)', () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it('stores Perplexity result sources and final citations in separate evidence tables', async () => {
+    dbRun(db, 'UPDATE prompts SET active = 0 WHERE id = 2');
+    const payload = fixture('perplexity');
+    payload.search_results = payload.search_results.slice(0, 2);
+    payload.citations = ['https://reviewradar.io/best-ai-meeting-notes'];
+    payload.choices[0].message.content = 'Notewell is recommended [1].';
+    stubFetch([{ status: 200, body: payload }]);
+    const config = buildConfig({ PERPLEXITY_API_KEY: FAKE_KEY, HEARSAY_SAMPLES: '1' });
+    const summary = await runPanel({ db, config, adapters: { perplexity }, analyzeResponse: fakeAnalyze, env: {} });
+    assert.equal(summary.okCalls, 1);
+    const response = get(db, 'SELECT id, query_metadata_status, search_policy FROM responses LIMIT 1');
+    assert.equal(response.query_metadata_status, 'unavailable');
+    assert.equal(response.search_policy, 'legacy');
+    assert.deepEqual(all(db, 'SELECT url, provenance, original_order FROM source_observations WHERE response_id = ? ORDER BY original_order', [response.id]).map((row) => ({ ...row })), [
+      { url: 'https://reviewradar.io/best-ai-meeting-notes', provenance: 'search_result', original_order: 0 },
+      { url: 'https://worktools.dev/guides/meeting-notes-2026', provenance: 'search_result', original_order: 1 },
+    ]);
+    assert.deepEqual(all(db, 'SELECT url, provenance, answer_start, answer_end FROM answer_citations WHERE response_id = ?', [response.id]).map((row) => ({ ...row })), [
+      { url: 'https://reviewradar.io/best-ai-meeting-notes', provenance: 'explicit_reference', answer_start: 24, answer_end: 27 },
+    ]);
+    assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM search_events WHERE response_id = ?', [response.id]).n), 0);
+    assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM citations WHERE response_id = ?', [response.id]).n), 1);
   });
 
   it('fans out prompts × providers × samples and records everything', async () => {

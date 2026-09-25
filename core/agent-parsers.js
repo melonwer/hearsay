@@ -6,6 +6,7 @@
  */
 
 const DEFAULT_MAX_LINE_BYTES = 256 * 1024;
+const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_DEPTH = 32;
 const DEFAULT_MAX_EVENTS = 10_000;
 
@@ -31,6 +32,8 @@ export class AgentParseError extends Error {
  * @property {number|null} rank
  * @property {string|null} providerEventType
  * @property {string|null} actionId
+ * @property {string[]} [queries]
+ * @property {{url:string,title:string|null,rank:number|null}[]} [results]
  */
 
 /** @typedef {{inputTokens:number|null, outputTokens:number|null}} AgentUsage */
@@ -63,10 +66,13 @@ function assertDepth(value, depth, maxDepth) {
 
 /**
  * @param {string} input
- * @param {{maxLineBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
+ * @param {{maxLineBytes?:number, maxOutputBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
  * @returns {Record<string, unknown>[]}
  */
 function parseLines(input, options = {}) {
+  if (Buffer.byteLength(input) > (options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES)) {
+    throw new AgentParseError('event output limit exceeded');
+  }
   const maxLineBytes = options.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
   const maxEvents = options.maxEvents ?? DEFAULT_MAX_EVENTS;
@@ -93,7 +99,18 @@ function parseLines(input, options = {}) {
  * @returns {string|null}
  */
 function optionalString(value) {
-  return value === undefined || value === null ? null : String(value);
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+/** @param {unknown} value @returns {string|null} */
+function httpUrl(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -101,8 +118,44 @@ function optionalString(value) {
  * @returns {number|null}
  */
 function optionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+/** @param {...unknown} values @returns {string[]} */
+function exposedQueries(...values) {
+  /** @type {string[]} */
+  const queries = [];
+  for (const value of values) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (typeof item === 'string' && item.trim() !== '' && !queries.includes(item)) queries.push(item);
+    }
+  }
+  if (queries.length > 200) throw new AgentParseError('search query count limit exceeded');
+  return queries;
+}
+
+/** @param {unknown} value @returns {{url:string,title:string|null,rank:number|null}[]} */
+function exposedResults(value) {
+  /** @type {unknown[]} */
+  const items = Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : [];
+  /** @type {{url:string,title:string|null,rank:number|null}[]} */
+  const results = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const row = /** @type {Record<string,unknown>} */ (item);
+    if (httpUrl(row.url) !== null) {
+      results.push({ url: /** @type {string} */ (row.url), title: optionalString(row.title), rank: optionalNumber(row.rank ?? row.ordinal) });
+    }
+    if (Array.isArray(row.results)) {
+      results.push(...exposedResults(row.results));
+    } else if (Array.isArray(row.content)) {
+      results.push(...exposedResults(row.content));
+    }
+    if (results.length > 400) throw new AgentParseError('search result count limit exceeded');
+  }
+  return results;
 }
 
 /** @param {string|null} text @returns {string[]} */
@@ -127,7 +180,7 @@ function extractCitations(text) {
  * @returns {SearchEvent}
  */
 function evidence(eventType, status, input = {}) {
-  const url = optionalString(input.url);
+  const url = httpUrl(input.url);
   let domain = null;
   if (url) {
     try {
@@ -170,6 +223,7 @@ function webStatus(events, text) {
 function terminalSearchStatus(eventType, rawStatus) {
   const status = String(rawStatus ?? '').trim().toLowerCase();
   if (/(?:denied|forbidden|permission)/.test(status)) return 'denied';
+  if (eventType === 'item.failed') return 'failed';
   if (/(?:fail|error|quota|allowance|rate.?limit|throttl|limit|cancel|abort|timeout|unavailable|not.?available)/.test(status)) {
     return 'failed';
   }
@@ -195,7 +249,7 @@ function terminalSearchErrorCode(rawStatus, isError = false) {
 
 /**
  * @param {string} input
- * @param {{maxLineBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
+ * @param {{maxLineBytes?:number, maxOutputBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
  * @returns {ParsedAgentOutput}
  */
 export function parseCodexJsonl(input, options = {}) {
@@ -211,27 +265,28 @@ export function parseCodexJsonl(input, options = {}) {
     const item = event.item && typeof event.item === 'object' ? /** @type {Record<string, unknown>} */ (event.item) : event;
     const itemType = String(item.type ?? '').toLowerCase();
     const action = item.action && typeof item.action === 'object' ? /** @type {Record<string, unknown>} */ (item.action) : item;
-    if (itemType.includes('web_search') || itemType === 'websearch') {
+    if (itemType === 'web_search_call' || itemType === 'websearch') {
       const rawStatus = item.status ?? action.status;
       const status = terminalSearchStatus(eventType, rawStatus);
-      errorCode ??= terminalSearchErrorCode(rawStatus);
-      const firstResult = Array.isArray(item.results) && item.results.length > 0 && item.results[0] && typeof item.results[0] === 'object'
-        ? /** @type {Record<string, unknown>} */ (item.results[0])
-        : {};
+      errorCode ??= terminalSearchErrorCode(rawStatus, eventType === 'item.failed');
+      const queries = exposedQueries(action.query, action.queries, item.query, item.queries);
+      const results = exposedResults(item.results ?? action.results);
       const eventRow = evidence('search', status, {
-        query: action.query ?? item.query,
-        url: firstResult.url,
-        title: firstResult.title,
+        query: queries[0],
         timestamp: event.timestamp,
       });
+      eventRow.queries = queries;
+      eventRow.results = results;
       eventRow.providerEventType = eventType;
       eventRow.actionId = optionalString(item.id ?? action.id);
       searchEvents.push(eventRow);
-    } else if (itemType.includes('web_fetch') || itemType === 'webfetch') {
-      const eventRow = evidence('fetch', eventType === 'item.completed' ? 'completed' : 'started', {
+    } else if (itemType === 'web_fetch_call' || itemType === 'webfetch') {
+      const rawStatus = item.status ?? action.status;
+      const eventRow = evidence('fetch', terminalSearchStatus(eventType, rawStatus), {
         url: action.url ?? item.url,
         timestamp: event.timestamp,
       });
+      errorCode ??= terminalSearchErrorCode(rawStatus, eventType === 'item.failed');
       eventRow.providerEventType = eventType;
       eventRow.actionId = optionalString(item.id ?? action.id);
       searchEvents.push(eventRow);
@@ -246,6 +301,7 @@ export function parseCodexJsonl(input, options = {}) {
         outputTokens: optionalNumber(turnUsage.output_tokens ?? turnUsage.outputTokens),
       };
     }
+    if (eventType === 'turn.failed') errorCode ??= 'agent_failed';
   }
   return { text, searchEvents, citations: extractCitations(text), usage, webStatus: webStatus(searchEvents, text), errorCode, rawEvents };
 }
@@ -261,14 +317,14 @@ function contentItems(content) {
 
 /**
  * @param {string} input
- * @param {{maxLineBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
+ * @param {{maxLineBytes?:number, maxOutputBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
  * @returns {ParsedAgentOutput}
  */
 export function parseClaudeStreamJsonl(input, options = {}) {
   const rawEvents = parseLines(input, options);
   /** @type {SearchEvent[]} */
   const searchEvents = [];
-  /** @type {Map<string, {eventIndex:number, eventType:'search'|'fetch', query:string|null, url:string|null}>} */
+  /** @type {Map<string, number>} */
   const pending = new Map();
   let text = null;
   let errorCode = null;
@@ -283,20 +339,17 @@ export function parseClaudeStreamJsonl(input, options = {}) {
           const inputValue = item.input && typeof item.input === 'object' ? /** @type {Record<string, unknown>} */ (item.input) : {};
           if (name === 'WebSearch' || name === 'WebFetch') {
             const eventType = name === 'WebSearch' ? 'search' : 'fetch';
+            const queries = exposedQueries(inputValue.query, inputValue.queries);
             const row = evidence(eventType, 'started', {
-              query: inputValue.query,
+              query: queries[0],
               url: inputValue.url,
               timestamp: event.timestamp,
             });
+            row.queries = queries;
             row.providerEventType = 'tool_use';
             row.actionId = optionalString(item.id);
             searchEvents.push(row);
-            pending.set(String(item.id ?? ''), {
-              eventIndex: searchEvents.length - 1,
-              eventType,
-              query: row.query,
-              url: row.url,
-            });
+            if (row.actionId !== null) pending.set(row.actionId, searchEvents.length - 1);
           }
         }
       }
@@ -305,17 +358,28 @@ export function parseClaudeStreamJsonl(input, options = {}) {
       const userMessage = event.message && typeof event.message === 'object' ? /** @type {Record<string, unknown>} */ (event.message) : {};
       for (const item of contentItems(userMessage.content)) {
         if (item.type !== 'tool_result') continue;
-        const pendingEvent = pending.get(String(item.tool_use_id ?? ''));
-        if (!pendingEvent) continue;
-        const index = pendingEvent.eventIndex;
+        const toolId = optionalString(item.tool_use_id);
+        if (toolId === null) continue;
+        const index = pending.get(toolId);
+        if (index === undefined) continue;
+        pending.delete(toolId);
         const resultStatus = String(item.status ?? '').trim().toLowerCase();
         const failed = item.is_error === true
           || /(?:fail|error|quota|allowance|rate.?limit|throttl|limit|cancel|abort|timeout|unavailable|not.?available|denied|forbidden|permission)/.test(resultStatus);
-        searchEvents[index].status = failed ? 'failed' : 'completed';
+        searchEvents[index].status = failed
+          ? terminalSearchStatus('item.completed', item.status ?? (item.is_error === true ? 'failed' : null))
+          : 'completed';
+        if (failed && searchEvents[index].status === 'started') searchEvents[index].status = 'failed';
+        if (!failed && searchEvents[index].eventType === 'search') {
+          searchEvents[index].results = exposedResults(item.content ?? item.results);
+        }
         if (failed) errorCode ??= terminalSearchErrorCode(resultStatus, item.is_error === true);
       }
     }
     if (String(event.type ?? '') === 'result') {
+      if (event.is_error === true || (typeof event.subtype === 'string' && event.subtype.startsWith('error'))) {
+        errorCode ??= 'agent_failed';
+      }
       if (typeof event.result === 'string') text = event.result;
       if (event.usage && typeof event.usage === 'object') {
         const resultUsage = /** @type {Record<string, unknown>} */ (event.usage);

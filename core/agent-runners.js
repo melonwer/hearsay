@@ -157,7 +157,11 @@ export class SubscriptionAgentRunner {
       });
       let parsed;
       try {
-        parsed = this.parser(processResult.stdout, { maxLineBytes: Math.min(this.maxOutputBytes, 256 * 1024), maxEvents: 10_000 });
+        parsed = this.parser(processResult.stdout, {
+          maxLineBytes: Math.min(this.maxOutputBytes, 256 * 1024),
+          maxOutputBytes: this.maxOutputBytes,
+          maxEvents: 10_000,
+        });
       } catch {
         throw new SubscriptionRunnerError('event_parse_failed', 'Subscription CLI event stream could not be parsed');
       }

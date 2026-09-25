@@ -1,5 +1,5 @@
 /**
- * Perplexity adapter (§5.2) — the only provider with native citations.
+ * Perplexity Sonar adapter (§5.2).
  *
  * Verified at build time, 2026-07-26:
  * - Endpoint  `POST https://api.perplexity.ai/v1/sonar` with `Authorization: Bearer …`
@@ -10,9 +10,8 @@
  *   OpenAI-shaped Sonar endpoint stays the right fit for a single-user-message panel run.
  *   — https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview
  * - Response  `choices[0].message.content`, `model`, `usage.prompt_tokens` /
- *   `usage.completion_tokens`, plus citations in two shapes: `search_results[]`
- *   (objects with `url`, `title`, …) and `citations[]` (plain URL strings). We prefer
- *   `search_results` and fall back to `citations`.
+ *   `usage.completion_tokens`, `search_results[]` (retrieved context sources), and
+ *   `citations[]` (final reference URLs). These are distinct evidence layers.
  * - Default model `sonar` ("lightweight, cost-effective search model with grounding")
  *   — https://docs.perplexity.ai/getting-started/models — override with `PERPLEXITY_MODEL`.
  *
@@ -37,6 +36,22 @@ import {
 export const id = 'perplexity';
 export const endpoint = 'https://api.perplexity.ai/v1/sonar';
 
+/** @param {unknown} value @returns {string|null} */
+function httpUrl(value) {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'http:' || url.protocol === 'https:' ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** @param {unknown} value @returns {string|null} */
+function optionalText(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
 /** @param {unknown} json */
 function reportedUsage(json) {
   const usage = /** @type {{usage?:{prompt_tokens?:unknown,completion_tokens?:unknown}}|null} */ (json)?.usage;
@@ -45,7 +60,7 @@ function reportedUsage(json) {
 
 /**
  * @param {string} text the prompt, sent verbatim as the single user message
- * @param {{model?: string, timeoutMs?: number, apiKey?: string}} [opts]
+ * @param {{model?: string, timeoutMs?: number, apiKey?: string, maxResponseBytes?:number|null}} [opts]
  * @returns {Promise<ProviderResult>}
  */
 export async function runPrompt(text, opts = {}) {
@@ -66,11 +81,12 @@ export async function runPrompt(text, opts = {}) {
       },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: text }] }),
     },
-    { timeoutMs, usageFromResponse: reportedUsage },
+    { timeoutMs, usageFromResponse: reportedUsage,
+      maxResponseBytes: opts.maxResponseBytes ?? 2 * 1024 * 1024 },
   );
   const latencyMs = Date.now() - startedAt;
 
-  const data = /** @type {{model?: unknown, choices?: {message?: {content?: unknown}}[], citations?: unknown, search_results?: unknown, usage?: {prompt_tokens?: unknown, completion_tokens?: unknown}}|null} */ (
+  const data = /** @type {{model?: unknown, choices?: {message?: {content?: unknown}, finish_reason?:unknown}[], citations?: unknown, search_results?: unknown, usage?: {prompt_tokens?: unknown, completion_tokens?: unknown}}|null} */ (
     res.json
   );
   const { inputTokens: input, outputTokens: output } = reportedUsage(res.json);
@@ -79,21 +95,55 @@ export async function runPrompt(text, opts = {}) {
       billableAttempts(res, input, output));
   }
 
-  const rawCitations = Array.isArray(data.search_results)
-    ? data.search_results
-    : Array.isArray(data.citations)
-      ? data.citations
-      : [];
-  const citations = normalizeCitations(rawCitations);
+  const answerText = textFromContent(data.choices[0]?.message?.content);
+  const sources = Array.isArray(data.search_results)
+    ? data.search_results.flatMap((entry, order) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const source = /** @type {{url?:unknown,title?:unknown,snippet?:unknown}} */ (entry);
+      const url = httpUrl(source.url);
+      return url === null ? [] : [{
+        id: `search-result:${order}`, url, title: optionalText(source.title),
+        excerpt: typeof source.snippet === 'string' && Buffer.byteLength(source.snippet) <= 4096
+          ? optionalText(source.snippet) : null,
+        provenance: /** @type {const} */ ('search_result'),
+        actionId: null, order,
+      }];
+    }) : [];
+  const rawReferences = Array.isArray(data.citations) ? data.citations : [];
+  const citations = normalizeCitations(rawReferences).filter((citation) => httpUrl(citation.url) !== null);
+  const firstSourceByUrl = new Map();
+  for (const source of sources) if (!firstSourceByUrl.has(source.url)) firstSourceByUrl.set(source.url, source.id);
+  const firstSpanByReference = new Map();
+  for (const match of answerText.matchAll(/\[(\d+)\]/g)) {
+    const index = Number(match[1]) - 1;
+    const url = index >= 0 && index < rawReferences.length ? httpUrl(rawReferences[index]) : null;
+    if (url !== null && !firstSpanByReference.has(url)) {
+      firstSpanByReference.set(url, [match.index, match.index + match[0].length]);
+    }
+  }
+  const answerCitations = citations.map(({ url }) => {
+    const span = firstSpanByReference.get(url);
+    return {
+      url, provenance: /** @type {const} */ ('explicit_reference'),
+      sourceId: firstSourceByUrl.get(url) ?? null,
+      start: span?.[0] ?? null, end: span?.[1] ?? null,
+    };
+  });
+  const finishReason = data.choices[0]?.finish_reason;
+  const answerStatus = finishReason === 'length' ? 'truncated' : answerText.trim() === '' ? 'empty' :
+    finishReason === 'stop' ? 'complete' : 'incomplete';
 
   /** @type {ProviderResult} */
   const result = {
-    text: textFromContent(data.choices[0]?.message?.content),
+    text: answerText,
     model: typeof data.model === 'string' ? data.model : model,
     latencyMs,
     tokens: tokensOrUndefined(input, output),
     billableAttempts: billableAttempts(res, input, output),
+    answerStatus,
+    sources,
+    answerCitations,
+    citations,
   };
-  if (citations.length > 0) result.citations = citations;
   return result;
 }
