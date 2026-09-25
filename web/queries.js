@@ -11,6 +11,7 @@
  */
 
 import { all, get, userVersion } from '../core/db.js';
+import { assertReviewedSelection } from '../core/benchmark-draft.js';
 import { answerReview } from '../core/interpretations.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
@@ -125,6 +126,8 @@ export function colorIndexFor(entities) {
  * @property {'user_authored'|'suggested'|'imported'|'legacy'} origin
  * @property {string|null} approved_at
  * @property {string|null} promoted_at
+ * @property {string|null} source_note
+ * @property {boolean} reviewed
  */
 
 /**
@@ -132,7 +135,7 @@ export function colorIndexFor(entities) {
  * @returns {Prompt[]}
  */
 export function listPrompts(db) {
-  return all(db, 'SELECT id, intent_id, text, category, active, tracking_state, origin, approved_at, promoted_at FROM prompts ORDER BY intent_id ASC, id ASC').map(
+  return all(db, 'SELECT id, intent_id, text, category, active, tracking_state, origin, approved_at, promoted_at, source_note FROM prompts ORDER BY intent_id ASC, id ASC').map(
     (row) => ({
       id: Number(row.id),
       intent_id: row.intent_id === null || row.intent_id === undefined ? null : Number(row.intent_id),
@@ -143,6 +146,11 @@ export function listPrompts(db) {
       origin: /** @type {'user_authored'|'suggested'|'imported'|'legacy'} */ (String(row.origin ?? 'legacy')),
       approved_at: row.approved_at === null || row.approved_at === undefined ? null : String(row.approved_at),
       promoted_at: row.promoted_at === null || row.promoted_at === undefined ? null : String(row.promoted_at),
+      source_note: row.source_note === null || row.source_note === undefined ? null : String(row.source_note),
+      reviewed: Number(row.active) === 1 && String(row.tracking_state) === 'tracking' && (() => {
+        try { assertReviewedSelection(db, [Number(row.id)]); return true; }
+        catch { return false; }
+      })(),
     }),
   );
 }
@@ -153,6 +161,8 @@ export function listPrompts(db) {
  * @property {string} text
  * @property {number} active 0|1
  * @property {string} category
+ * @property {string|null} source_note
+ * @property {boolean} reviewed
  */
 
 /**
@@ -173,7 +183,7 @@ export function listIntents(db) {
   const intents = all(db, 'SELECT id, label FROM intents ORDER BY id ASC').map((row) => ({
     id: Number(row.id),
     label: String(row.label),
-    /** @type {{id: number, text: string, active: number, category: string}[]} */
+    /** @type {{id: number, text: string, active: number, category: string, source_note: string|null, reviewed:boolean}[]} */
     paraphrases: [],
   }));
   /** @type {Map<number, typeof intents[0]>} */
@@ -187,6 +197,8 @@ export function listIntents(db) {
       text: prompt.text,
       active: prompt.active,
       category: prompt.category,
+      source_note: prompt.source_note,
+      reviewed: prompt.reviewed,
     });
   }
   return intents;
@@ -615,12 +627,12 @@ export function exportAll(db) {
     'settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions',
     'citations', 'search_events', 'search_queries', 'source_observations',
     'answer_citations', 'usage_components', 'execution_profiles',
-    'benchmark_revisions', 'mention_interpretations', 'mention_corrections',
+    'benchmark_revisions', 'benchmark_drafts', 'mention_interpretations', 'mention_corrections',
     'query_themes', 'query_theme_assignments', 'alerts',
   ];
   /** @type {Record<string, unknown>} */
   const out = {
-    exportFormatVersion: 4,
+    exportFormatVersion: 5,
     databaseSchemaVersion: userVersion(db),
     exportedAt: `${new Date().toISOString().slice(0, 19)}Z`,
     tables: {},

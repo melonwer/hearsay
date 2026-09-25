@@ -92,6 +92,23 @@ test('invalid questions and stale reviews leave entities, intents, and prompts u
   } finally { db.close(); }
 });
 
+test('an active panel edit after review invalidates the approval and its call-count preview', () => {
+  const db = openDb(':memory:');
+  try {
+    const intentId = run(db, 'INSERT INTO intents(label, created_at) VALUES(?, ?)',
+      ['Earlier question', '2026-09-25T00:00:00Z']).lastInsertRowid;
+    const promptId = run(db, `INSERT INTO prompts(intent_id, text, category, active, created_at)
+      VALUES(?, ?, 'general', 1, ?)`, [intentId, 'Which older tool should we compare?', '2026-09-25T00:00:00Z']).lastInsertRowid;
+    const draft = createDraft(db, payload);
+    const review = reviewDraft(db, draft.id);
+    assert.equal(review.projectedActiveQuestionCount, 3);
+    run(db, 'UPDATE prompts SET text = ? WHERE id = ?', ['Which older app should we compare?', promptId]);
+    assert.throws(() => approveDraft(db, draft.id, draft.revision, review.reviewHash), /Review changed/);
+    assert.equal(get(db, 'SELECT COUNT(*) AS n FROM entities')?.n, 0);
+    assert.equal(get(db, 'SELECT COUNT(*) AS n FROM prompts')?.n, 1);
+  } finally { db.close(); }
+});
+
 test('case and space equivalent questions are rejected before any approval writes', () => {
   const db = openDb(':memory:');
   try {
@@ -106,6 +123,25 @@ test('case and space equivalent questions are rejected before any approval write
     assert.throws(() => approveDraft(db, draft.id, 1, review.reviewHash), /Duplicate question/);
     assert.equal(get(db, 'SELECT COUNT(*) AS n FROM entities')?.n, 0);
     assert.equal(get(db, 'SELECT COUNT(*) AS n FROM prompts')?.n, 0);
+  } finally { db.close(); }
+});
+
+test('a question naming only a competitor remains a reviewed comparison', () => {
+  const db = openDb(':memory:');
+  try {
+    const draft = createDraft(db, {
+      ...payload,
+      competitors: [{ name: 'Jotta' }],
+      intents: [{ label: 'Compare Jotta', category: 'comparison', paraphrases: [
+        { text: 'How does Jotta compare with other meeting tools?', selected: true },
+      ] }],
+    });
+    const review = reviewDraft(db, draft.id);
+    assert.deepEqual(review.validationErrors, []);
+    const receipt = approveDraft(db, draft.id, draft.revision, review.reviewHash);
+    assert.equal(receipt.created.prompts, 1);
+    assert.equal(get(db, 'SELECT category FROM prompts')?.category, 'comparison');
+    assertReviewedSelection(db, selectedIds(db));
   } finally { db.close(); }
 });
 

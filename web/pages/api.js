@@ -19,7 +19,7 @@ import { API_SEARCH_SCHEDULE_CONSENT_VERSION, apiScheduleQuoteId,
   saveApiSearchSchedule } from '../../core/api-search-schedule.js';
 import { stableIdentity } from '../../core/measurement-contract.js';
 import { sendJson, sendError } from '../router.js';
-import { metrics, NotReadyError, providers, runner, soft, strict, suggest } from '../data.js';
+import { metrics, NotReadyError, runner, soft, strict, suggest } from '../data.js';
 import {
   activePromptCount,
   brandEntity,
@@ -47,6 +47,9 @@ import {
   SURFACES,
 } from '../../core/subscription-model.js';
 import { PROMPT_CATEGORIES } from '../../core/suggest.js';
+import { createDraft, getDraft, updateDraft, reviewDraft, approveDraft,
+  reviewTrackingPrompt, validateTrackingQuestion, assertReviewedSelection,
+  recordCurrentBenchmarkRevision, mentionsBrandWord, BenchmarkDraftError } from '../../core/benchmark-draft.js';
 import {
   SubscriptionConfirmationError,
   SubscriptionRunError,
@@ -342,6 +345,7 @@ function createEntity({ db }, ctx) {
     ]);
     // Exactly one row carries is_self (§3) — enforced here, not by the schema.
     if (isSelf) makeSelf(db, result.lastInsertRowid);
+    recordCurrentBenchmarkRevision(db);
     return result.lastInsertRowid;
   });
 
@@ -387,6 +391,7 @@ function patchEntity({ db }, ctx) {
     if (isSelf === true) makeSelf(db, id);
     if (isSelf === false) run(db, 'UPDATE entities SET is_self = 0 WHERE id = ?', [id]);
     if (ambiguousName !== undefined) run(db, 'UPDATE entities SET ambiguous_name = ? WHERE id = ?', [ambiguousName ? 1 : 0, id]);
+    recordCurrentBenchmarkRevision(db);
   });
 
   return listEntities(db, { includeArchived: true }).find((entity) => entity.id === id) ?? null;
@@ -407,9 +412,11 @@ function deleteEntity({ db }, ctx) {
     // matches — and metrics stop counting it. citations.entity_id carries no FK, so a
     // hard delete here would leave dangling ids in /api/answers and /api/export.
     run(db, 'UPDATE entities SET archived_at = ? WHERE id = ?', [isoNow(), id]);
+    recordCurrentBenchmarkRevision(db);
     return { archived: true, mentions, citations };
   }
   run(db, 'DELETE FROM entities WHERE id = ?', [id]);
+  recordCurrentBenchmarkRevision(db);
   return { deleted: true };
 }
 
@@ -425,7 +432,12 @@ function deleteEntity({ db }, ctx) {
 function createPrompt({ db }, ctx) {
   const body = asObject(ctx.body);
   const text = /** @type {string} */ (str(body.text, 'text', { max: 300, required: true }));
-  const category = checkCategory(str(body.category, 'category', { max: 40 }));
+  if (body.reviewed !== true) throw new ApiError(422, 'review_required', 'Review this exact question and submit reviewed: true');
+  draftAction(() => validateTrackingQuestion(text));
+  const sourceNote = str(body.source_note, 'source_note', { max: 1000 }) ?? null;
+  const requestedCategory = checkCategory(str(body.category, 'category', { max: 40 }));
+  const brand = brandEntity(db);
+  const category = brand && mentionsBrandWord(text, aliasesFor(brand)) ? 'branded' : requestedCategory;
   const intentId = body.intent_id === undefined || body.intent_id === null ? null : idParam(String(body.intent_id));
 
   if (get(db, 'SELECT id FROM prompts WHERE text = ?', [text])) {
@@ -444,15 +456,19 @@ function createPrompt({ db }, ctx) {
         ? Number(existing.id)
         : run(db, 'INSERT INTO intents(label, created_at) VALUES(?, ?)', [text, isoNow()]).lastInsertRowid;
     }
-    return run(db, `INSERT INTO prompts(
-      intent_id, text, category, active, created_at, tracking_state, origin, approved_at
-    ) VALUES(?, ?, ?, 1, ?, 'tracking', 'user_authored', ?)`, [
+    const createdId = run(db, `INSERT INTO prompts(
+      intent_id, text, category, active, created_at, tracking_state, origin, approved_at, source_note
+    ) VALUES(?, ?, ?, 1, ?, 'tracking', 'user_authored', ?, ?)`, [
       target,
       text,
       category,
       isoNow(),
       isoNow(),
+      sourceNote,
     ]).lastInsertRowid;
+    draftAction(() => reviewTrackingPrompt(db, Number(createdId)));
+    recordCurrentBenchmarkRevision(db);
+    return createdId;
   });
 
   return listPrompts(db).find((prompt) => prompt.id === id) ?? null;
@@ -471,8 +487,18 @@ function patchPrompt({ db }, ctx) {
 
   const text = str(body.text, 'text', { max: 300 });
   const category = body.category === undefined ? undefined : checkCategory(str(body.category, 'category', { max: 40 }));
+  const brand = brandEntity(db);
+  const effectiveCategory = brand && mentionsBrandWord(text ?? existing.text, aliasesFor(brand)) ? 'branded' : category;
   const active = bool(body.active, 'active');
   const intentId = body.intent_id === undefined || body.intent_id === null ? undefined : idParam(String(body.intent_id));
+  const sourceNote = str(body.source_note, 'source_note', { max: 1000 });
+  const changesQuestion = (text !== undefined && text !== existing.text)
+    || (effectiveCategory !== undefined && effectiveCategory !== existing.category)
+    || (intentId !== undefined && intentId !== existing.intent_id);
+  if ((changesQuestion || (active === true && existing.active !== 1)) && body.reviewed !== true) {
+    throw new ApiError(422, 'review_required', 'Review this exact question and submit reviewed: true');
+  }
+  if (text !== undefined) draftAction(() => validateTrackingQuestion(text));
 
   if (existing.tracking_state === 'exploration' && (active === true || intentId !== undefined)) {
     throw new ApiError(409, 'promotion_required', 'Exploration prompts must be promoted explicitly before activation or assignment');
@@ -487,9 +513,14 @@ function patchPrompt({ db }, ctx) {
 
   transaction(db, () => {
     if (text !== undefined) run(db, 'UPDATE prompts SET text = ? WHERE id = ?', [text, id]);
-    if (category !== undefined) run(db, 'UPDATE prompts SET category = ? WHERE id = ?', [category, id]);
+    if (effectiveCategory !== undefined) run(db, 'UPDATE prompts SET category = ? WHERE id = ?', [effectiveCategory, id]);
     if (active !== undefined) run(db, 'UPDATE prompts SET active = ? WHERE id = ?', [active ? 1 : 0, id]);
     if (intentId !== undefined) run(db, 'UPDATE prompts SET intent_id = ? WHERE id = ?', [intentId, id]);
+    if (sourceNote !== undefined) run(db, 'UPDATE prompts SET source_note = ? WHERE id = ?', [sourceNote, id]);
+    if (body.reviewed === true && active !== false && existing.tracking_state === 'tracking') {
+      draftAction(() => reviewTrackingPrompt(db, id));
+    }
+    if (changesQuestion || active !== undefined) recordCurrentBenchmarkRevision(db);
   });
 
   return listPrompts(db).find((prompt) => prompt.id === id) ?? null;
@@ -558,10 +589,13 @@ function explorationApiView(prompt) {
 function promoteExploration({ db }, ctx) {
   const promptId = idParam(ctx.params.id);
   const body = asObject(ctx.body);
+  if (body.reviewed !== true) throw new ApiError(422, 'review_required', 'Review this exact exploration question and submit reviewed: true');
   const intentId = body.intent_id === undefined || body.intent_id === null ? null : idParam(String(body.intent_id));
   if (intentId === null) throw new ApiError(422, 'unprocessable', 'intent_id is required to promote an exploration prompt');
   try {
-    return explorationApiView(promotePrompt(db, promptId, intentId));
+    const promoted = promotePrompt(db, promptId, intentId);
+    recordCurrentBenchmarkRevision(db);
+    return explorationApiView(promoted);
   } catch (error) {
     if (error instanceof SubscriptionModelError) {
       const missing = error.message === 'No such prompt' || error.message === 'No such intent';
@@ -905,9 +939,11 @@ function deletePrompt({ db }, ctx) {
   const responses = Number(get(db, 'SELECT COUNT(*) AS n FROM responses WHERE prompt_id = ?', [id])?.n ?? 0);
   if (responses > 0) {
     run(db, 'UPDATE prompts SET active = 0 WHERE id = ?', [id]);
+    recordCurrentBenchmarkRevision(db);
     return { deactivated: true };
   }
   run(db, 'DELETE FROM prompts WHERE id = ?', [id]);
+  recordCurrentBenchmarkRevision(db);
   return { deleted: true };
 }
 
@@ -925,6 +961,7 @@ function patchIntent({ db }, ctx) {
     const clash = get(db, 'SELECT id FROM intents WHERE label = ? AND id != ?', [label, id]);
     if (clash) throw new ApiError(409, 'conflict', 'An intent with that label already exists');
     run(db, 'UPDATE intents SET label = ? WHERE id = ?', [label, id]);
+    recordCurrentBenchmarkRevision(db);
   }
   return listIntents(db).find((intent) => intent.id === id) ?? null;
 }
@@ -1015,64 +1052,118 @@ function readApiSearchSchedule({ db, config }) {
   return { schedule: getApiSearchSchedule(db), approved: apiSearchScheduleApproved(db, config) };
 }
 
-/** Names `core/suggest.js` may expose for its draft entry point (§6.7). */
-const SUGGEST_NAMES = ['suggestIntents', 'suggestPrompts', 'suggest', 'generateIntents'];
-
 /**
  * @param {ApiDeps} deps
  * @param {import('../router.js').Ctx} ctx
  * @returns {Promise<unknown>}
  */
-async function suggestPrompts({ db, config }, ctx) {
+async function suggestPrompts({ db }, ctx) {
   const body = asObject(ctx.body);
-  // Competitors ride along on every path (§6.7): the drafting model needs them for
-  // comparison intents, and the starter pack needs a rival name for its templates.
+  const context = body.context === undefined ? body : asObject(body.context);
+  const proposedBrand = body.brand === undefined || body.brand === null ? brandEntity(db) : asObject(body.brand);
+  const proposedCompetitors = body.competitors === undefined
+    ? listEntities(db).filter((e) => !e.is_self)
+    : objectList(body.competitors, 'competitors');
   const args = {
-    db,
-    config,
-    categoryHint: str(body.category_hint, 'category_hint', { max: 200 }),
-    keywords: str(body.keywords, 'keywords', { max: 500 }),
-    brand: brandEntity(db),
-    competitors: listEntities(db).filter((e) => !e.is_self),
+    productJob: str(context.productJob, 'productJob', { max: 200 }) ?? str(body.category_hint, 'category_hint', { max: 200 }) ?? '',
+    audience: str(context.audience, 'audience', { max: 200 }) ?? '',
+    desiredConversion: str(context.desiredConversion, 'desiredConversion', { max: 200 }) ?? '',
+    brand: proposedBrand,
+    competitors: proposedCompetitors,
   };
-  const first = config.enabledProviders[0];
-  const adapter = first === undefined ? null : providers.getAdapter(first.id);
-  if (first === undefined || adapter === null) {
-    // SPEC §3.4: never a dead end — same §20.3 pack the wizard uses, still draft-only.
-    const pack = strict(/** @type {*} */ (suggest), 'starterPack', args);
-    return { source: 'starter-pack', reason: 'no-provider-key', intents: /** @type {*} */ (pack)?.intents ?? pack };
+  const pack = strict(/** @type {*} */ (suggest), 'starterPack', args);
+  return { source: 'starter-pack', reason: 'zero-usage-local-draft', intents: /** @type {*} */ (pack)?.intents ?? pack };
+}
+
+/** @template T @param {() => T} action @returns {T} */
+function draftAction(action) {
+  try {
+    return action();
+  } catch (error) {
+    if (error instanceof BenchmarkDraftError) throw new ApiError(error.status, error.code, error.message);
+    throw error;
   }
-  const name = SUGGEST_NAMES.find((candidate) => typeof (/** @type {*} */ (suggest)[candidate]) === 'function');
-  if (name === undefined) throw new NotReadyError('suggest');
-  // Draft with the first enabled provider's own model (§6.7). The key comes from the
-  // injected config, not the adapter's module singleton — they diverge under test
-  // harnesses and any future multi-config embedding. Draft only — never persists.
-  const runPrompt = (/** @type {string} */ text) =>
-    adapter.runPrompt(text, { model: first.model, timeoutMs: config.timeoutMs, apiKey: first.apiKey });
-  const result = await Promise.resolve(strict(/** @type {*} */ (suggest), name, { ...args, runPrompt }));
-  const r = /** @type {*} */ (result);
-  // Provenance as the core reported it (§19.6 #10): 'llm' only when a model drafted.
-  const source = r?.source === undefined || r?.source === 'llm' ? 'llm' : 'starter-pack';
-  return { source, ...(r?.reason ? { reason: r.reason } : {}), intents: r?.intents ?? r };
+}
+
+/** @param {ApiDeps} deps @param {import('../router.js').Ctx} ctx */
+function createSetupDraft({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on.');
+  const body = asObject(ctx.body);
+  return draftAction(() => createDraft(db, body.payload));
+}
+
+/** @param {ApiDeps} deps @param {import('../router.js').Ctx} ctx */
+function updateSetupDraft({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on.');
+  const body = asObject(ctx.body);
+  return draftAction(() => updateDraft(db, idParam(ctx.params.id), Number(body.revision), body.payload));
+}
+
+/** @param {ApiDeps} deps @param {import('../router.js').Ctx} ctx */
+function reviewSetupDraft({ db, config }, ctx) {
+  const result = draftAction(() => reviewDraft(db, idParam(ctx.params.id)));
+  const count = result.projectedActiveQuestionCount;
+  const apiCalls = count * config.samples * config.enabledProviders.length;
+  const subscriptionCalls = count * config.subscriptionSamples * config.subscriptionSurfaces.length;
+  return { ...result, apiCalls, subscriptionCalls, totalCalls: apiCalls + subscriptionCalls,
+    hasRunRoute: config.enabledProviders.length + config.subscriptionSurfaces.length > 0 };
+}
+
+/** @param {ApiDeps} deps @param {import('../router.js').Ctx} ctx */
+function approveSetupDraft({ db, config }, ctx) {
+  if (config.demo) throw new ApiError(400, 'demo_mode', 'Demo mode is on.');
+  const body = asObject(ctx.body);
+  if (body.approve !== true) throw new ApiError(422, 'review_required', 'Explicit approve: true is required');
+  const receipt = draftAction(() => approveDraft(db, idParam(ctx.params.id), Number(body.revision), String(body.review_hash ?? '')));
+  const activeIds = all(db, `SELECT id FROM prompts WHERE active = 1 AND tracking_state = 'tracking' ORDER BY id`)
+    .map((row) => Number(row.id));
+  let panelReady = false;
+  try { assertReviewedSelection(db, activeIds); panelReady = true; }
+  catch (error) { if (!(error instanceof BenchmarkDraftError)) throw error; }
+  return { ...receipt, panelReady,
+    reviewNext: panelReady ? null : '/prompts',
+    continuityNotice: 'The next run uses a new benchmark revision; runs already queued keep their earlier question snapshots.' };
+}
+
+/** @param {ApiDeps} deps */
+function activePanelReview({ db, config }) {
+  const questions = all(db, `SELECT p.id, p.text, p.category, p.source_note, i.label AS intent
+    FROM prompts p LEFT JOIN intents i ON i.id = p.intent_id
+    WHERE p.tracking_state = 'tracking' AND p.active = 1 ORDER BY p.id`).map((row) => ({
+    id: Number(row.id), text: String(row.text), category: String(row.category),
+    intent: row.intent === null ? null : String(row.intent),
+    sourceNote: row.source_note === null ? null : String(row.source_note),
+  }));
+  const entities = all(db, `SELECT id, name, aliases, domains, is_self FROM entities
+    WHERE archived_at IS NULL ORDER BY id`).map((row) => ({
+    id: Number(row.id), name: String(row.name), aliases: String(row.aliases),
+    domains: String(row.domains), isSelf: Number(row.is_self) === 1,
+  }));
+  const count = questions.length;
+  const apiCalls = count * config.samples * config.enabledProviders.length;
+  const subscriptionCalls = count * config.subscriptionSamples * config.subscriptionSurfaces.length;
+  return { reviewHash: stableIdentity({ questions, entities }), questions, entities,
+    apiCalls, subscriptionCalls, totalCalls: apiCalls + subscriptionCalls,
+    continuityNotice: 'Changing a question or entity starts a new benchmark revision at the next run. Earlier answer snapshots stay unchanged.' };
+}
+
+/** @param {ApiDeps} deps @param {import('../router.js').Ctx} ctx */
+function approveActivePanel(deps, ctx) {
+  const body = asObject(ctx.body);
+  if (body.reviewed !== true) throw new ApiError(422, 'review_required', 'Review the exact active panel and submit reviewed: true');
+  return transaction(deps.db, () => {
+    const current = activePanelReview(deps);
+    if (current.reviewHash !== body.review_hash) {
+      throw new ApiError(409, 'stale_review', 'The active panel changed; review it again');
+    }
+    if (current.questions.length === 0) throw new ApiError(422, 'no_questions', 'Add at least one tracking question');
+    for (const question of current.questions) draftAction(() => reviewTrackingPrompt(deps.db, question.id));
+    return { reviewed: current.questions.length, reviewHash: current.reviewHash,
+      continuityNotice: current.continuityNotice };
+  });
 }
 
 const SETUP_CATEGORIES = PROMPT_CATEGORIES.includes('branded') ? PROMPT_CATEGORIES : [...PROMPT_CATEGORIES, 'branded'];
-
-/**
- * Brand-word test for PROMPT tagging (SPEC §3.2 branded auto-tag). Deliberately
- * stricter than the analyzer's §6.2 answer matching: a hyphen is word-INTERNAL here,
- * so "best acme-like tool?" is discovery phrasing (stays in SOV denominators) while
- * "is Acme any good?" is navigational (branded). See the SPEC §3.2 example.
- * @param {string} text
- * @param {string[]} aliases
- * @returns {boolean}
- */
-function mentionsBrandWord(text, aliases) {
-  return aliases.some((alias) => {
-    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, 'iu').test(text);
-  });
-}
 
 /**
  * `POST /api/setup` — SPEC §3.2 transactional bulk create/append, the backing
@@ -1089,6 +1180,9 @@ function setupTracking({ db, config }, ctx) {
   const brand = body.brand === undefined ? null : asObject(body.brand);
   const competitors = objectList(body.competitors, 'competitors');
   const intents = objectList(body.intents, 'intents');
+  if (intents.length > 0 && body.reviewed !== true) {
+    throw new ApiError(422, 'review_required', 'Review every exact question and submit reviewed: true');
+  }
   if (brand === null && competitors.length === 0 && intents.length === 0) {
     throw new ApiError(422, 'nothing_to_do', 'Provide at least one of brand, competitors, intents');
   }
@@ -1133,6 +1227,7 @@ function setupTracking({ db, config }, ctx) {
   };
   if (brand !== null) validateEntity(brand, 'brand');
   competitors.forEach((c, i) => validateEntity(c, `competitors[${i}]`));
+  const seenQuestions = new Set();
   intents.forEach((intent, i) => {
     check(`intents[${i}].label`, () => str(intent.label, 'label', { max: 300, required: true }));
     check(`intents[${i}].category`, () => {
@@ -1141,7 +1236,13 @@ function setupTracking({ db, config }, ctx) {
     });
     const ps = strList(intent.paraphrases, `intents[${i}].paraphrases`) ?? [];
     if (ps.length === 0) errors.push({ path: `intents[${i}].paraphrases`, message: 'each intent needs at least one paraphrase' });
-    ps.forEach((p, j) => check(`intents[${i}].paraphrases[${j}]`, () => str(p, 'paraphrase', { max: 300, required: true })));
+    ps.forEach((p, j) => check(`intents[${i}].paraphrases[${j}]`, () => {
+      const text = /** @type {string} */ (str(p, 'paraphrase', { max: 300, required: true }));
+      draftAction(() => validateTrackingQuestion(text));
+      const key = text.replace(/\s+/gu, ' ').toLocaleLowerCase();
+      if (seenQuestions.has(key)) throw new ApiError(422, 'duplicate_question', 'Duplicate paraphrase in this setup');
+      seenQuestions.add(key);
+    }));
   });
   if (errors.length > 0) {
     return new WithStatus(422, { error: { code: 'validation', message: `${errors.length} problem(s) — nothing was saved` }, errors });
@@ -1153,6 +1254,8 @@ function setupTracking({ db, config }, ctx) {
   const skipped = [];
   /** @type {string[]} */
   const retagged = [];
+  /** @type {number[]} */
+  const reviewedPromptIds = [];
   transaction(db, () => {
     /** @param {Record<string, unknown>} e @param {boolean} isSelf */
     const ensureEntity = (e, isSelf) => {
@@ -1188,12 +1291,13 @@ function setupTracking({ db, config }, ctx) {
         const text = /** @type {string} */ (str(raw, 'paraphrase', { max: 300, required: true }));
         if (get(db, 'SELECT id FROM prompts WHERE text = ?', [text])) {
           skipped.push({ type: 'prompt', value: text, reason: 'duplicate' });
+          reviewedPromptIds.push(Number(get(db, 'SELECT id FROM prompts WHERE text = ?', [text])?.id));
           continue;
         }
         // SOV-denominator invariant (SPEC §3.2): brand-name prompts are always 'branded'.
         const isBranded = brandAliases.length > 0 && mentionsBrandWord(text, brandAliases);
         if (isBranded && category !== 'branded') retagged.push(text);
-        run(db, `INSERT INTO prompts(
+        const inserted = run(db, `INSERT INTO prompts(
           intent_id, text, category, active, created_at, tracking_state, origin, approved_at
         ) VALUES(?, ?, ?, 1, ?, 'tracking', 'user_authored', ?)`, [
           intentId,
@@ -1202,9 +1306,12 @@ function setupTracking({ db, config }, ctx) {
           isoNow(),
           isoNow(),
         ]);
+        reviewedPromptIds.push(Number(inserted.lastInsertRowid));
         created.prompts += 1;
       }
     }
+    for (const promptId of reviewedPromptIds) draftAction(() => reviewTrackingPrompt(db, promptId));
+    recordCurrentBenchmarkRevision(db);
   });
 
   return {
@@ -1241,6 +1348,9 @@ async function startRun({ db, config }, ctx) {
     throw new ApiError(409, 'already_running', `Run ${running.id} in progress: ${running.done_calls}/${running.total_calls} calls done`);
   }
   if (typeof (/** @type {*} */ (runner).runPanel) !== 'function') throw new NotReadyError('runPanel');
+  const activeIds = all(db, `SELECT id FROM prompts WHERE active = 1 AND tracking_state = 'tracking' ORDER BY id`)
+    .map((row) => Number(row.id));
+  assertReviewedSelection(db, activeIds);
 
   // Callers always send a JSON body ({} at minimum) — the router 415s non-JSON POSTs.
   const body = ctx.body !== null && typeof ctx.body === 'object' && !Array.isArray(ctx.body) ? /** @type {Record<string, unknown>} */ (ctx.body) : {};
@@ -1297,13 +1407,19 @@ async function startRun({ db, config }, ctx) {
 function statusReport({ db, config, version }) {
   const brand = brandEntity(db);
   const activePrompts = activePromptCount(db);
+  const activeIds = all(db, `SELECT id FROM prompts WHERE active = 1 AND tracking_state = 'tracking' ORDER BY id`)
+    .map((row) => Number(row.id));
+  let panelReviewed = false;
+  try { assertReviewedSelection(db, activeIds); panelReviewed = true; }
+  catch (error) { if (!(error instanceof BenchmarkDraftError)) throw error; }
   /** @type {{totalUsd:number|null,knownSubtotalUsd:number|null,
    * costStatus:'known'|'partial'|'unavailable'}|null} */
   const spend = soft(/** @type {*} */ (metrics), 'actualSpend', { db, days: 30, now: isoNow() }, null);
   return {
     version,
     demo: config.demo,
-    configured: brand !== null && activePrompts > 0,
+    configured: brand !== null && activePrompts > 0 && (panelReviewed || config.demo),
+    reviewNeeded: !config.demo && activePrompts > 0 && !panelReviewed,
     providers: PROVIDER_IDS.map((id) => {
       const p = config.providers[id];
       return { id: p.id, label: p.label, model: p.model, enabled: p.enabled };
@@ -1510,6 +1626,10 @@ function json(handler, okStatus = 200) {
         sendError(ctx, err.status, err.message, {}, err.code);
         return;
       }
+      if (err instanceof BenchmarkDraftError) {
+        sendError(ctx, err.status, err.message, {}, err.code);
+        return;
+      }
       if (err instanceof NotReadyError) {
         sendError(ctx, 503, `${err.fnName} is not available in this build yet`, {}, 'not_ready');
         return;
@@ -1638,6 +1758,8 @@ export function registerApiRoutes(router, deps) {
     '/api/prompts',
     json((ctx) => createPrompt(deps, ctx), 201),
   );
+  router.add('GET', '/api/prompts/review', json(() => activePanelReview(deps)));
+  router.add('POST', '/api/prompts/review', json((ctx) => approveActivePanel(deps, ctx)));
   router.add(
     'POST',
     '/api/prompts/exploration',
@@ -1745,6 +1867,15 @@ export function registerApiRoutes(router, deps) {
     '/api/setup',
     json((ctx) => setupTracking(deps, ctx)),
   );
+  router.add('POST', '/api/setup/drafts', json((ctx) => createSetupDraft(deps, ctx), 201));
+  router.add('GET', '/api/setup/drafts/:id', json((ctx) => {
+    const draft = getDraft(db, idParam(ctx.params.id));
+    if (!draft) throw new ApiError(404, 'not_found', 'No such benchmark draft');
+    return draft;
+  }));
+  router.add('PUT', '/api/setup/drafts/:id', json((ctx) => updateSetupDraft(deps, ctx)));
+  router.add('GET', '/api/setup/drafts/:id/review', json((ctx) => reviewSetupDraft(deps, ctx)));
+  router.add('POST', '/api/setup/drafts/:id/approve', json((ctx) => approveSetupDraft(deps, ctx)));
   router.add(
     'GET',
     '/api/status',

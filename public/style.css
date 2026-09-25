@@ -322,6 +322,7 @@ p {
 .form-grid input,
 .form-grid textarea,
 #suggest-list input[type='text'],
+#suggest-list textarea,
 #suggest-list select {
   width: 100%;
   min-width: 0;
@@ -348,7 +349,7 @@ p {
 
 #suggest-list [data-suggest-phrasing] {
   display: grid;
-  grid-template-columns: 125px minmax(0, 2fr) minmax(0, 1fr) auto;
+  grid-template-columns: 125px minmax(0, 1fr) auto;
   align-items: end;
   gap: 8px;
   padding: 10px 0;
@@ -358,6 +359,17 @@ p {
 #suggest-list [data-suggest-phrasing] label:first-child {
   flex-direction: row;
   align-items: center;
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 22px;
+}
+
+#suggest-list [data-suggest-phrasing] label:nth-child(2) {
+  grid-column: 2 / 4;
+}
+
+#suggest-list [data-suggest-phrasing] label:nth-child(3) {
+  grid-column: 2;
 }
 
 #suggest-list [data-suggest-intent] > button {
@@ -475,6 +487,14 @@ p {
   .form-grid,
   #suggest-list [data-suggest-phrasing] {
     grid-template-columns: 1fr;
+  }
+
+  #suggest-list [data-suggest-phrasing] label:first-child,
+  #suggest-list [data-suggest-phrasing] label:nth-child(2),
+  #suggest-list [data-suggest-phrasing] label:nth-child(3) {
+    grid-column: 1;
+    grid-row: auto;
+    margin-top: 0;
   }
 
   .app {

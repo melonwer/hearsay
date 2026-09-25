@@ -9,6 +9,7 @@
 import { createHash } from 'node:crypto';
 
 import { get, isoNow, run, transaction } from './db.js';
+import { reviewTrackingPrompt, validateTrackingQuestion } from './benchmark-draft.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 
@@ -139,6 +140,7 @@ export function promotePrompt(db, promptId, intentId, now = new Date()) {
   if (!get(db, 'SELECT id FROM intents WHERE id = ?', [Number(intentId)])) {
     throw new SubscriptionModelError('No such intent');
   }
+  validateTrackingQuestion(prompt.text);
   const at = isoNow(typeof now === 'string' ? new Date(now) : now);
   transaction(db, () => {
     run(
@@ -148,6 +150,7 @@ export function promotePrompt(db, promptId, intentId, now = new Date()) {
         WHERE id = ? AND tracking_state = 'exploration' AND active = 0 AND intent_id IS NULL`,
       [Number(intentId), at, at, Number(promptId)],
     );
+    reviewTrackingPrompt(db, Number(promptId), at);
   });
   return promptView(/** @type {Record<string, unknown>} */ (get(db, 'SELECT * FROM prompts WHERE id = ?', [Number(promptId)])));
 }

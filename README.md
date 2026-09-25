@@ -96,7 +96,8 @@ claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
 Hearsay's tools appear only after the assistant reconnects. Quit Claude Code and start
 it again, then say "carry on setting up Hearsay". If they still do not show up, work
 over the JSON API instead, which needs no setup: `GET /api/status`,
-`POST /api/setup`, `GET /api/cost/estimate`, `POST /api/run`, `GET /api/runs/latest`,
+`POST /api/setup/drafts`, `GET /api/setup/drafts/:id/review`,
+`POST /api/setup/drafts/:id/approve`, `GET /api/cost/estimate`, `POST /api/run`, `GET /api/runs/latest`,
 `GET /api/series`, `GET /api/series/summary`, `GET /api/series/evidence?series_id=...&intent_id=...`,
 `GET /api/answers?series_id=...`,
 `GET /api/alerts`. `GET /api/summary?days=30` remains the legacy API view. There
@@ -108,6 +109,14 @@ group's supporting receipts to inspect the recorded action and source links. Que
 describe this configured panel, not customer search demand. Manual theme labels are
 separate from the provider's wording. The [evidence report guide](docs/evidence-report.md)
 explains the denominators and unknown associations.
+
+The setup wizard asks who buys, what job they need done, and the desired conversion.
+It offers five editable intent groups with three phrasings each, then shows the exact
+questions and first-run target count before approval. Fewer questions are fine.
+You can draft without any provider key or subscription route. A run needs at least
+one configured route. Source notes stay local; only approved question wording is
+sent for measurement. Language and market are planning preferences, not enforced
+provider controls. See the [benchmark setup guide](docs/benchmark-setup.md).
 
 MCP access and inference enablement are separate. Registering the Hearsay MCP server
 lets a client operate Hearsay; setting `HEARSAY_CODEX_ENABLED=1` or
@@ -164,12 +173,12 @@ port, choose an available one with `PORT=3100 node server.js`.
    brand, which would otherwise block your own.
 2. In the `hearsay` folder, copy `.env.example` to a new file called `.env`
    (`cp .env.example .env` in the terminal).
-3. Choose a signed-in Codex or Claude Code subscription runner below, or add optional
-   direct API keys such as `OPENAI_API_KEY=sk-...` for API measurements. One route is
-   enough to start.
-4. Run `node server.js` again and open the printed local URL with `/setup` appended in
+3. Run `node server.js` again and open the printed local URL with `/setup` appended in
    your browser. The port is also available with `tr -d '\\n' < data/hearsay.port`.
-   Type that address in; there is no link to it in the menu.
+   Type that address in; there is no link to it in the menu. Draft and review buyer
+   questions here without a provider key.
+4. Before running, choose a signed-in Codex or Claude Code subscription runner below,
+   or add an optional direct API key such as `OPENAI_API_KEY=sk-...`. One route is enough.
 
 ### Use a Codex subscription runner
 
@@ -253,7 +262,7 @@ everything. Quit Claude Desktop completely and reopen it afterwards.
 ```
 
 Now ask it "how's our AI visibility this week?" and it answers from your own
-measurements. Eighteen tools cover setup, exploration questions, exact-surface
+measurements. The tools cover setup, exploration questions, exact-surface
 subscription previews/runs, scheduling, cost quotes, results and alerts. Your
 assistant uses its own model to talk to you. Reading results does not trigger a new
 Hearsay measurement run or optional provider-API spend; the assistant interaction

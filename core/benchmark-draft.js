@@ -1,4 +1,4 @@
-import { containsAlias, MIN_ALIAS_LENGTH } from './analyze.js';
+import { MIN_ALIAS_LENGTH } from './analyze.js';
 import { all, get, isoNow, run, transaction } from './db.js';
 import { benchmarkRevision, stableIdentity } from './measurement-contract.js';
 import { PROMPT_CATEGORIES } from './suggest.js';
@@ -205,6 +205,14 @@ function duplicateKey(value) {
   return value.trim().replace(/\s+/gu, ' ').toLocaleLowerCase();
 }
 
+/** @param {string} text @param {string[]} aliases */
+export function mentionsBrandWord(text, aliases) {
+  return aliases.some((alias) => {
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\w-])${escaped}(?![\\w-])`, 'iu').test(text);
+  });
+}
+
 /** @param {Record<string, unknown>} payload @param {ReturnType<typeof entitySnapshot>} current */
 function reviewPayload(payload, current) {
   /** @type {{path:string,message:string}[]} */
@@ -282,7 +290,7 @@ function reviewPayload(payload, current) {
       const key = duplicateKey(text);
       if (seenText.has(key)) validationErrors.push({ path: `intents[${i}].paraphrases[${j}].text`, message: 'Duplicate question' });
       seenText.add(key);
-      const namesBrand = brandAliases.length > 0 && containsAlias(text, brandAliases);
+      const namesBrand = brandAliases.length > 0 && mentionsBrandWord(text, brandAliases);
       const category = namesBrand ? 'branded' : intent.category;
       if (namesBrand && intent.category !== 'branded') retaggedBranded.push(text);
       if (category === 'branded' && !namesBrand) {
@@ -319,10 +327,13 @@ export function reviewDraft(db, id) {
   if (!draft) throw new BenchmarkDraftError('not_found', 'No such draft', 404);
   const current = entitySnapshot(db);
   const summary = reviewPayload(draft.payload, current);
+  const activeQuestions = all(db, `SELECT id, intent_id, text, category FROM prompts
+    WHERE tracking_state = 'tracking' AND active = 1 ORDER BY id`);
   return {
     draftId: id,
     revision: draft.revision,
-    reviewHash: stableIdentity({ id, revision: draft.revision, payload: draft.payload, entities: current }),
+    reviewHash: stableIdentity({ id, revision: draft.revision, payload: draft.payload,
+      entities: current, activeQuestions }),
     projectedActiveQuestionCount: projectedPanel(db, summary),
     ...summary,
   };
@@ -373,10 +384,18 @@ export function reviewTrackingPrompt(db, promptId, at = isoNow()) {
     throw new BenchmarkDraftError('review_required', 'Promote this exploration question before reviewing it', 409);
   }
   validateTrackingQuestion(row.text);
+  const key = duplicateKey(String(row.text));
+  const duplicate = all(db, `SELECT id, text FROM prompts WHERE id != ? AND active = 1
+    AND tracking_state = 'tracking'`, [promptId]).find((other) => duplicateKey(String(other.text)) === key);
+  if (duplicate) throw new BenchmarkDraftError('duplicate_question', 'An equivalent tracking question already exists');
   const brand = entitySnapshot(db).find((entity) => entity.role === 'brand');
   const aliases = brand ? [brand.name, ...brand.aliases] : [];
-  if (aliases.length && containsAlias(String(row.text), aliases) && row.category !== 'branded') {
+  const namesBrand = aliases.length > 0 && mentionsBrandWord(String(row.text), aliases);
+  if (namesBrand && row.category !== 'branded') {
     throw new BenchmarkDraftError('invalid_question', 'A question naming the tracked brand must use the branded category');
+  }
+  if (!namesBrand && row.category === 'branded') {
+    throw new BenchmarkDraftError('invalid_question', 'A branded question must name the tracked brand');
   }
   const fingerprint = promptFingerprint(db, row);
   run(db, 'UPDATE prompts SET approved_at = ?, approval_fingerprint = ? WHERE id = ?', [at, fingerprint, promptId]);
@@ -393,7 +412,11 @@ export function assertReviewedSelection(db, promptIds) {
   if (rows.length !== new Set(promptIds).size) {
     throw new BenchmarkDraftError('review_required', 'The selected question set has changed; review it again', 409);
   }
+  const seen = new Set();
   for (const row of rows) {
+    const key = duplicateKey(String(row.text));
+    if (seen.has(key)) throw new BenchmarkDraftError('duplicate_question', 'Equivalent tracking questions must be resolved before running', 409);
+    seen.add(key);
     if (row.tracking_state !== 'tracking' || Number(row.active) !== 1 || !row.approved_at ||
       !row.approval_fingerprint || row.approval_fingerprint !== promptFingerprint(db, row)) {
       throw new BenchmarkDraftError('review_required', 'Tracking questions or entities changed; review the panel before running', 409);

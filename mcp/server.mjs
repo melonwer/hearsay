@@ -222,17 +222,20 @@ const TOOLS = [
   {
     name: 'hearsay_suggest_prompts',
     description:
-      'Draft tracking intents and paraphrases for the configured brand — the answer to "I don’t know which prompts to track". Returns a DRAFT ONLY; nothing is saved. Show the draft to the human for review, then persist the approved set with hearsay_setup_tracking. Works without provider keys (built-in starter pack).',
+      'Return five editable buyer intent groups with three complete phrasings each. This is a local, zero-usage draft; no provider key or measurement route is needed. Show the exact wording to the human before tracking.',
     inputSchema: obj({
-      category_hint: { type: 'string', description: 'Product category, e.g. "AI meeting notes tool"' },
-      keywords: { type: 'string', description: 'Pasted SEO keywords or topics to steer the draft' },
+      audience: { type: 'string', description: 'Who is making the buying decision' },
+      product_job: { type: 'string', description: 'Product or job the buyer needs done' },
+      desired_conversion: { type: 'string', description: 'Action the buyer should take' },
     }),
-    call: (a) => ({ method: 'POST', path: '/api/prompts/suggest', body: { category_hint: a?.category_hint, keywords: a?.keywords } }),
+    call: (a) => ({ method: 'POST', path: '/api/prompts/suggest', body: {
+      context: { audience: a?.audience, productJob: a?.product_job, desiredConversion: a?.desired_conversion },
+    } }),
   },
   {
     name: 'hearsay_setup_tracking',
     description:
-      'Set up or extend AI-visibility tracking in one transactional call: create the brand, competitors, and the intent/paraphrase prompt panel Hearsay measures across ChatGPT, Claude, Gemini and Perplexity. Existing names/prompts are skipped and reported, never duplicated. Only call with prompts the human has reviewed in this conversation.',
+      'Set up brand, competitors, and buyer questions in one transaction. Only use for exact questions the human reviewed in this conversation; set reviewed=true explicitly. A new draft/review/approval workflow is available through hearsay_create_benchmark_draft, hearsay_review_benchmark_draft, and hearsay_approve_benchmark_draft. No measurement route is needed to draft.',
     inputSchema: obj({
       brand: obj(ENTITY_FIELDS),
       competitors: { type: 'array', items: obj(ENTITY_FIELDS) },
@@ -247,8 +250,31 @@ const TOOLS = [
           ['label', 'paraphrases'],
         ),
       },
+      reviewed: { type: 'boolean', description: 'True only after the human reviewed every exact tracking question' },
     }),
     call: (a) => ({ method: 'POST', path: '/api/setup', body: a ?? {} }),
+  },
+  {
+    name: 'hearsay_create_benchmark_draft',
+    description: 'Save a buyer-focused benchmark draft without running or approving it. Include buyer context, optional brand/competitors, intent groups, and per-question source notes. Source notes stay local.',
+    inputSchema: obj({ payload: { type: 'object', description: 'Draft payload: version 1, context, optional brand and competitors, intents with label/category/paraphrases containing text, sourceNote, selected' } }, ['payload']),
+    call: (a) => ({ method: 'POST', path: '/api/setup/drafts', body: { payload: a?.payload } }),
+  },
+  {
+    name: 'hearsay_review_benchmark_draft',
+    readOnly: true,
+    description: 'Review the exact selected questions, validation problems, category counts, and zero-spend run target count. Relay this review to the human before approval.',
+    inputSchema: obj({ draft_id: { type: 'integer', minimum: 1 } }, ['draft_id']),
+    call: (a) => ({ method: 'GET', path: `/api/setup/drafts/${a?.draft_id}/review` }),
+  },
+  {
+    name: 'hearsay_approve_benchmark_draft',
+    description: 'Approve the exact draft revision and review hash after the human has reviewed its questions. This atomically activates tracking questions but does not start a measurement run.',
+    inputSchema: obj({ draft_id: { type: 'integer', minimum: 1 }, revision: { type: 'integer', minimum: 1 }, review_hash: { type: 'string' }, approve: { type: 'boolean' } },
+      ['draft_id', 'revision', 'review_hash', 'approve']),
+    call: (a) => ({ method: 'POST', path: `/api/setup/drafts/${a?.draft_id}/approve`, body: {
+      revision: a?.revision, review_hash: a?.review_hash, approve: a?.approve,
+    } }),
   },
   {
     name: 'hearsay_run_panel',
@@ -332,9 +358,9 @@ const TOOLS = [
   {
     name: 'hearsay_exploration_promote',
     description:
-      'Explicitly promote one inactive exploration question into an approved tracking intent. Historical responses keep their original exploration lane, prompt snapshot, and provenance.',
-    inputSchema: obj({ prompt_id: { type: 'integer', minimum: 1 }, intent_id: { type: 'integer', minimum: 1 } }, ['prompt_id', 'intent_id']),
-    call: (a) => ({ method: 'POST', path: `/api/prompts/${Number(a?.prompt_id)}/promote`, body: { intent_id: Number(a?.intent_id) } }),
+      'Promote an inactive exploration question only after the human reviews its exact wording and target intent. Historical responses keep their original exploration lane and prompt snapshot.',
+    inputSchema: obj({ prompt_id: { type: 'integer', minimum: 1 }, intent_id: { type: 'integer', minimum: 1 }, reviewed: { type: 'boolean' } }, ['prompt_id', 'intent_id', 'reviewed']),
+    call: (a) => ({ method: 'POST', path: `/api/prompts/${Number(a?.prompt_id)}/promote`, body: { intent_id: Number(a?.intent_id), reviewed: a?.reviewed } }),
   },
   {
     name: 'hearsay_run_status',

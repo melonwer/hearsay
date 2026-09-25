@@ -15,6 +15,7 @@ import { CodexCliRunner, ClaudeCliRunner, SubscriptionAgentRunner } from './agen
 import { CLAUDE_SURFACE, CODEX_SURFACE } from './agent-profiles.js';
 import { subscriptionExecutionBudget } from './execution-budget.js';
 import { benchmarkRevision, executionProfile, stableIdentity } from './measurement-contract.js';
+import { assertReviewedSelection } from './benchmark-draft.js';
 import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from './measurement-storage.js';
 import { normalizeSubscriptionEvidence } from './subscription-evidence.js';
 import { runStatusFromTargets } from './subscription-model.js';
@@ -73,6 +74,7 @@ function selectPrompts(db, lane, promptIds) {
           : `SELECT id, intent_id, text, category, tracking_state, origin FROM prompts WHERE tracking_state = 'exploration' ORDER BY id`,
       );
   if (rows.length === 0) throw new SubscriptionRunError('no_prompts', 'No prompts are available for this subscription run');
+  if (lane === 'tracking') assertReviewedSelection(db, rows.map((row) => Number(row.id)));
   return rows.map((row) => ({
     promptId: Number(row.id),
     promptText: String(row.text),

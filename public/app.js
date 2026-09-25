@@ -607,11 +607,17 @@ function suggestPhrase(phrase) {
   check.checked = phrase.selected !== false;
   check.setAttribute('data-suggest-check', '');
   row.append(suggestLabel('Track this phrasing', check));
-  const question = suggestInput(phrase.text, 'data-suggest-text');
+  const question = document.createElement('textarea');
+  question.rows = 2;
+  question.value = phrase.text;
+  question.setAttribute('data-suggest-text', '');
   question.maxLength = 300;
   question.required = true;
   row.append(suggestLabel('Exact buyer question', question));
-  const note = suggestInput(phrase.sourceNote ?? '', 'data-suggest-note');
+  const note = document.createElement('textarea');
+  note.rows = 2;
+  note.value = phrase.sourceNote ?? '';
+  note.setAttribute('data-suggest-note', '');
   row.append(suggestLabel('Source note (local only)', note));
   const remove = document.createElement('button');
   remove.type = 'button';
@@ -713,11 +719,16 @@ function initSuggest() {
   try { entities = JSON.parse(list.getAttribute('data-entities') ?? '[]'); } catch { /* no saved entities */ }
   const brand = entities.find((entity) => entity.isSelf);
   const competitors = entities.filter((entity) => !entity.isSelf);
+  let draftBrand = null;
+  let draftCompetitors = [];
   const payload = () => ({
     version: 1,
     context: context(),
-    ...(brand ? { brand: { name: brand.name, aliases: brand.aliases, domains: brand.domains } } : {}),
-    competitors: competitors.map(({ name, aliases, domains }) => ({ name, aliases, domains })),
+    ...(brand ? { brand: { name: brand.name, aliases: brand.aliases, domains: brand.domains } }
+      : draftBrand ? { brand: draftBrand } : {}),
+    competitors: competitors.length > 0
+      ? competitors.map(({ name, aliases, domains }) => ({ name, aliases, domains }))
+      : draftCompetitors,
     intents: [...list.querySelectorAll('[data-suggest-intent]')].map((block) => ({
       label: suggestValue(block, '[data-suggest-label]'),
       category: suggestValue(block, '[data-suggest-category]'),
@@ -733,6 +744,8 @@ function initSuggest() {
   const showDraft = (saved) => {
     draftId = Number(saved.id);
     revision = Number(saved.revision);
+    draftBrand = saved.payload?.brand ?? null;
+    draftCompetitors = saved.payload?.competitors ?? [];
     list.replaceChildren(...(saved.payload?.intents ?? []).map(suggestIntent));
     for (const [name, value] of Object.entries(saved.payload?.context ?? {})) {
       const field = form.querySelector(`[name="${name}"]`);
@@ -787,7 +800,7 @@ function initSuggest() {
     reviewHash = reviewed.data.reviewHash;
     reviewDetails.replaceChildren();
     const summary = document.createElement('p');
-    summary.textContent = `${reviewed.data.selectedQuestionCount} selected question(s). First run: ${reviewed.data.apiCalls} API calls and ${reviewed.data.subscriptionCalls} subscription calls, ${reviewed.data.totalCalls} total.`;
+    summary.textContent = `${reviewed.data.selectedQuestionCount} selected question(s); ${reviewed.data.projectedActiveQuestionCount} active after approval. First run: ${reviewed.data.apiCalls} API calls and ${reviewed.data.subscriptionCalls} subscription calls, ${reviewed.data.totalCalls} total.`;
     reviewDetails.append(summary);
     const route = document.createElement('p');
     route.textContent = reviewed.data.hasRunRoute
@@ -797,11 +810,14 @@ function initSuggest() {
     const notes = document.createElement('p');
     notes.textContent = 'Only the exact selected question text goes to providers. Source and context notes stay local.';
     reviewDetails.append(notes);
+    const reviewEntities = document.createElement('p');
+    reviewEntities.textContent = `Brand: ${current.brand?.name ?? 'none'}; competitors: ${current.competitors.map((entry) => entry.name).join(', ') || 'none'}.`;
+    reviewDetails.append(reviewEntities);
     const questions = document.createElement('ol');
     for (const intent of reviewed.data.selectedIntents ?? []) {
       for (const phrase of intent.paraphrases) {
         const item = document.createElement('li');
-        item.textContent = `${intent.label} (${phrase.category === 'general' ? 'discovery' : phrase.category}): ${phrase.text}`;
+        item.textContent = `${intent.label} (${phrase.category === 'general' ? 'discovery' : phrase.category}): ${phrase.text}${phrase.sourceNote ? ` — source note: ${phrase.sourceNote}` : ''}`;
         questions.append(item);
       }
     }
@@ -830,10 +846,12 @@ function initSuggest() {
     revision = null;
     reviewHash = null;
     reviewPanel.hidden = true;
-    status.textContent = 'Questions approved for tracking. Edits to questions, competitors, or aliases create a new benchmark revision. Runs already queued keep their original question snapshots.';
+    status.textContent = result.data.panelReady
+      ? 'Questions approved for tracking. Edits to questions, competitors, or aliases create a new benchmark revision. Runs already queued keep their original question snapshots.'
+      : 'Selected questions were approved. Other active questions still need review before a run can start.';
     const next = document.createElement('a');
-    next.href = '/setup?step=3';
-    next.textContent = 'Review run options';
+    next.href = result.data.panelReady ? '/setup?step=3' : '/prompts';
+    next.textContent = result.data.panelReady ? 'Review run options' : 'Review active panel';
     status.append(' ', next);
     status.hidden = false;
   });

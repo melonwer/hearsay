@@ -17,6 +17,7 @@ import { priceUsage, summarizeComputedCosts } from './cost.js';
 import { ProviderError } from './providers/shared.js';
 import { adapters as defaultAdapters } from './providers/index.js';
 import { benchmarkRevision, executionProfile } from './measurement-contract.js';
+import { assertReviewedSelection } from './benchmark-draft.js';
 import { apiExecutionBudget } from './execution-budget.js';
 import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from './measurement-storage.js';
 // Namespace imports: these modules belong to another lane and may still be stubs while
@@ -264,6 +265,7 @@ async function executeRun(options) {
 
   const providers = config.enabledProviders;
   const prompts = all(db, 'SELECT id, intent_id, text, category, origin FROM prompts WHERE active = 1 ORDER BY id');
+  assertReviewedSelection(db, prompts.map((prompt) => Number(prompt.id)));
   const entities = loadEntities(db);
   const benchmark = prompts.length === 0 ? null : benchmarkRevision({
     questions: prompts.map((prompt) => ({

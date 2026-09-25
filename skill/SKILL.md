@@ -22,19 +22,29 @@ Call `hearsay_status` before anything else, then branch:
 
 ## Onboarding playbook (unconfigured instance)
 
-1. Ask the human at most two questions: their brand (+ domain), and their main
-   competitors. Ask for a category description only if it isn't obvious.
-2. `hearsay_suggest_prompts` with what you learned.
-3. **Show the full draft** — every intent and paraphrase — and ask what to keep.
-   **HARD RULE: never call `hearsay_setup_tracking` with prompts the human has
-   not seen in this conversation.** The draft is a draft; the human decides.
-4. `hearsay_setup_tracking` with the approved set (brand + competitors + intents).
-5. `hearsay_run_panel` `{}`. If it returns `quote_required`, relay the calls and
-   estimated cost and get an explicit yes before calling again with
-   `confirm: true`. **Never confirm spend the human hasn't approved in this
-   conversation.**
-6. Poll `hearsay_run_status` until `done`. Call `hearsay_series_list`, then report
-   `hearsay_series_summary` for the selected series using the rules below.
+1. Ask for the brand, the buyer audience, the product or job, and the desired
+   conversion. Competitors are optional. Ask for language and market preferences
+   as planning context; these are not provider locale controls.
+2. Ask for buyer questions and where they came from. Keep pasted sales or support
+   material in local source notes. Only exact reviewed question text can become a
+   measurement prompt.
+3. Use `hearsay_suggest_prompts` for a local five-intent starter if useful. It
+   needs no provider key and spends no measurement or analysis allowance. Edit
+   the groups with the human; fewer than five intents or three phrasings are fine.
+4. Save the selected questions with `hearsay_create_benchmark_draft`, then use
+   `hearsay_review_benchmark_draft`. Show every exact phrase, category, validation
+   problem, and the actual API plus subscription target count. Approve with
+   `hearsay_approve_benchmark_draft` only after the human reviews that exact revision.
+   For the older `hearsay_setup_tracking` route, set `reviewed: true` only after
+   showing every exact question to the human.
+5. Drafting needs no measurement route. Running needs at least one configured API
+   provider or subscription-agent surface. For API measurement, call
+   `hearsay_run_panel` and relay any `quote_required` cost before retrying with
+   `confirm: true` and its `quote_id`. For a subscription-only installation, use
+   the subscription preview and confirmation flow. Never confirm usage or cost
+   the human has not approved in this conversation.
+6. Poll the chosen run until completion. Call `hearsay_series_list`, then report
+   `hearsay_series_summary` for its selected series using the rules below.
 
 ## Honesty rules (bind your narration, not just the UI)
 
