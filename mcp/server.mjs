@@ -5,7 +5,10 @@
  * Hearsay over HTTP at HEARSAY_URL — this process holds no API keys and opens no DB.
  */
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+import { withEnvFile } from '../core/env-file.js';
 import { resolveHearsayUrl } from '../core/port-discovery.js';
 // [VERIFY-AT-BUILD]: verified 2026-07-26 against modelcontextprotocol.io/specification/versioning
 // — current revision is 2025-11-25; earlier revisions remain valid to echo.
@@ -482,7 +485,8 @@ async function dispatch(msg) {
         /** @param {boolean} isError @param {string} text */
         const content = (isError, text) =>
           reply(id, { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
-        const backend = resolveHearsayUrl();
+        const backend = resolveHearsayUrl(withEnvFile(process.env,
+          resolve(dirname(fileURLToPath(import.meta.url)), '../.env')));
         if (backend.url === null) {
           content(true, JSON.stringify({ error: { code: 'unreachable', message: backend.message } }));
           return;

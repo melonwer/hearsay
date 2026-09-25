@@ -39,6 +39,27 @@ test('restart after an old API run records a missed occurrence without spending 
   }
 });
 
+test('an API schedule rejection before run creation is recorded as failed', async () => {
+  const db = openDb(':memory:');
+  const config = buildConfig({ OPENAI_API_KEY: 'fixture', HEARSAY_RUN_AT: '07:00' });
+  let clock = new Date(2026, 8, 25, 6, 0, 0);
+  const scheduler = startScheduler({ db, config, now: () => clock,
+    runPanel: async () => { throw new Error('preflight rejected'); }, log: () => {} });
+  try {
+    clock = new Date(2026, 8, 25, 7, 0, 0);
+    assert.equal(await scheduler.tick(), false);
+    assert.equal(get(db, "SELECT status FROM runs WHERE schedule_key = 'api-panel'")?.status, 'failed');
+    const health = trackingHealth({ db, config, now: clock });
+    assert.equal(health.api.recentIssues[0]?.status, 'failed');
+    assert.equal(health.api.stale, true);
+    assert.equal(await scheduler.tick(), false);
+    assert.equal(Number(get(db, "SELECT COUNT(*) AS n FROM runs WHERE schedule_key = 'api-panel'")?.n), 1);
+  } finally {
+    scheduler.stop();
+    db.close();
+  }
+});
+
 test('subscription-only tracking shows a next occurrence and changed profile requires new consent', () => {
   const db = openDb(':memory:');
   const config = buildConfig({ HEARSAY_CODEX_ENABLED: '1' });
@@ -58,7 +79,7 @@ test('subscription-only tracking shows a next occurrence and changed profile req
     assert.equal(afterChange.subscription.enabled, true);
     assert.equal(afterChange.subscription.ready, false);
     assert.equal(afterChange.subscription.consentCurrent, false);
-    assert.match(afterChange.subscription.guidance ?? '', /profile changed/);
+    assert.match(afterChange.subscription.guidance ?? '', /consent cannot be verified/);
     const demo = trackingHealth({ db, config: buildConfig({ HEARSAY_DEMO: '1', HEARSAY_CODEX_ENABLED: '1' }), now });
     assert.equal(demo.api.enabled, false);
     assert.equal(demo.subscription.enabled, false);
@@ -96,14 +117,14 @@ test('last successful observation uses completed answers and does not claim fail
     run(db, "INSERT INTO prompts(id,intent_id,text,created_at) VALUES(1,1,'Question','2026-09-23T00:00:00Z')");
     run(db, "INSERT INTO runs(id,started_at,finished_at,trigger,status) VALUES(1,'2026-09-24T06:00:00Z','2026-09-24T06:01:00Z','manual','done')");
     run(db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,created_at,
-      surface,target_status,answer_status) VALUES(1,1,'codex','fixture',0,'Answer',
-      '2026-09-24T06:00:00Z','codex-agent','completed','complete')`);
+      surface,lane,target_status,comparability_status,answer_status,web_status) VALUES(1,1,'codex','fixture',0,'Answer',
+      '2026-09-24T06:00:00Z','codex-agent','tracking','completed','comparable','complete','verified')`);
     run(db, "INSERT INTO runs(id,started_at,finished_at,trigger,status) VALUES(2,'2026-09-25T06:00:00Z','2026-09-25T06:01:00Z','manual','failed')");
     run(db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,created_at,
       surface,target_status,answer_status) VALUES(2,1,'codex','fixture',0,
       '2026-09-25T06:00:00Z','codex-agent','failed','failed')`);
     const health = trackingHealth({ db, config, now: new Date('2026-09-25T07:00:00Z') });
-    assert.equal(health.subscription.lastSuccessfulObservationAt, '2026-09-24T06:01:00Z');
+    assert.equal(health.subscription.lastSuccessfulObservationAt, '2026-09-24T06:00:00Z');
   } finally {
     db.close();
   }

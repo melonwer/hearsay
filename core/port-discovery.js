@@ -28,7 +28,12 @@ function validPort(port) {
  */
 export function resolvePortFilePath(env = process.env) {
   const configured = String(env.HEARSAY_PORT_FILE ?? '').trim();
-  return configured === '' ? DEFAULT_PORT_FILE : resolve(configured);
+  if (configured !== '') return resolve(configured);
+  if (String(env.HEARSAY_DEMO ?? '').trim() !== '1') return DEFAULT_PORT_FILE;
+  const realDbPath = String(env.HEARSAY_DB_PATH ?? '').trim() || resolve(CORE_DIR, '../data/hearsay.db');
+  const demoDbPath = String(env.HEARSAY_DEMO_DB_PATH ?? '').trim() ||
+    resolve(dirname(resolve(realDbPath)), 'demo/hearsay.db');
+  return resolve(dirname(resolve(demoDbPath)), 'hearsay.port');
 }
 
 /**

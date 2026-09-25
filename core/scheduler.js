@@ -14,7 +14,7 @@
  */
 
 import { config as processConfig } from './config.js';
-import { SETTING_KEYS, getSetting, isoNow, run, setSetting } from './db.js';
+import { SETTING_KEYS, get, getSetting, isoNow, run, setSetting } from './db.js';
 import { runPanel as defaultRunPanel } from './runner.js';
 import { runSubscriptionPanel as defaultRunSubscriptionPanel } from './subscription-runner.js';
 import { getSubscriptionSchedule, subscriptionScheduleTick } from './subscription-scheduler.js';
@@ -138,6 +138,7 @@ export function startScheduler(options) {
         // Claim the day before running, not after: a run that crashes half way should not be
         // retried in 60 seconds, and a run that takes an hour should not start twice.
         setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(at));
+        const previousRunId = Number(get(db, 'SELECT COALESCE(MAX(id), 0) AS id FROM runs')?.id ?? 0);
         try {
           const cronConfig = !hasEnabledApiSearch(config) || apiSearchScheduleApproved(db, config) ? config : {
             ...config, apiSearchPolicies: { ...config.apiSearchPolicies,
@@ -146,6 +147,14 @@ export function startScheduler(options) {
           await runPanel(cronConfig === config ? { db, trigger: 'cron' } : { db, trigger: 'cron', config: cronConfig });
           started = true;
         } catch (err) {
+          if (!get(db, "SELECT id FROM runs WHERE id > ? AND trigger = 'cron' LIMIT 1", [previousRunId])) {
+            const [hour, minute] = config.runAt.split(':').map(Number);
+            const scheduledFor = new Date(at.getFullYear(), at.getMonth(), at.getDate(), hour, minute);
+            run(db, `INSERT OR IGNORE INTO runs(started_at,finished_at,trigger,status,total_calls,done_calls,error,
+              schedule_key,scheduled_for,occurrence_local_date)
+              VALUES(?,?,'cron','failed',0,0,'api:scheduled_preflight_failed','api-panel',?,?)`,
+            [isoNow(at), isoNow(at), isoNow(scheduledFor), localDate(at)]);
+          }
           log(`hearsay: scheduled run failed: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
           busy = false;

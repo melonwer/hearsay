@@ -216,7 +216,7 @@ function costPanel(view) {
     </dl>
     ${perProvider.length === 0
       ? ''
-      : html`<table class="table">
+      : html`<div class="table-scroll"><table class="table">
           <thead>
             <tr>
               <th>API provider</th>
@@ -227,11 +227,11 @@ function costPanel(view) {
           <tbody>
             ${perProvider}
           </tbody>
-        </table>`}
-    ${budgets.length === 0 ? '' : html`<table class="table">
+        </table></div>`}
+    ${budgets.length === 0 ? '' : html`<div class="table-scroll"><table class="table">
       <thead><tr><th>Surface</th><th>Endpoint profile / model</th><th>Search policy</th><th>Time limit</th><th>Answer limit</th></tr></thead>
       <tbody>${budgets}</tbody>
-    </table>`}
+    </table></div>`}
     ${view.hasSearch ? html`<p class="muted small">The estimate includes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' OpenAI hosted search has no enforceable internal call ceiling, so this forecast is not a spending cap.' : ''} Daily API search: ${view.recurringSearchApproved ? 'approved for the current profile and target ceiling' : 'off until separately confirmed at /api/search-schedule'}.</p>` : ''}
     <p class="muted small">
       Estimates and computed usage costs cover direct API usage only. Estimates use the token medians documented in the
@@ -287,14 +287,14 @@ function subscriptionPanel(view) {
       These are separately labeled authenticated CLI measurements. They are not measurements of the ChatGPT web app or Claude.ai,
       and they consume the signed-in plan allowance or possible overage.
     </p>
-    <table class="table">
+    <div class="table-scroll"><table class="table">
       <thead><tr><th>Surface</th><th>Status</th><th>Allowance</th></tr></thead>
       <tbody>${surfaces}</tbody>
-    </table>
-    <table class="table">
+    </table></div>
+    <div class="table-scroll"><table class="table">
       <thead><tr><th>Surface</th><th>CLI</th><th>Process limits</th><th>Search policy</th></tr></thead>
       <tbody>${budgets}</tbody>
-    </table>
+    </table></div>
     ${view.demo ? html`<p class="muted">Demo mode disables subscription calls and scheduling.</p>` : onDemand}
     ${view.demo
       ? ''
@@ -324,22 +324,26 @@ function subscriptionPanel(view) {
 /** @param {ReturnType<typeof buildView>} view */
 function trackingHealthPanel(view) {
   const rows = [
-    { label: 'API panel', lane: view.trackingHealth.api },
-    { label: 'Subscription agents', lane: view.trackingHealth.subscription },
-  ].map(({ label, lane }) => html`<tr>
-    <th scope="row">${label}</th>
-    <td>${lane.enabled ? 'Enabled' : 'Disabled'}</td>
-    <td>${lane.lastSuccessfulObservationAt ?? 'None yet'}</td>
-    <td>${lane.nextScheduledAt ?? 'None'}</td>
-    <td>${lane.recentIssues.length
-      ? lane.recentIssues.map((issue) => html`<span>${issue.status} on ${issue.occurredAt} (run ${issue.runId})<br /></span>`)
-      : 'None'}</td>
-  </tr>`);
+    { label: 'API panel', lane: view.trackingHealth.api,
+      state: view.trackingHealth.api.enabled ? 'Enabled' : 'Disabled' },
+    { label: 'Subscription agents', lane: view.trackingHealth.subscription,
+      state: !view.trackingHealth.subscription.enabled ? 'Disabled'
+        : view.trackingHealth.subscription.ready ? 'Enabled' : 'Needs renewed consent' },
+  ].map(({ label, lane, state }) => html`<article class="health-lane">
+    <h3>${label}</h3>
+    <dl class="kv">
+      <dt>Schedule</dt><dd>${state}</dd>
+      <dt>Last successful observation</dt><dd>${lane.lastSuccessfulObservationAt ?? 'None yet'}</dd>
+      <dt>Next occurrence</dt><dd>${state === 'Needs renewed consent' ? 'Suspended until consent' : lane.nextScheduledAt ?? 'None'}</dd>
+      <dt>Recent missed or failed runs</dt><dd>${lane.recentIssues.length
+        ? lane.recentIssues.map((issue) => html`<span>${issue.status} on ${issue.occurredAt} (run ${issue.runId})<br /></span>`)
+        : 'None'}</dd>
+    </dl>
+  </article>`);
   return html`<section class="card" aria-label="Tracking health">
     <h2>Tracking health</h2>
-    <p class="muted small">Observation and next occurrence times are UTC. Hearsay only runs schedules while the server is running.</p>
-    <table class="table"><thead><tr><th>Route</th><th>Schedule</th><th>Last successful observation</th><th>Next occurrence</th><th>Recent missed or failed runs</th></tr></thead>
-      <tbody>${rows}</tbody></table>
+    <p class="muted small">Times are UTC across all profiles. Hearsay only runs schedules while the server is running.</p>
+    <div class="health-lanes">${rows}</div>
     ${view.trackingHealth.api.guidance ? html`<p>${view.trackingHealth.api.guidance}</p>` : ''}
     ${view.trackingHealth.subscription.guidance ? html`<p>${view.trackingHealth.subscription.guidance}</p>` : ''}
   </section>`;
@@ -368,7 +372,7 @@ export function render(ctx, view) {
         variable is set. Keys are read from the environment only — Hearsay never stores them, never logs them and
         never displays them in full.
       </p>
-      <table class="table">
+      <div class="table-scroll"><table class="table">
         <thead>
           <tr>
             <th>API provider</th>
@@ -380,7 +384,7 @@ export function render(ctx, view) {
         <tbody>
           ${rows}
         </tbody>
-      </table>
+      </table></div>
     </section>
     <section class="card">
       <h2>API sampling &amp; schedule</h2>

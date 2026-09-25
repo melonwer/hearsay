@@ -123,10 +123,8 @@ export function layout({ title, active, body, ctx }) {
   const banner = ctx.demo
     ? html`<div class="demo-banner" role="status">
         <span class="demo-banner-icon" aria-hidden="true">◆</span>
-        <span
-          >Demo data — fictional brands. Add an API key and set <code>HEARSAY_DEMO=0</code> for real numbers.
-          <a href="/settings">Settings</a></span
-        >
+        <span>Demo workspace — fictional data in a separate database. Live providers and schedules are off.
+          <a href="/setup">Set up your brand</a></span>
       </div>`
     : '';
 

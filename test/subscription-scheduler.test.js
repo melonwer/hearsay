@@ -110,6 +110,7 @@ test('a due occurrence is claimed before the runner and remains single across re
       targetCeiling: 1,
       graceMinutes: 10,
       consentVersion: SCHEDULE_CONSENT_VERSION,
+      executionBudgetHash: stableIdentity([]),
       now: new Date('2026-08-09T06:00:00Z'),
     });
     let calls = 0;
@@ -133,6 +134,23 @@ test('a due occurrence is claimed before the runner and remains single across re
     assert.deepEqual(all(db, 'SELECT status, occurrence_local_date FROM runs ORDER BY id').map((row) => ({ ...row })), [
       { status: 'done', occurrence_local_date: '2026-08-10' },
     ]);
+  } finally {
+    db.close();
+  }
+});
+
+test('a legacy schedule without a profile hash requires renewed consent before CLI work', async () => {
+  const db = openDb(':memory:');
+  try {
+    saveSubscriptionSchedule(db, { runAt: '07:00', timeZone: 'UTC', surfaces: ['codex-agent'],
+      targetCeiling: 1, graceMinutes: 10, consentVersion: SCHEDULE_CONSENT_VERSION,
+      now: new Date('2026-09-25T06:00:00Z') });
+    let calls = 0;
+    assert.equal(await subscriptionScheduleTick({ db, config: config(),
+      now: new Date('2026-09-25T07:01:00Z'), preview: () => ({ totalTargets: 1, executionBudgets: [] }),
+      runSubscription: async () => { calls += 1; } }), true);
+    assert.equal(calls, 0);
+    assert.equal(get(db, "SELECT status FROM runs WHERE schedule_key='subscription-agent'")?.status, 'failed');
   } finally {
     db.close();
   }

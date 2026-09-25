@@ -6,26 +6,36 @@
  */
 
 import { config } from '../core/config.js';
-import { openDb } from '../core/db.js';
+import { createMigrationBackup, openDb } from '../core/db.js';
+import { assertInstancePaths, ensureInstanceKind } from '../core/instance.js';
 import { isEmpty, seed, wipe } from '../core/seed.js';
+import { dirname, resolve } from 'node:path';
 
 const args = process.argv.slice(2);
 const force = args.includes('--force');
 const help = args.includes('--help') || args.includes('-h');
 const dbFlag = args.indexOf('--db');
-const dbPath = dbFlag !== -1 && args[dbFlag + 1] ? args[dbFlag + 1] : config.dbPath;
+const dbPath = dbFlag !== -1 && args[dbFlag + 1] ? args[dbFlag + 1] : config.demoDbPath;
 
 if (help) {
   process.stdout.write(
     'Usage: node scripts/seed.js [--force] [--db <path>]\n\n' +
       '  Loads the Notewell demo universe: 4 entities, 12 prompts, 30 days of seeded runs.\n' +
       '  --force  wipe an existing database first (it refuses to touch a populated one otherwise)\n' +
-      `  --db     database file, default ${config.dbPath}\n`,
+      `  --db     demo database file, default ${config.demoDbPath}\n`,
   );
   process.exit(0);
 }
 
+assertInstancePaths({ ...config, demo: true, dbPath, demoDbPath: dbPath,
+  demoDataDir: dirname(resolve(dbPath)) }, dbPath);
 const db = openDb(dbPath);
+try {
+  ensureInstanceKind(db, true);
+} catch (error) {
+  db.close();
+  throw error;
+}
 
 if (!isEmpty(db)) {
   if (!force) {
@@ -35,7 +45,10 @@ if (!isEmpty(db)) {
     db.close();
     process.exit(1);
   }
+  const backup = createMigrationBackup(db, dbPath);
+  if (backup) process.stderr.write(`Preserved demo database backup at ${backup}.\n`);
   wipe(db);
+  ensureInstanceKind(db, true);
 }
 
 const summary = seed(db);

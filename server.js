@@ -12,10 +12,12 @@ import { fileURLToPath } from 'node:url';
 
 import { config as processConfig } from './core/config.js';
 import { getSetting, openDb, SETTING_KEYS } from './core/db.js';
+import { assertInstancePaths, ensureInstanceKind } from './core/instance.js';
 import { removePortFile, writePortFile } from './core/port-discovery.js';
 import { recoverStaleRuns } from './core/runner.js';
 import { localDate, startScheduler } from './core/scheduler.js';
 import { seedIfDemoAndEmpty } from './core/seed.js';
+import { getSubscriptionSchedule } from './core/subscription-scheduler.js';
 import { SURFACE_LABEL } from './web/layout.js';
 import { createRouter } from './web/router.js';
 import { registerApiRoutes } from './web/pages/api.js';
@@ -96,7 +98,14 @@ export async function startServer(opts = {}) {
   const portFile = opts.portFile ?? config.portFile;
   const log = opts.log ?? ((/** @type {string} */ message) => process.stderr.write(`${message}\n`));
 
+  assertInstancePaths(config, dbPath);
   const db = openDb(dbPath);
+  try {
+    ensureInstanceKind(db, config.demo);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   // Demo mode with nothing to show boots into the fictional universe rather than an empty
   // dashboard (§12). Never touches a database that already has rows, seeded or live.
   const seeded = seedIfDemoAndEmpty(db, config);
@@ -114,9 +123,15 @@ export async function startServer(opts = {}) {
   // §8.2: the daily scheduler. startScheduler itself declines demo mode and keyless
   // installs; the boot log states the next run time when it is live.
   const scheduler = startScheduler({ db, config });
-  if (scheduler.enabled) {
+  if (scheduler.enabled && config.enabledProviders.length > 0) {
     const ranToday = getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, null) === localDate(new Date());
     log(`Scheduler: next panel run ${ranToday ? 'tomorrow' : 'today'} at ${config.runAt} (local time).`);
+  }
+  if (!config.demo && config.subscriptionSurfaces.length > 0) {
+    const schedule = getSubscriptionSchedule(db);
+    log(schedule
+      ? `Subscription schedule: ${schedule.runAt} (${schedule.timeZone}); see tracking health for the next occurrence and consent state.`
+      : 'Subscription runner available; no active recurring schedule.');
   }
 
   const router = buildRouter({ db, config });

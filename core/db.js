@@ -742,6 +742,8 @@ export const SETTING_KEYS = /** @type {const} */ ({
   INCLUDE_BRANDED_IN_SOV: 'include_branded_in_sov',
   /** UTC ISO-8601 timestamp of the last demo seed (§12). */
   SEEDED_AT: 'seeded_at',
+  /** Explicit identity of a demo or real workspace. */
+  INSTANCE_KIND: 'instance_kind',
   /** JSON array of surfaces whose subscription allowance use has been confirmed. */
   SUBSCRIPTION_SURFACE_OPT_IN: 'subscription_surface_opt_in',
   /** JSON-encoded persistent subscription schedule and consent metadata. */

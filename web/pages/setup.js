@@ -293,9 +293,7 @@ function stepGo(view) {
           ? html`<p><button type="button" class="btn" id="run-panel-setup">Run first API panel</button></p>`
           : html`<p class="muted">No API provider is configured. Add an API key only if you want direct API measurements.</p>`}
     </section>
-    <p class="muted small">
-      Load the fictional demo universe instead: <code>node scripts/seed.js</code>.
-    </p>
+    <p class="muted small">To explore the fictional demo separately, restart with <code>HEARSAY_DEMO=1</code>. The demo database is seeded automatically.</p>
     <p><a href="/">Finish →</a></p>
   </section>`;
 }
@@ -306,6 +304,19 @@ function stepGo(view) {
  * @returns {string}
  */
 export function render(ctx, view) {
+  if (view.demo) {
+    const body = html`<section class="card">
+      <h2>Set up your real brand</h2>
+      <p>This is the fictional demo workspace. Your real tracking data is stored separately.</p>
+      <ol>
+        <li>Stop this server with Ctrl+C (or stop its service).</li>
+        <li>Set <code>HEARSAY_DEMO=0</code> in <code>.env</code>, then start <code>node server.js</code> again.</li>
+        <li>Open <code>/setup</code> at the new local URL to review your brand and questions.</li>
+      </ol>
+      <p>No database deletion is needed. The default real database is <code>data/hearsay.db</code>; the demo is <code>data/demo/hearsay.db</code>. A signed-in subscription CLI or API key is only needed when you run measurements.</p>
+    </section>`;
+    return layout({ title: 'Setup', active: '/setup', ctx, body });
+  }
   const panel = view.step === 1 ? stepBrand(view) : view.step === 2 ? stepPrompts(view) : stepGo(view);
   const body = html`${steps(view.step)}${panel}
     <p><a href="/">Skip setup</a></p>`;

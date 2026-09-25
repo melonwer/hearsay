@@ -5,10 +5,12 @@
  * written to the database, never logged, and never rendered unmasked in the UI.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
+import { withEnvFile } from './env-file.js';
 import { resolvePortFilePath } from './port-discovery.js';
+
+export { parseEnvFile, withEnvFile } from './env-file.js';
 
 /** @typedef {'openai'|'anthropic'|'gemini'|'perplexity'} ProviderId */
 
@@ -30,6 +32,10 @@ import { resolvePortFilePath } from './port-discovery.js';
  * @property {string} portFile local HTTP-port discovery file
  * @property {string} host
  * @property {string} dbPath
+ * @property {string} realDbPath
+ * @property {string} demoDbPath
+ * @property {string} realDataDir
+ * @property {string} demoDataDir
  * @property {string} runAt local-time HH:MM for the daily panel run
  * @property {number} samples samples per prompt per provider per run (1–10)
  * @property {number} concurrency parallel in-flight LLM calls
@@ -85,52 +91,6 @@ const PROVIDER_DEFAULTS = /** @type {const} */ ([
 
 /** Order of provider cards/series everywhere in the UI. */
 export const PROVIDER_IDS = /** @type {ProviderId[]} */ (PROVIDER_DEFAULTS.map((p) => p.id));
-
-/**
- * Minimal `.env` parser (§4.1). Documented limitations, on purpose — we do not take
- * a dotenv dependency: `KEY=VALUE` lines only, `#` comments, values are trimmed, and
- * one matching pair of surrounding quotes is removed. No interpolation, no multi-line
- * values, no `export ` prefix handling.
- *
- * @param {string} text
- * @returns {Record<string, string>}
- */
-export function parseEnvFile(text) {
-  /** @type {Record<string, string>} */
-  const out = {};
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('#')) continue;
-    const eq = trimmed.indexOf('=');
-    if (eq <= 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
-    let value = trimmed.slice(eq + 1).trim();
-    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
-      value = value.slice(1, -1);
-    }
-    out[key] = value;
-  }
-  return out;
-}
-
-/**
- * Load `.env` (when present) into a plain env record. Real environment variables
- * always win over file values.
- *
- * @param {Record<string, string|undefined>} env
- * @param {string} [file]
- * @returns {Record<string, string|undefined>}
- */
-export function withEnvFile(env, file = resolve(process.cwd(), '.env')) {
-  if (!existsSync(file)) return { ...env };
-  /** @type {Record<string, string|undefined>} */
-  const merged = { ...parseEnvFile(readFileSync(file, 'utf8')) };
-  for (const [key, value] of Object.entries(env)) {
-    if (value !== undefined) merged[key] = value;
-  }
-  return merged;
-}
 
 /**
  * @param {string|undefined} value
@@ -254,8 +214,14 @@ export function buildConfig(env) {
     throw new RangeError(`Anthropic web search is validated for claude-sonnet-5, not ${registry.anthropic.model}`);
   }
 
-  const dbPath = String(env.HEARSAY_DB_PATH ?? '').trim() || './data/hearsay.db';
-  const subscriptionDataDir = String(env.HEARSAY_DATA_DIR ?? '').trim() || dirname(resolve(dbPath));
+  const demo = String(env.HEARSAY_DEMO ?? '').trim() === '1';
+  const realDbPath = String(env.HEARSAY_DB_PATH ?? '').trim() || './data/hearsay.db';
+  const demoDbPath = String(env.HEARSAY_DEMO_DB_PATH ?? '').trim() ||
+    resolve(dirname(resolve(realDbPath)), 'demo/hearsay.db');
+  const realDataDir = String(env.HEARSAY_DATA_DIR ?? '').trim() || dirname(resolve(realDbPath));
+  const demoDataDir = String(env.HEARSAY_DEMO_DATA_DIR ?? '').trim() || dirname(resolve(demoDbPath));
+  const dbPath = demo ? demoDbPath : realDbPath;
+  const subscriptionDataDir = demo ? demoDataDir : realDataDir;
   const codexEnabled = String(env.HEARSAY_CODEX_ENABLED ?? '').trim() === '1';
   const claudeEnabled = String(env.HEARSAY_CLAUDE_CODE_ENABLED ?? '').trim() === '1';
   const subscription = /** @type {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} */ ({
@@ -280,11 +246,15 @@ export function buildConfig(env) {
     portFile: resolvePortFilePath(env),
     host: String(env.HOST ?? '').trim() || '127.0.0.1',
     dbPath,
+    realDbPath,
+    demoDbPath,
+    realDataDir,
+    demoDataDir,
     runAt: timeOfDay(env.HEARSAY_RUN_AT, '07:00'),
     samples: intIn(env.HEARSAY_SAMPLES, 3, 1, 10),
     concurrency: intIn(env.HEARSAY_CONCURRENCY, 2, 1, 16),
     timeoutMs: intIn(env.HEARSAY_TIMEOUT_MS, 45000, 1000, 600000),
-    demo: String(env.HEARSAY_DEMO ?? '').trim() === '1',
+    demo,
     confirmUsd: floatIn(env.HEARSAY_CONFIRM_USD, 1, 0),
     pricingEnv,
     apiSearchPolicies: {

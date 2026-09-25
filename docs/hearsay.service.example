@@ -1,0 +1,13 @@
+[Unit]
+Description=Hearsay local tracking server
+
+[Service]
+Type=simple
+WorkingDirectory=/absolute/path/to/hearsay
+ExecStart=/absolute/path/to/node /absolute/path/to/hearsay/server.js
+Environment=HEARSAY_DEMO=0
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

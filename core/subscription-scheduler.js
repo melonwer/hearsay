@@ -439,7 +439,7 @@ export async function subscriptionScheduleTick(options) {
       changed ||= failed !== null;
       continue;
     }
-    if (schedule.executionBudgetHash &&
+    if (schedule.executionBudgetHash === null ||
         stableIdentity(preview.executionBudgets ?? []) !== schedule.executionBudgetHash) {
       const failed = claimOccurrence(options.db, schedule, {
         occurrenceDate,

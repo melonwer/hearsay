@@ -70,9 +70,9 @@ test('config defaults to automatic binding while explicit positive PORT remains 
 
 test('server writes the actual ephemeral port and removes it on close', async () => {
   const directory = tempDirectory();
-  const dbPath = join(directory, 'hearsay.db');
+  const dbPath = join(directory, 'demo', 'hearsay.db');
   const portFile = join(directory, 'data', 'hearsay.port');
-  const config = buildConfig({ HEARSAY_DEMO: '1', PORT: '0', HEARSAY_DB_PATH: dbPath });
+  const config = buildConfig({ HEARSAY_DEMO: '1', PORT: '0', HEARSAY_DEMO_DB_PATH: dbPath });
   const running = await startServer({ config, dbPath, port: 0, portFile });
 
   try {

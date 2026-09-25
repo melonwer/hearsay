@@ -23,7 +23,7 @@
 import { analyzeResponse as defaultAnalyze, containsAlias, STANCE_REVISION } from './analyze.js';
 import { storeInterpretation } from './interpretations.js';
 import { evaluate as defaultEvaluateAlerts } from './alerts.js';
-import { SETTING_KEYS, get, isoNow, run as exec, setSetting, transaction } from './db.js';
+import { SETTING_KEYS, all, get, isoNow, run as exec, setSetting, transaction } from './db.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('./analyze.js').AnalyzeEntity} AnalyzeEntity */
@@ -566,14 +566,23 @@ export function isEmpty(db) {
  * @returns {void}
  */
 export function wipe(db) {
-  transaction(db, () => {
-    for (const table of ['alerts', 'citations', 'mentions', 'responses', 'runs', 'prompts', 'intents', 'entities', 'settings']) {
-      exec(db, `DELETE FROM ${table}`);
-    }
-    // Present because every table above uses AUTOINCREMENT; guard anyway.
-    const seq = get(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'");
-    if (seq) exec(db, 'DELETE FROM sqlite_sequence');
-  });
+  const tables = all(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    .map((row) => String(row.name));
+  const triggers = all(db, "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name NOT LIKE 'sqlite_%'")
+    .map((row) => ({ name: String(row.name), sql: String(row.sql) }));
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    transaction(db, () => {
+      for (const trigger of triggers) exec(db, `DROP TRIGGER "${trigger.name.replaceAll('"', '""')}"`);
+      for (const table of tables) exec(db, `DELETE FROM "${table.replaceAll('"', '""')}"`);
+      if (get(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'")) {
+        exec(db, 'DELETE FROM sqlite_sequence');
+      }
+      for (const trigger of triggers) db.exec(trigger.sql);
+    });
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
 }
 
 /**

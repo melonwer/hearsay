@@ -3,7 +3,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { all, get, openDb } from '../core/db.js';
+import { all, get, openDb, run } from '../core/db.js';
 import {
   DEMO_DAYS,
   DEMO_ENTITIES,
@@ -122,6 +122,21 @@ test('re-seeding after --force reproduces the same universe', (t) => {
   const second = seed(db, { now: NOW, days: 6 });
   assert.deepEqual(second, first);
   assert.deepEqual(alertSignatures(db), firstAlerts);
+});
+
+test('demo reset removes imported outcomes and restores their immutability rules', (t) => {
+  const db = openDb(':memory:');
+  t.after(() => db.close());
+  seed(db, { now: NOW, days: 1 });
+  const insert = `INSERT INTO outcome_imports(source,import_id,raw_csv,sha256,author,created_at)
+    VALUES('Analytics','demo-import','metric,value\nLeads,2\n','digest','Reviewer','2026-07-26T00:00:00Z')`;
+  run(db, insert);
+  wipe(db);
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM outcome_imports')?.n), 0);
+  assert.equal(isEmpty(db), true);
+  assert.equal(Number(get(db, 'PRAGMA foreign_keys')?.foreign_keys), 1);
+  run(db, insert);
+  assert.throws(() => run(db, "DELETE FROM outcome_imports WHERE import_id='demo-import'"), /immutable/);
 });
 
 test('the universe has the shape §12 specifies', () => {

@@ -434,6 +434,12 @@ p {
   border-collapse: collapse;
 }
 
+.table-scroll { max-width: 100%; overflow-x: auto; }
+.chart-wrap { max-width: 100%; overflow-x: auto; }
+.filter-row { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.filter-row label { display: grid; gap: 4px; flex: 1 1 240px; min-width: 0; }
+.filter-row select { width: 100%; min-width: 0; }
+
 .table th,
 .table td {
   padding: 6px 8px;
@@ -468,6 +474,21 @@ p {
 
 .kv dd {
   margin: 0;
+}
+
+.health-lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.health-lane { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.health-lane h3 { margin: 0 0 12px; }
+.health-lane .kv { grid-template-columns: minmax(100px, 150px) minmax(0, 1fr); }
+.health-lane dd { overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .health-lanes { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .health-lane .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .health-lane dd { margin-bottom: 8px; }
 }
 
 .evidence-layer-nav {
@@ -606,6 +627,8 @@ p {
     flex-direction: column;
     gap: 16px;
   }
+
+  .main { width: 100%; }
 
   .sidebar {
     position: static;

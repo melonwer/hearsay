@@ -80,10 +80,6 @@ direct API keys.
 git clone https://github.com/melonwer/hearsay && cd hearsay
 node --version                        # must be 22.13 or newer
 
-# Skip this line when tracking a real brand. It loads a fictional demo universe,
-# and its demo brand then blocks setup for a real one.
-node scripts/seed.js
-
 cp .env.example .env                  # subscription flags and optional API keys go here
 node server.js > hearsay.log 2>&1 &   # redirect, or a backgrounded server hangs the shell
 curl -s "http://127.0.0.1:$(tr -d '\\n' < data/hearsay.port)/api/status"   # repeat until this returns JSON
@@ -135,9 +131,10 @@ lets a client operate Hearsay; setting `HEARSAY_CODEX_ENABLED=1` or
 Hearsay measurements. Other MCP clients can operate Hearsay but are not inference
 backends.
 
-Already loaded the demo data and now want to track your own brand? Stop Hearsay, delete
-`data/hearsay.db`, and start it again. That clears the fictional brand that would
-otherwise block setup.
+The default starts a real workspace and opens `/setup` for your brand. To explore the
+fictional demo instead, set `HEARSAY_DEMO=1` in `.env` and restart. Demo data lives in
+`data/demo/hearsay.db`; changing the flag back to `0` returns to your real workspace
+without deleting either database.
 </details>
 
 ## Or install it yourself
@@ -155,7 +152,7 @@ page, unzip it, and skip the first line.
 
 ```sh
 git clone https://github.com/melonwer/hearsay && cd hearsay
-node scripts/seed.js && node server.js
+node server.js
 ```
 
 The window will look like it has frozen. That is Hearsay running. Leave it open and
@@ -163,8 +160,11 @@ visit the URL printed by Hearsay, which is an address on your own computer, publ
 nowhere. The selected port is also kept in `data/hearsay.port`. To stop it, click the
 terminal window and press Ctrl+C.
 
-You are now looking at a fictional demo brand called Notewell, so you can click through
-every screen before spending anything.
+You are now at the real-brand setup page. You can review a benchmark without spending
+anything. To try the fictional Notewell demo first, stop Hearsay, copy `.env.example`
+to `.env`, set `HEARSAY_DEMO=1`, and run `node server.js` again. The demo is seeded
+automatically into its own database. Set `HEARSAY_DEMO=0` and restart to return to
+real setup. Neither step deletes data or enables providers in demo mode.
 
 <details>
 <summary>If something goes wrong</summary>
@@ -180,16 +180,17 @@ port, choose an available one with `PORT=3100 node server.js`.
 
 ### Track your own brand
 
-1. Stop Hearsay (Ctrl+C) and delete the file `data/hearsay.db`. That removes the demo
-   brand, which would otherwise block your own.
-2. In the `hearsay` folder, copy `.env.example` to a new file called `.env`
-   (`cp .env.example .env` in the terminal).
-3. Run `node server.js` again and open the printed local URL with `/setup` appended in
-   your browser. The port is also available with `tr -d '\\n' < data/hearsay.port`.
-   Type that address in; there is no link to it in the menu. Draft and review buyer
-   questions here without a provider key.
-4. Before running, choose a signed-in Codex or Claude Code subscription runner below,
+1. If you are viewing the demo, stop Hearsay (Ctrl+C), set `HEARSAY_DEMO=0` in `.env`,
+   and restart with `node server.js`. Leave both databases intact.
+2. Open the printed local URL. A fresh real workspace opens `/setup` automatically;
+   the port is also available in `data/hearsay.port`. Draft and review buyer
+   questions without a provider key.
+3. Before running, choose a signed-in Codex or Claude Code subscription runner below,
    or add an optional direct API key such as `OPENAI_API_KEY=sk-...`. One route is enough.
+
+For a Linux service that keeps this local process running, see the
+[manual systemd user-service setup](docs/background-service.md). The app never installs
+or starts a background service for you.
 
 ### Use a Codex subscription runner
 
@@ -408,6 +409,12 @@ several times higher. Hearsay's costs are built for a channel that size.
 > unless one of those supported runners is enabled. Core records live in
 > `data/hearsay.db`; subscription runs may also write redacted event artifacts under
 > `data/artifacts/` (or your configured `HEARSAY_DATA_DIR`), so back up both when needed.
+> The separate fictional demo lives in `data/demo/hearsay.db` and
+> `data/demo/artifacts/` by default. A database found at the wrong mode's path is
+> rejected rather than merged or deleted. For a legacy demo in `data/hearsay.db`,
+> keep it there: set `HEARSAY_DEMO_DB_PATH=./data/hearsay.db` and
+> `HEARSAY_DB_PATH=./data/real/hearsay.db` before restarting. The real workspace then
+> starts fresh without touching the old demo.
 > The `/api/export` endpoint at
 > `http://127.0.0.1:<the-port-in-data/hearsay.port>/api/export` exports all database
 > records — questions, runs, answers and metrics — as one JSON file. It does not package

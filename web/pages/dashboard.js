@@ -713,22 +713,26 @@ function receiptsPanel(view) {
 /** @param {ReturnType<typeof buildView>} view */
 function trackingPanel(view) {
   const rows = [
-    { label: 'API', lane: view.trackingHealth.api },
-    { label: 'Subscription agents', lane: view.trackingHealth.subscription },
-  ].map(({ label, lane }) => html`<tr>
-    <th scope="row">${label}</th>
-    <td>${lane.enabled ? 'Scheduled' : 'Disabled'}</td>
-    <td>${lane.lastSuccessfulObservationAt ?? 'No successful observation yet'}</td>
-    <td>${lane.nextScheduledAt ?? 'None'}</td>
-    <td>${lane.recentIssues.length ? `${lane.recentIssues.length} recent missed or failed run(s)` : 'No recent missed or failed runs'}</td>
-  </tr>`);
-  const guidance = [view.trackingHealth.api.guidance, view.trackingHealth.subscription.guidance]
-    .filter(Boolean);
+    { label: 'API', lane: view.trackingHealth.api,
+      state: view.trackingHealth.api.enabled ? 'Scheduled' : 'Disabled' },
+    { label: 'Subscription agents', lane: view.trackingHealth.subscription,
+      state: !view.trackingHealth.subscription.enabled ? 'Disabled'
+        : view.trackingHealth.subscription.ready ? 'Scheduled' : 'Needs renewed consent' },
+  ].map(({ label, lane, state }) => html`<article class="health-lane">
+    <h3>${label}</h3>
+    <dl class="kv">
+      <dt>Schedule</dt><dd>${state}</dd>
+      <dt>Last successful observation</dt><dd>${lane.lastSuccessfulObservationAt ?? 'None yet'}</dd>
+      <dt>Next occurrence</dt><dd>${state === 'Needs renewed consent' ? 'Suspended until consent' : lane.nextScheduledAt ?? 'None'}</dd>
+      <dt>Recent missed or failed runs</dt><dd>${lane.recentIssues.length ? `${lane.recentIssues.length} recent` : 'None'}</dd>
+    </dl>
+  </article>`);
+  const guidance = [...new Set([view.trackingHealth.api.guidance, view.trackingHealth.subscription.guidance]
+    .filter(Boolean))];
   return html`<section class="card" aria-label="Tracking health">
     <h2>Tracking health</h2>
-    <p class="muted small">Times below are UTC. The next occurrence requires Hearsay to be running; missed runs do not replay.</p>
-    <table class="table"><thead><tr><th>Route</th><th>Schedule</th><th>Last successful observation</th><th>Next occurrence</th><th>Recent runs</th></tr></thead>
-      <tbody>${rows}</tbody></table>
+    <p class="muted small">Times are UTC across all profiles. The next occurrence requires Hearsay to be running; missed runs do not replay.</p>
+    <div class="health-lanes">${rows}</div>
     ${guidance.map((message) => html`<p class="muted small">${message}</p>`)}
     <p><a href="/settings">View schedule settings and run health</a></p>
   </section>`;
