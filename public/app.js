@@ -481,6 +481,16 @@ function initRowActions() {
       return;
     }
 
+    const entityAmbiguous = target.getAttribute('data-entity-ambiguous');
+    if (entityAmbiguous !== null && target instanceof HTMLInputElement) {
+      const { ok, data } = await api(`/api/entities/${entityAmbiguous}`, 'PATCH', { ambiguous_name: target.checked });
+      if (!ok) {
+        target.checked = !target.checked;
+        showError(target, data);
+      }
+      return;
+    }
+
     const setting = target.getAttribute('data-setting');
     if (setting !== null && target instanceof HTMLInputElement) {
       const { ok, data } = await api('/api/settings', 'PATCH', { [setting]: target.checked });

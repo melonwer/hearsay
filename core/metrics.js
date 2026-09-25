@@ -128,6 +128,8 @@ export function windowStart(now, days) {
  * @property {string} [comparisonKey]
  * @property {boolean} [subscription]
  * @property {boolean} [includeBranded]
+ * @property {string} [analysisRevision] exact capture-time classifier revision
+ * @property {number} [correctionCutoff] correction event ID, for stance rates
  */
 
 /**
@@ -266,15 +268,15 @@ export function mentionRate(dbOrOpts, maybeOpts) {
 }
 
 /**
- * Recommendation rate for one entity (§7): share of valid responses in which the entity
- * is mentioned *and* flagged `recommended` by the §6.4 heuristics.
+ * Historical heuristic recommendation rate for one entity. New stance revisions are
+ * excluded; use stanceRecommendationRate with an exact revision for new measurements.
  *
- * Branded prompts are excluded by default, exactly as for `mentionRate`, so that the two
- * rates in `/api/summary` share one denominator (§10.4).
+ * Branded prompts are excluded by default. This denominator includes only legacy
+ * responses and must not be presented as the denominator for a mixed mention rate.
  *
  * @param {Db|MetricsOpts} dbOrOpts open database, or an options object carrying `db`
  * @param {WindowOpts & {entityId:number}} [maybeOpts]
- * @returns {{n:number, recommended:number, p:number|null, lowSample:boolean}}
+ * @returns {{n:number, recommended:number, p:number|null, lowSample:boolean,method?:string}}
  */
 export function recommendationRate(dbOrOpts, maybeOpts) {
   const [db, opts] = args(dbOrOpts, maybeOpts);
@@ -287,12 +289,68 @@ export function recommendationRate(dbOrOpts, maybeOpts) {
                                    WHERE m.response_id = r.id AND m.entity_id = ? AND m.recommended = 1)
                      THEN 1 ELSE 0 END) AS recommended
        FROM responses r JOIN prompts p ON p.id = r.prompt_id
-      WHERE ${filter.sql}`,
+      WHERE ${filter.sql}
+        AND (r.analysis_revision IS NULL OR r.analysis_revision = 'legacy-heuristic-v1')`,
     [Number(opts.entityId), ...filter.params],
   );
   const n = Number(row?.n ?? 0);
   const recommended = Number(row?.recommended ?? 0);
-  return { n, recommended, p: n > 0 ? recommended / n : null, lowSample: n < LOW_SAMPLE_N };
+  return { n, recommended, p: n > 0 ? recommended / n : null, lowSample: n < LOW_SAMPLE_N,
+    method: 'legacy_heuristic' };
+}
+
+/**
+ * Positive recommendations in one exact capture-time analysis revision. Corrections
+ * are projected as of one cutoff; missing mention rows remain absent, not neutral.
+ * @param {Db|MetricsOpts} dbOrOpts
+ * @param {WindowOpts & {entityId:number,analysisRevision:string,correctionCutoff?:number}} [maybeOpts]
+ */
+export function stanceRecommendationRate(dbOrOpts, maybeOpts) {
+  const [db, opts] = args(dbOrOpts, maybeOpts);
+  if (!opts.analysisRevision || opts.analysisRevision === 'legacy-heuristic-v1') {
+    throw new TypeError('stanceRecommendationRate requires an exact stance analysis revision');
+  }
+  const w = resolveWindow(opts, 'stanceRecommendationRate');
+  const filter = validResponses(w);
+  const maxId = Number(get(db, 'SELECT COALESCE(MAX(id),0) AS id FROM mention_corrections')?.id ?? 0);
+  const cutoff = opts.correctionCutoff ?? maxId;
+  if (!Number.isSafeInteger(cutoff) || cutoff < 0 || cutoff > maxId) throw new RangeError('Invalid correction cutoff');
+  const missing = get(db, `SELECT COUNT(*) AS n FROM responses r JOIN prompts p ON p.id = r.prompt_id
+    JOIN mentions m ON m.response_id = r.id AND m.entity_id = ?
+    LEFT JOIN mention_interpretations i ON i.mention_id = m.id AND i.analysis_revision = ?
+    WHERE ${filter.sql} AND r.analysis_revision = ? AND i.id IS NULL`, [
+    Number(opts.entityId), opts.analysisRevision, ...filter.params, opts.analysisRevision,
+  ]);
+  if (Number(missing?.n ?? 0) > 0) throw new RangeError('A stance interpretation is missing for an eligible answer');
+  const row = get(db, `WITH eligible AS (
+    SELECT r.id FROM responses r JOIN prompts p ON p.id = r.prompt_id
+    WHERE ${filter.sql} AND r.analysis_revision = ?
+  ), decisions AS (
+    SELECT e.id,
+      (SELECT COALESCE((SELECT c.replacement FROM mention_corrections c
+        WHERE c.interpretation_id = i.id AND c.id <= ? ORDER BY c.id DESC LIMIT 1), i.stance)
+       FROM mentions m JOIN mention_interpretations i ON i.mention_id = m.id
+       WHERE m.response_id = e.id AND m.entity_id = ? AND i.analysis_revision = ?
+       ORDER BY m.id LIMIT 1) AS stance,
+      EXISTS(SELECT 1 FROM mentions m WHERE m.response_id = e.id AND m.entity_id = ?) AS present
+    FROM eligible e
+  ) SELECT COUNT(*) AS n,
+    SUM(CASE WHEN stance = 'positive' THEN 1 ELSE 0 END) AS positive,
+    SUM(CASE WHEN stance = 'negative' THEN 1 ELSE 0 END) AS negative,
+    SUM(CASE WHEN stance = 'neutral' THEN 1 ELSE 0 END) AS neutral,
+    SUM(CASE WHEN stance = 'uncertain' THEN 1 ELSE 0 END) AS uncertain,
+    SUM(CASE WHEN present = 0 THEN 1 ELSE 0 END) AS absent
+    FROM decisions`, [
+    ...filter.params, opts.analysisRevision, cutoff, Number(opts.entityId),
+    opts.analysisRevision, Number(opts.entityId),
+  ]);
+  const n = Number(row?.n ?? 0);
+  const positive = Number(row?.positive ?? 0);
+  return { method: 'positive_stance', analysisRevision: opts.analysisRevision,
+    correctionCutoff: cutoff, n, positive, recommended: positive,
+    negative: Number(row?.negative ?? 0), neutral: Number(row?.neutral ?? 0),
+    uncertain: Number(row?.uncertain ?? 0), absent: Number(row?.absent ?? 0),
+    p: n > 0 ? positive / n : null, lowSample: n < LOW_SAMPLE_N };
 }
 
 /**

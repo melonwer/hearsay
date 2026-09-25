@@ -53,6 +53,10 @@ function addForm() {
         <input type="checkbox" name="is_self" data-bool />
         <span>This is my brand</span>
       </label>
+      <label class="check">
+        <input type="checkbox" name="ambiguous_name" data-bool />
+        <span>Name may be an ordinary word</span>
+      </label>
       <button type="submit" class="btn">Add entity</button>
     </form>
     <p class="muted small">
@@ -97,6 +101,13 @@ function table(view) {
           <span>brand</span>
         </label>
       </td>
+      <td>
+        <label class="check">
+          <input type="checkbox" data-entity-ambiguous="${entity.id}"
+            ${entity.ambiguous_name === 1 ? raw('checked') : ''} />
+          <span>Review identity</span>
+        </label>
+      </td>
       <td class="num">
         <span class="muted small">${index === undefined ? '—' : seriesSlot(index)}</span>
       </td>
@@ -115,6 +126,7 @@ function table(view) {
           <th>Aliases</th>
           <th>Domains</th>
           <th>Brand</th>
+          <th>Name ambiguity</th>
           <th class="num">Colour</th>
           <th class="num"></th>
         </tr>

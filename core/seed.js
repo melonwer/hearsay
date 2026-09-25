@@ -3,8 +3,8 @@
  *
  * Phase 1 Lane D implements it: mulberry32 seeded with 1337, the invented Notewell /
  * Jotta / EchoPad / Quillo universe, 5 intents × 2–3 paraphrases, 30 days × 4 providers
- * × 12 prompts × 3 samples, scripted storylines that produce one MENTION_DROP, one
- * OVERTAKEN and one lost/gained recommendation. Template answers go through the real
+ * × 12 prompts × 3 samples, scripted storylines that produce MENTION_DROP and
+ * OVERTAKEN alerts. Template answers go through the real
  * analyzeResponse() and the same DB writes as a live run, with runs.trigger='seed'.
  * No real brand names, ever (§19.5 #8).
  *
@@ -20,7 +20,8 @@
  * seeded run — the same code path a live panel takes (§9, §12).
  */
 
-import { analyzeResponse as defaultAnalyze, containsAlias } from './analyze.js';
+import { analyzeResponse as defaultAnalyze, containsAlias, STANCE_REVISION } from './analyze.js';
+import { storeInterpretation } from './interpretations.js';
 import { evaluate as defaultEvaluateAlerts } from './alerts.js';
 import { SETTING_KEYS, get, isoNow, run as exec, setSetting, transaction } from './db.js';
 
@@ -749,13 +750,13 @@ export function seed(db, opts = {}) {
             // because nothing was billed (§12).
             const responseId = exec(
               db,
-              `INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, latency_ms, tokens_in, tokens_out, cost_usd, created_at)
-               VALUES(?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
-              [runId, prompt.id, provider.id, provider.model, sampleIdx, text, latencyMs, createdAtCall],
+              `INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, latency_ms, tokens_in, tokens_out, cost_usd, created_at, analysis_revision)
+               VALUES(?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`,
+              [runId, prompt.id, provider.id, provider.model, sampleIdx, text, latencyMs, createdAtCall, STANCE_REVISION],
             ).lastInsertRowid;
 
             for (const mention of analysis.mentions) {
-              exec(
+              const mentionId = exec(
                 db,
                 `INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet)
                  VALUES(?, ?, ?, ?, ?, ?, ?)`,
@@ -768,7 +769,8 @@ export function seed(db, opts = {}) {
                   mention.recommended ? 1 : 0,
                   mention.snippet,
                 ],
-              );
+              ).lastInsertRowid;
+              storeInterpretation(db, mentionId, STANCE_REVISION, mention, createdAtCall);
             }
             for (const citation of analysis.citations) {
               exec(db, 'INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?, ?, ?, ?, ?)', [

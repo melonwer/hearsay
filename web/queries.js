@@ -11,6 +11,7 @@
  */
 
 import { all, get, userVersion } from '../core/db.js';
+import { answerReview } from '../core/interpretations.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 
@@ -34,6 +35,7 @@ export const PROVIDERS = /** @type {readonly string[]} */ (['openai', 'anthropic
  * @property {string[]} aliases
  * @property {string[]} domains
  * @property {number} is_self 0|1
+ * @property {number} ambiguous_name 0|1; identity needs review when set
  * @property {string|null} archived_at
  */
 
@@ -69,14 +71,15 @@ export function windowStart(days, now = new Date()) {
  */
 export function listEntities(db, { includeArchived = false } = {}) {
   const sql = includeArchived
-    ? 'SELECT id, name, aliases, domains, is_self, archived_at FROM entities ORDER BY is_self DESC, id ASC'
-    : 'SELECT id, name, aliases, domains, is_self, archived_at FROM entities WHERE archived_at IS NULL ORDER BY is_self DESC, id ASC';
+    ? 'SELECT id, name, aliases, domains, is_self, ambiguous_name, archived_at FROM entities ORDER BY is_self DESC, id ASC'
+    : 'SELECT id, name, aliases, domains, is_self, ambiguous_name, archived_at FROM entities WHERE archived_at IS NULL ORDER BY is_self DESC, id ASC';
   return all(db, sql).map((row) => ({
     id: Number(row.id),
     name: String(row.name),
     aliases: jsonList(row.aliases),
     domains: jsonList(row.domains),
     is_self: Number(row.is_self) === 1 ? 1 : 0,
+    ambiguous_name: Number(row.ambiguous_name) === 1 ? 1 : 0,
     archived_at: row.archived_at === null || row.archived_at === undefined ? null : String(row.archived_at),
   }));
 }
@@ -323,7 +326,13 @@ export function activePromptCount(db) {
  * @property {string|null} prompt_origin
  * @property {string|null} cli_executable
  * @property {string|null} artifact_ref
- * @property {{entity_id: number, name: string, first_index: number, occurrences: number, recommended: number, snippet: string, rank: number}[]} mentions
+ * @property {string} analysis_revision
+ * @property {number} correction_cutoff
+ * @property {ReturnType<typeof answerReview>} review
+ * @property {{id:number, entity_id: number, name: string, first_index: number, occurrences: number,
+ *   recommended: number, captured_recommended:number, stance:string|null, method:string,
+ *   analysis_revision:string, rule_id:string|null, evidence_start:number|null,evidence_end:number|null,
+ *   review_flags:string[], snippet: string, rank: number}[]} mentions
  * @property {{url: string, domain: string, entity_id: number|null, rank: number}[]} citations
  * @property {{id:number,event_type:string, status:string, query:string|null, queries:string[], url:string|null, title:string|null, domain:string|null, observed_at:string, rank:number|null}[]} search_events
  * @property {{url:string,title:string|null,provenance:string,search_event_id:number|null}[]} source_observations
@@ -385,7 +394,9 @@ export function queryAnswers(db, filters = {}) {
   );
 
   /** @type {AnswerItem[]} */
-  const items = rows.map((row) => ({
+  const items = rows.map((row) => {
+    const review = answerReview(db, Number(row.id));
+    return {
     id: Number(row.id),
     provider: String(row.provider),
     surface: row.surface === null || row.surface === undefined ? null : String(row.surface),
@@ -406,12 +417,16 @@ export function queryAnswers(db, filters = {}) {
     prompt_origin: row.prompt_origin === null || row.prompt_origin === undefined ? null : String(row.prompt_origin),
     cli_executable: row.cli_executable === null || row.cli_executable === undefined ? null : String(row.cli_executable),
     artifact_ref: row.artifact_ref === null || row.artifact_ref === undefined ? null : String(row.artifact_ref),
+    analysis_revision: String(review.captureRevision),
+    correction_cutoff: review.correctionCutoff,
+    review,
     mentions: [],
     citations: [],
     search_events: [],
     source_observations: [],
     answer_citations: [],
-  }));
+    };
+  });
 
   if (items.length === 0) return { total, page, per, pages, items };
 
@@ -420,23 +435,27 @@ export function queryAnswers(db, filters = {}) {
   /** @type {Map<number, AnswerItem>} */
   const byId = new Map(items.map((item) => [item.id, item]));
 
-  for (const row of all(
-    db,
-    `SELECT m.response_id, m.entity_id, m.first_index, m.occurrences, m.rank, m.recommended, m.snippet, e.name
-       FROM mentions m JOIN entities e ON e.id = m.entity_id
-      WHERE m.response_id IN (${placeholders})
-      ORDER BY m.response_id ASC, m.rank ASC`,
-    ids,
-  )) {
-    byId.get(Number(row.response_id))?.mentions.push({
-      entity_id: Number(row.entity_id),
-      name: String(row.name),
-      first_index: Number(row.first_index),
-      occurrences: Number(row.occurrences ?? 1),
-      rank: Number(row.rank ?? 1),
-      recommended: Number(row.recommended) === 1 ? 1 : 0,
-      snippet: String(row.snippet ?? ''),
-    });
+  const entityNames = new Map(all(db, 'SELECT id, name FROM entities')
+    .map((row) => [Number(row.id), String(row.name)]));
+  for (const item of items) {
+    item.mentions = item.review.mentions.map((mention) => ({
+      id: mention.mentionId,
+      entity_id: mention.entityId,
+      name: entityNames.get(mention.entityId) ?? `Entity ${mention.entityId}`,
+      first_index: mention.firstIndex,
+      occurrences: mention.occurrences,
+      rank: mention.rank,
+      recommended: mention.recommended ?? 0,
+      captured_recommended: mention.capturedRecommended,
+      stance: mention.effectiveStance,
+      method: mention.method,
+      analysis_revision: mention.analysisRevision,
+      rule_id: mention.ruleId,
+      evidence_start: mention.evidenceStart,
+      evidence_end: mention.evidenceEnd,
+      review_flags: mention.reviewFlags,
+      snippet: mention.snippet,
+    }));
   }
 
   for (const row of all(
@@ -546,11 +565,11 @@ export function exportAll(db) {
     'settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions',
     'citations', 'search_events', 'search_queries', 'source_observations',
     'answer_citations', 'usage_components', 'execution_profiles',
-    'benchmark_revisions', 'alerts',
+    'benchmark_revisions', 'mention_interpretations', 'mention_corrections', 'alerts',
   ];
   /** @type {Record<string, unknown>} */
   const out = {
-    exportFormatVersion: 2,
+    exportFormatVersion: 3,
     databaseSchemaVersion: userVersion(db),
     exportedAt: `${new Date().toISOString().slice(0, 19)}Z`,
     tables: {},

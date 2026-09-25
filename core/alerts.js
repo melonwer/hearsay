@@ -348,7 +348,11 @@ export function evaluate(dbOrRunId, runIdOrDb, opts = {}) {
   const prev2 = priorRuns[1] ? recommendationCounts(db, priorRuns[1].id, brand.id, surface, comparisonKey) : null;
 
   // --- LOST_RECOMMENDATION / GAINED_RECOMMENDATION (need 2 prior runs) ----------------
-  if (prev1 && prev2) {
+  const heuristicOnly = [runId, ...priorRuns.map((row) => row.id)].every((id) =>
+    Number(get(db, `SELECT COUNT(*) AS n FROM responses
+      WHERE run_id = ? AND analysis_revision IS NOT NULL
+        AND analysis_revision <> 'legacy-heuristic-v1'`, [id])?.n ?? 0) === 0);
+  if (prev1 && prev2 && heuristicOnly) {
     const texts = promptTexts(db, [...current.values()].map((entry) => entry.promptId));
     for (const [key, cur] of current) {
       if (cur.n === 0) continue;

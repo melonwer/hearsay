@@ -359,7 +359,7 @@ function kpiRow(view) {
     <article class="card kpi">
       <h2>Recommendation rate</h2>
       <p class="kpi-value">${rateWithCI(k.recRate.rate)}</p>
-      <p class="kpi-sub muted">answers that put you forward as a pick</p>
+      <p class="kpi-sub muted">legacy heuristic answers only; review new stance labels in Answers</p>
       ${deltaLine(k.recRate.delta)}${spreadLine}
     </article>
     <article class="card kpi">

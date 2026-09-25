@@ -512,6 +512,11 @@ function fakeAnalyze(text, entities, nativeCitations = []) {
       occurrences: 1,
       rank: index + 1,
       recommended: index === 0,
+      stance: index === 0 ? 'positive' : 'neutral',
+      rule_id: 'fixture_claim',
+      evidence_start: text.indexOf(entity.name),
+      evidence_end: text.indexOf(entity.name) + entity.name.length,
+      review_flags: [],
       snippet: text.slice(0, 40),
     }));
   const citations = nativeCitations.map((citation, index) => ({

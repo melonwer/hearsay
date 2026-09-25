@@ -23,6 +23,7 @@ import { EVIDENCE_LIMITS, storeMeasurementEvidence, storeTargetDefinition } from
 // Lane A is in flight. A namespace import never fails to resolve, so the runner stays
 // importable and testable with injected implementations.
 import * as analyzeModule from './analyze.js';
+import { storeInterpretation } from './interpretations.js';
 import * as alertsModule from './alerts.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
@@ -166,14 +167,15 @@ export function recoverStaleRuns(db, opts = {}) {
 
 /**
  * @param {Db} db
- * @returns {{id: number, name: string, aliases: string[], domains: string[]}[]}
+ * @returns {{id: number, name: string, aliases: string[], domains: string[], ambiguousName:boolean}[]}
  */
 function loadEntities(db) {
-  return all(db, 'SELECT id, name, aliases, domains FROM entities WHERE archived_at IS NULL ORDER BY id').map((row) => ({
+  return all(db, 'SELECT id, name, aliases, domains, ambiguous_name FROM entities WHERE archived_at IS NULL ORDER BY id').map((row) => ({
     id: Number(row.id),
     name: String(row.name),
     aliases: parseJsonArray(row.aliases),
     domains: parseJsonArray(row.domains),
+    ambiguousName: Number(row.ambiguous_name) === 1,
   }));
 }
 
@@ -342,7 +344,7 @@ async function executeRun(options) {
       const budget = budgets.get(task.provider);
       if (!profile || !budget || !benchmark) throw new TypeError('Missing queued measurement definition');
       storeTargetDefinition(db, task.responseId, {
-        profile, benchmark, analysisRevision: 'legacy-heuristic-v1',
+        profile, benchmark, analysisRevision: analyzeModule.STANCE_REVISION,
         searchPolicy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy), at: startedAt,
       });
     }
@@ -534,7 +536,7 @@ async function executeRun(options) {
         });
 
         for (const mention of analysis?.mentions ?? []) {
-          dbRun(
+          const mentionId = dbRun(
             db,
             `INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet)
              VALUES(?, ?, ?, ?, ?, ?, ?)`,
@@ -547,7 +549,9 @@ async function executeRun(options) {
               pick(mention, ['recommended']) ? 1 : 0,
               String(pick(mention, ['snippet']) ?? ''),
             ],
-          );
+          ).lastInsertRowid;
+          storeInterpretation(db, mentionId, analyzeModule.STANCE_REVISION,
+            /** @type {import('./analyze.js').MentionResult} */ (mention), createdAt);
         }
 
         for (const citation of analysis?.citations ?? []) {

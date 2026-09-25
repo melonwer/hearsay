@@ -34,6 +34,8 @@ import {
   queryAnswers,
 } from '../queries.js';
 import { aliasesFor, MIN_ALIAS_LENGTH } from '../../core/analyze.js';
+import { answerReview, appendCorrection, STANCES } from '../../core/interpretations.js';
+import { stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
   createExplorationPrompt,
@@ -320,6 +322,7 @@ function createEntity({ db }, ctx) {
   const aliases = checkAliases(strList(body.aliases, 'aliases') ?? []);
   const domains = (strList(body.domains, 'domains') ?? []).map(normaliseDomain).filter((domain) => domain !== '');
   const isSelf = bool(body.is_self, 'is_self') ?? false;
+  const ambiguousName = bool(body.ambiguous_name, 'ambiguous_name') ?? false;
 
   if (get(db, 'SELECT id FROM entities WHERE name = ?', [name])) {
     throw new ApiError(409, 'conflict', `An entity named ${name} already exists`);
@@ -327,11 +330,12 @@ function createEntity({ db }, ctx) {
   assertDomainsFree(db, domains, null);
 
   const id = transaction(db, () => {
-    const result = run(db, 'INSERT INTO entities(name, aliases, domains, is_self, created_at) VALUES(?, ?, ?, ?, ?)', [
+    const result = run(db, 'INSERT INTO entities(name, aliases, domains, is_self, ambiguous_name, created_at) VALUES(?, ?, ?, ?, ?, ?)', [
       name,
       JSON.stringify(aliases),
       JSON.stringify(domains),
       isSelf ? 1 : 0,
+      ambiguousName ? 1 : 0,
       isoNow(),
     ]);
     // Exactly one row carries is_self (§3) — enforced here, not by the schema.
@@ -360,6 +364,7 @@ function patchEntity({ db }, ctx) {
       ? undefined
       : (strList(body.domains, 'domains') ?? []).map(normaliseDomain).filter((domain) => domain !== '');
   const isSelf = bool(body.is_self, 'is_self');
+  const ambiguousName = bool(body.ambiguous_name, 'ambiguous_name');
 
   // The single-is_self invariant (§3) must land on a VISIBLE row: brandEntity()
   // excludes archived entities, so parking the flag on an archived one would strip
@@ -379,6 +384,7 @@ function patchEntity({ db }, ctx) {
     if (domains !== undefined) run(db, 'UPDATE entities SET domains = ? WHERE id = ?', [JSON.stringify(domains), id]);
     if (isSelf === true) makeSelf(db, id);
     if (isSelf === false) run(db, 'UPDATE entities SET is_self = 0 WHERE id = ?', [id]);
+    if (ambiguousName !== undefined) run(db, 'UPDATE entities SET ambiguous_name = ? WHERE id = ?', [ambiguousName ? 1 : 0, id]);
   });
 
   return listEntities(db, { includeArchived: true }).find((entity) => entity.id === id) ?? null;
@@ -1395,7 +1401,7 @@ export function summary({ db, config }, days, surface) {
     demo: config.demo,
     sov: { current, delta7d },
     mentionRate: mention,
-    recommendationRate: rec === null ? null : { p: rec.p, n: rec.n },
+    recommendationRate: rec === null ? null : { p: rec.p, n: rec.n, method: 'legacy_heuristic' },
     providers,
     openAlerts: Number(get(db, 'SELECT COUNT(*) AS n FROM alerts WHERE acknowledged = 0')?.n ?? 0),
     lastRun: run_ === null ? null : { finishedAt: run_.finished_at, status: run_.status },
@@ -1663,10 +1669,22 @@ export function registerApiRoutes(router, deps) {
           prompt_origin: item.prompt_origin,
           cli_executable: item.cli_executable,
           artifact_ref: item.artifact_ref,
+          analysis_revision: item.analysis_revision,
+          correction_cutoff: item.correction_cutoff,
           mentions: item.mentions.map((mention) => ({
+            id: mention.id,
+            entity_id: mention.entity_id,
             name: mention.name,
             first_index: mention.first_index,
             recommended: mention.recommended,
+            captured_recommended: mention.captured_recommended,
+            stance: mention.stance,
+            method: mention.method,
+            analysis_revision: mention.analysis_revision,
+            rule_id: mention.rule_id,
+            evidence_start: mention.evidence_start,
+            evidence_end: mention.evidence_end,
+            review_flags: mention.review_flags,
           })),
           citations: item.citations.map((citation) => ({
             url: citation.url,
@@ -1680,6 +1698,68 @@ export function registerApiRoutes(router, deps) {
       };
     }),
   );
+
+  router.add('GET', '/api/answers/:id/review', json((ctx) => {
+    const responseId = idParam(ctx.params.id);
+    if (!get(db, 'SELECT id FROM responses WHERE id = ?', [responseId])) {
+      throw new ApiError(404, 'not_found', 'No such answer');
+    }
+    const revision = ctx.url.searchParams.get('revision') || undefined;
+    if (revision && revision.length > 100) throw new ApiError(400, 'bad_request', 'revision is too long');
+    const cutoff = ctx.url.searchParams.has('cutoff')
+      ? intQuery(ctx.url, 'cutoff', 0, 0, Number.MAX_SAFE_INTEGER) : undefined;
+    try {
+      return answerReview(db, responseId, { revision, cutoff });
+    } catch (error) {
+      if (error instanceof RangeError) throw new ApiError(409, 'review_unavailable', error.message);
+      throw error;
+    }
+  }));
+
+  router.add('POST', '/api/answers/:id/corrections', json((ctx) => {
+    const responseId = idParam(ctx.params.id);
+    const body = asObject(ctx.body);
+    const interpretationId = Number(body.interpretation_id);
+    const previousCorrectionId = body.previous_correction_id === undefined || body.previous_correction_id === null
+      ? null : Number(body.previous_correction_id);
+    if (!Number.isSafeInteger(interpretationId) || interpretationId <= 0 ||
+        (previousCorrectionId !== null && (!Number.isSafeInteger(previousCorrectionId) || previousCorrectionId <= 0))) {
+      throw new ApiError(422, 'unprocessable', 'Invalid interpretation or correction ID');
+    }
+    const replacement = /** @type {string} */ (str(body.replacement, 'replacement', { max: 20, required: true }));
+    if (!STANCES.includes(replacement)) throw new ApiError(422, 'unprocessable', 'Unknown stance');
+    const reason = /** @type {string} */ (str(body.reason, 'reason', { max: 1000, required: true }));
+    const requestId = /** @type {string} */ (str(body.request_id, 'request_id', { max: 128, required: true }));
+    try {
+      return appendCorrection(db, { responseId, interpretationId, previousCorrectionId,
+        replacement, reason, requestId, at: isoNow() });
+    } catch (error) {
+      if (error instanceof RangeError) throw new ApiError(409, 'correction_conflict', error.message);
+      if (error instanceof TypeError) throw new ApiError(422, 'unprocessable', error.message);
+      throw error;
+    }
+  }));
+
+  router.add('GET', '/api/stance-rate', json((ctx) => {
+    const surface = surfaceQuery(ctx.url);
+    if (!surface) throw new ApiError(400, 'bad_request', 'surface is required');
+    const analysisRevision = ctx.url.searchParams.get('revision');
+    if (!analysisRevision || analysisRevision.length > 100) throw new ApiError(400, 'bad_request', 'revision is required');
+    const entityId = intQuery(ctx.url, 'entity_id', 0, 1, Number.MAX_SAFE_INTEGER);
+    if (!entityId) throw new ApiError(400, 'bad_request', 'entity_id is required');
+    const correctionCutoff = ctx.url.searchParams.has('cutoff')
+      ? intQuery(ctx.url, 'cutoff', 0, 0, Number.MAX_SAFE_INTEGER) : undefined;
+    try {
+      return stanceRecommendationRate(db, { surface, entityId, analysisRevision,
+        correctionCutoff, comparisonKey: ctx.url.searchParams.get('comparison_key') || undefined,
+        days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 3650), now: isoNow() });
+    } catch (error) {
+      if (error instanceof RangeError || error instanceof TypeError) {
+        throw new ApiError(409, 'stance_rate_unavailable', error.message);
+      }
+      throw error;
+    }
+  }));
 
   router.add(
     'GET',

@@ -242,12 +242,14 @@ test('answers come from several template families, and the hedging ones never re
   assert.ok(openings.size >= 6, `only ${openings.size} distinct answer openings`);
 });
 
-test('the storylines produce all four alert types (§9, §12)', () => {
+test('the demo storylines retain mention alerts and suppress heuristic recommendation alerts', () => {
   const { db, summary } = demo;
 
-  for (const type of ['MENTION_DROP', 'OVERTAKEN', 'LOST_RECOMMENDATION', 'GAINED_RECOMMENDATION']) {
+  for (const type of ['MENTION_DROP', 'OVERTAKEN']) {
     assert.ok((summary.alertTypes[type] ?? 0) >= 1, `the demo universe produced no ${type} alert`);
   }
+  assert.equal(summary.alertTypes.LOST_RECOMMENDATION ?? 0, 0);
+  assert.equal(summary.alertTypes.GAINED_RECOMMENDATION ?? 0, 0);
 
   // The Gemini cliff: the brand's mention rate falls in the last week (§12).
   const drop = get(

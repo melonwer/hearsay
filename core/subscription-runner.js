@@ -8,7 +8,8 @@
 
 import { all, get, isoNow, run as dbRun, SETTING_KEYS, setSetting, transaction } from './db.js';
 import { DemoModeError } from './runner.js';
-import { analyzeResponse as defaultAnalyzeResponse } from './analyze.js';
+import { analyzeResponse as defaultAnalyzeResponse, STANCE_REVISION } from './analyze.js';
+import { storeInterpretation } from './interpretations.js';
 import { discardArtifact } from './artifacts.js';
 import { CodexCliRunner, ClaudeCliRunner, SubscriptionAgentRunner } from './agent-runners.js';
 import { CLAUDE_SURFACE, CODEX_SURFACE } from './agent-profiles.js';
@@ -296,7 +297,7 @@ function queueRun(options) {
           const profile = profiles.get(/** @type {typeof CODEX_SURFACE|typeof CLAUDE_SURFACE} */ (surface));
           if (!profile) throw new TypeError('Missing subscription execution profile');
           storeTargetDefinition(db, responseId, {
-            profile, benchmark, analysisRevision: 'legacy-heuristic-v1',
+            profile, benchmark, analysisRevision: STANCE_REVISION,
             searchPolicy: 'required', at,
           });
           targets.push({ ...prompt, responseId, surface, sampleIdx, db, runId: Number(runId) });
@@ -334,7 +335,7 @@ function usageCount(value) {
  * @returns {Record<string, unknown>[]}
  */
 function entitiesForAnalysis(db) {
-  return all(db, 'SELECT id, name, aliases, domains FROM entities WHERE archived_at IS NULL ORDER BY id').map((row) => {
+  return all(db, 'SELECT id, name, aliases, domains, ambiguous_name FROM entities WHERE archived_at IS NULL ORDER BY id').map((row) => {
     /** @param {unknown} value @returns {string[]} */
     const json = (value) => {
       try {
@@ -344,7 +345,8 @@ function entitiesForAnalysis(db) {
         return [];
       }
     };
-    return { id: Number(row.id), name: String(row.name), aliases: json(row.aliases), domains: json(row.domains) };
+    return { id: Number(row.id), name: String(row.name), aliases: json(row.aliases),
+      domains: json(row.domains), ambiguousName: Number(row.ambiguous_name) === 1 };
   });
 }
 
@@ -400,7 +402,7 @@ function storeResult(db, responseId, result, analyzeResponse, entities, options 
         ],
       );
       for (const mention of analysis.mentions ?? []) {
-        dbRun(db, 'INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet) VALUES(?,?,?,?,?,?,?)', [
+        const mentionId = dbRun(db, 'INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet) VALUES(?,?,?,?,?,?,?)', [
           responseId,
           Number(mention.entityId ?? mention.entity_id),
           Number(mention.firstIndex ?? mention.first_index ?? 0),
@@ -408,7 +410,9 @@ function storeResult(db, responseId, result, analyzeResponse, entities, options 
           Number(mention.rank ?? 1),
           mention.recommended ? 1 : 0,
           String(mention.snippet ?? ''),
-        ]);
+        ]).lastInsertRowid;
+        storeInterpretation(db, mentionId, STANCE_REVISION,
+          /** @type {import('./analyze.js').MentionResult} */ (/** @type {unknown} */ (mention)), String(result.createdAt ?? new Date().toISOString()));
       }
       for (const citation of analysis.citations ?? []) {
         dbRun(db, 'INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES(?,?,?,?,?)', [

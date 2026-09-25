@@ -8,6 +8,7 @@
  */
 
 import { emptyState, html, layout, PROVIDER_LABEL, providerBadge, raw, relTime, SURFACE_LABEL, truncate } from '../layout.js';
+import { randomUUID } from 'node:crypto';
 import { highlightAnswer } from '../highlight.js';
 import { colorIndexFor, listEntities, listPrompts, PROVIDERS, queryAnswers } from '../queries.js';
 import { SURFACES } from '../../core/subscription-model.js';
@@ -238,7 +239,34 @@ function answerCard(view, item) {
     </article>`;
   }
 
-  const recommended = item.mentions.some((mention) => mention.recommended === 1);
+  const review = item.review;
+  const recommended = review.mentions.some((mention) => mention.recommended === 1);
+  const labels = review.mentions.map((mention) => {
+    const entity = view.entities.find((item_) => item_.id === mention.entityId);
+    const label = mention.effectiveStance ?? (mention.legacyRecommended === 1 ? 'legacy recommended' : 'legacy not recommended');
+    return html`<li>
+      <strong>${entity?.name ?? `Entity ${mention.entityId}`}</strong>: ${label}
+      <span class="muted">· ${mention.method} · ${mention.analysisRevision}
+        ${mention.ruleId ? `· ${mention.ruleId}` : ''}
+        ${mention.evidenceStart !== null ? `· answer span ${mention.evidenceStart}–${mention.evidenceEnd}` : ''}
+      </span>
+      ${mention.reviewFlags.length ? html`<span class="pill pill-error">Review: ${mention.reviewFlags.join(', ')}</span>` : ''}
+      ${mention.corrections.length ? html`<ol>${mention.corrections.map((correction) => html`<li>${correction.replacement} · ${correction.reason} · ${correction.createdAt}</li>`)}</ol>` : ''}
+      <form data-api-form="/api/answers/${item.id}/corrections" class="inline-form">
+        <input type="hidden" name="interpretation_id" value="${mention.interpretationId}" />
+        <input type="hidden" name="previous_correction_id" value="${mention.correctionId ?? ''}" />
+        <input type="hidden" name="request_id" value="${randomUUID()}" />
+        <label>Correct stance
+          <select name="replacement">
+            <option value="positive">Positive</option><option value="negative">Negative</option>
+            <option value="neutral">Neutral</option><option value="uncertain">Uncertain</option>
+          </select>
+        </label>
+        <label>Reason <input type="text" name="reason" maxlength="1000" required /></label>
+        <button type="submit" class="btn">Save correction</button>
+      </form>
+    </li>`;
+  });
   const citations = item.citations.map((citation) => {
     const slot = citation.entity_id === null ? undefined : view.colorIndex.get(citation.entity_id);
     const cls = `cite${slot === undefined ? '' : ` cite-s${slot + 1}`}`;
@@ -288,6 +316,7 @@ function answerCard(view, item) {
     <p class="answer-prompt">${item.prompt}</p>
     <div class="answer-text">${raw(highlightAnswer(item.text ?? '', view.entities, view.colorIndex))}</div>
     ${recommended ? html`<p><span class="pill pill-good">recommended</span></p>` : ''}
+    ${labels.length ? html`<details class="answer-evidence"><summary>Review brand stance (${review.revision}, corrections through #${review.correctionCutoff})</summary><ul>${labels}</ul></details>` : ''}
     ${citations.length > 0 ? html`<p class="cite-row">${citations}</p>` : ''}
     ${evidence}
   </article>`;

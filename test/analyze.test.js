@@ -7,6 +7,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { analyzeResponse, containsAlias, extractCitations, extractMentions } from '../core/analyze.js';
 
@@ -23,6 +24,28 @@ const ENTITIES = [
  * @returns {import('../core/analyze.js').MentionResult|undefined}
  */
 const forEntity = (mentions, entityId) => mentions.find((m) => m.entity_id === entityId);
+
+test('human-approved stance fixture reports definite-label precision and coverage', () => {
+  const cases = JSON.parse(readFileSync(new URL('./fixtures/stance-cases.json', import.meta.url), 'utf8'));
+  let definite = 0;
+  let correctDefinite = 0;
+  for (const example of cases) {
+    const entity = { id: 1, name: example.entity, ambiguousName: example.ambiguousName === true };
+    const mention = extractMentions(example.text, [entity])[0];
+    assert.ok(mention, `Expected a mention in ${example.kind}`);
+    assert.equal(mention.stance, example.label, `${example.kind}: ${example.text}`);
+    assert.equal(mention.recommended, example.label === 'positive' ? 1 : 0);
+    assert.ok(mention.rule_id);
+    assert.equal(example.text.slice(mention.evidence_start, mention.evidence_end).includes(example.entity), true);
+    if (mention.stance !== 'uncertain') {
+      definite += 1;
+      if (mention.stance === example.label) correctDefinite += 1;
+    }
+    if (example.ambiguousName) assert.deepEqual(mention.review_flags, ['ambiguous_entity_name']);
+  }
+  assert.deepEqual({ cases: cases.length, definite, definitePrecision: correctDefinite / definite,
+    coverage: definite / cases.length }, { cases: 24, definite: 14, definitePrecision: 1, coverage: 14 / 24 });
+});
 
 test('word boundaries: "Notewellness" is not a mention of "Notewell"', () => {
   const { mentions } = analyzeResponse('Notewellness is a wellness app, unrelated to note taking.', ENTITIES);
@@ -90,6 +113,19 @@ test('entity absent from the answer produces no mention row', () => {
   );
 });
 
+test('explicit rejection never becomes a positive recommendation by proximity or position', () => {
+  const cases = [
+    'I do not recommend Notewell.',
+    'Notewell is unsuitable for this use case.',
+    'Products to avoid:\n1. Notewell',
+  ];
+  for (const text of cases) {
+    const mention = forEntity(extractMentions(text, ENTITIES), 1);
+    assert.ok(mention, `The brand mention should still be detected: ${text}`);
+    assert.equal(mention.recommended, 0, `An explicit rejection must not be positive: ${text}`);
+  }
+});
+
 test('empty text yields no mentions and no citations', () => {
   assert.deepEqual(analyzeResponse('', ENTITIES), { mentions: [], citations: [] });
 });
@@ -105,7 +141,7 @@ test('snippet keeps original casing and marks truncation with ellipses', () => {
   assert.ok(mentions[0].snippet.length <= 120 * 2 + 'NOTEWELL'.length + 2);
 });
 
-test('R1 positive: a trigger phrase within 80 chars marks the entity recommended', () => {
+test('a direct endorsement names its entity and does not carry to a competitor', () => {
   const text = [
     'For distributed sales teams I would recommend Notewell, which handles multi-speaker audio well and exports',
     'clean transcripts to the usual destinations without much fiddling from whoever runs the workspace day to day.',
@@ -118,7 +154,7 @@ test('R1 positive: a trigger phrase within 80 chars marks the entity recommended
   assert.equal(forEntity(mentions, 2)?.recommended, 0);
 });
 
-test('R1 negative: the same trigger more than 80 chars away does not carry', () => {
+test('an unbound superlative does not recommend a later brand', () => {
   const gap = 'y'.repeat(100);
   const text = `The best option depends on your workflow. ${gap} Later on, Jotta gets a passing mention in a long paragraph that keeps going for a while so the short-answer rule cannot fire either. ${gap}`;
   const mentions = extractMentions(text, ENTITIES);
@@ -143,7 +179,7 @@ test('citations: non-http(s) schemes are rejected on every path, including provi
   assert.equal(citations[0].entity_id, 1);
 });
 
-test('R1 boundaries: trigger phrases never match inside other tokens', () => {
+test('endorsement claims bind to a name rather than to nearby words', () => {
   const filler = 'The rest of this answer keeps going for a good while about export formats and admin controls so that the four hundred character short-answer rule can never apply to anything here. '.repeat(2);
   // '#1' must not fire inside '#10' — the answer explicitly ranks the brand tenth.
   const ranked = `Our survey covered many tools over several weeks of daily use. Ranked #10 overall: Jotta trailed the pack. ${filler}`;
@@ -161,7 +197,7 @@ test('R1 boundaries: trigger phrases never match inside other tokens', () => {
   assert.equal(forEntity(extractMentions(best, ENTITIES), 2)?.recommended, 1);
 });
 
-test('R2 positive: first mention inside the first item of the first list', () => {
+test('a list position alone is not an endorsement', () => {
   const text = [
     'Here are the leading tools, in no particular order, for teams that record a lot of calls and want searchable transcripts afterwards.',
     '',
@@ -170,10 +206,11 @@ test('R2 positive: first mention inside the first item of the first list', () =>
     '3. EchoPad — best mobile app.',
   ].join('\n');
   const mentions = extractMentions(text, ENTITIES);
-  assert.equal(forEntity(mentions, 1)?.recommended, 1);
+  assert.equal(forEntity(mentions, 1)?.stance, 'uncertain');
+  assert.equal(forEntity(mentions, 1)?.recommended, 0);
 });
 
-test('R2 negative: an entity in the second list item is not recommended', () => {
+test('neither first nor second list position is an endorsement', () => {
   const text = [
     'Here are the leading tools, in no particular order, for teams that record a lot of calls and want searchable transcripts afterwards.',
     '',
@@ -181,23 +218,23 @@ test('R2 negative: an entity in the second list item is not recommended', () => 
     '2. Jotta — cheapest paid tier.',
   ].join('\n');
   const mentions = extractMentions(text, ENTITIES);
-  assert.equal(forEntity(mentions, 3)?.recommended, 1);
+  assert.equal(forEntity(mentions, 3)?.recommended, 0);
   assert.equal(forEntity(mentions, 2)?.recommended, 0);
 });
 
-test('R3 positive: short answer, entity in the first sentence', () => {
+test('an explicit first-sentence endorsement is positive', () => {
   const mentions = extractMentions('Jotta is the usual pick for solo consultants. It syncs to Notion.', ENTITIES);
   assert.equal(forEntity(mentions, 2)?.recommended, 1);
 });
 
-test('R3 negative: long answer, a first-sentence lead is not enough', () => {
+test('a first-sentence mention without an endorsement remains non-positive', () => {
   const filler = 'This paragraph exists only to push the answer past the four hundred character threshold. '.repeat(6);
   const text = `Jotta is one of several options. ${filler}`;
   assert.ok(text.length >= 400);
   assert.equal(forEntity(extractMentions(text, ENTITIES), 2)?.recommended, 0);
 });
 
-test('R3 negative: short answer, entity only in a later sentence', () => {
+test('a later mention without an endorsement remains non-positive', () => {
   const mentions = extractMentions('Several tools do this well. EchoPad is one of them.', ENTITIES);
   assert.equal(forEntity(mentions, 3)?.recommended, 0);
 });
@@ -264,15 +301,20 @@ test('regex metacharacters in an alias are matched literally', () => {
   assert.equal(mentions[0].first_index, 4);
 });
 
-test('analyzeResponse returns rows shaped like the mentions and citations columns (§3)', () => {
+test('analyzeResponse returns mention decisions and citation receipts', () => {
   const { mentions, citations } = analyzeResponse('Notewell wins. See https://notewell.io.', ENTITIES);
   assert.deepEqual(Object.keys(mentions[0]).sort(), [
     'entity_id',
+    'evidence_end',
+    'evidence_start',
     'first_index',
     'occurrences',
     'rank',
     'recommended',
+    'review_flags',
+    'rule_id',
     'snippet',
+    'stance',
   ]);
   assert.deepEqual(Object.keys(citations[0]).sort(), ['domain', 'entity_id', 'rank', 'url']);
 });

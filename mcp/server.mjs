@@ -39,6 +39,7 @@ const ENTITY_FIELDS = {
   name: { type: 'string', description: 'Entity name, e.g. "Acme"' },
   aliases: { type: 'array', items: { type: 'string' }, description: 'Other names it goes by (≥3 chars each)' },
   domains: { type: 'array', items: { type: 'string' }, description: 'Domains it owns, e.g. "acme.com"' },
+  ambiguous_name: { type: 'boolean', description: 'Flag an ordinary-word brand name for identity review' },
 };
 /** @param {Record<string, unknown>} properties @param {string[]} [required] */
 const obj = (properties, required) => ({ type: 'object', properties, ...(required ? { required } : {}), additionalProperties: false });
@@ -76,7 +77,7 @@ const TOOLS = [
     name: 'hearsay_summary',
     readOnly: true,
     description:
-      'Headline AI-visibility numbers for the tracked brand: share of AI voice vs competitors, brand mention rate with 95% confidence interval and n, recommendation rate, per-provider breakdown across ChatGPT, Claude, Gemini and Perplexity, open alert count, last run.',
+      'Legacy headline AI-visibility numbers for the tracked brand: share of AI voice vs competitors, brand mention rate with 95% confidence interval and n, historical heuristic recommendation rate, per-provider breakdown, open alert count, last run. Use hearsay_stance_rate for a new exact-revision positive-stance rate.',
     inputSchema: obj({ days: DAYS, surface: SURFACE }),
     call: (a) => ({ method: 'GET', path: `/api/summary${query(a, ['days', 'surface'])}` }),
   },
@@ -100,7 +101,7 @@ const TOOLS = [
     name: 'hearsay_answers_search',
     readOnly: true,
     description:
-      'Fetch the raw stored AI answers (the receipts): full text with detected brand/competitor mentions, recommendation flags and cited URLs. Filter by provider (openai|anthropic|gemini|perplexity), entity_id, prompt_id, days. Paged; limit ≤ 50.',
+      'Fetch stored AI answer receipts with mention IDs, current effective stance, captured recommendation bit, analysis revision, rule and span, and cited URLs. Filter by provider, entity, prompt, surface and days. Paged; limit ≤ 50.',
     inputSchema: obj({
       provider: { type: 'string', enum: ['openai', 'anthropic', 'gemini', 'perplexity'] },
       surface: SURFACE,
@@ -111,6 +112,37 @@ const TOOLS = [
       limit: { type: 'integer', minimum: 1, maximum: 50 },
     }),
     call: (a) => ({ method: 'GET', path: `/api/answers${query(a, ['provider', 'surface', 'entity_id', 'prompt_id', 'days', 'page', 'limit'], { limit: 'per' })}` }),
+  },
+  {
+    name: 'hearsay_answer_review',
+    readOnly: true,
+    description: 'Inspect a stored answer and its immutable stance rule, answer span, analysis revision, correction history, and effective label at an optional correction cutoff. Legacy heuristic values are disclosed separately.',
+    inputSchema: obj({ answer_id: { type: 'integer', minimum: 1 }, revision: { type: 'string' }, cutoff: { type: 'integer', minimum: 0 } }, ['answer_id']),
+    call: (a) => ({ method: 'GET', path: `/api/answers/${a.answer_id}/review${query(a, ['revision', 'cutoff'])}` }),
+  },
+  {
+    name: 'hearsay_correct_stance',
+    description: 'Append a human stance correction with a reason and the last correction ID seen in hearsay_answer_review. The original answer and automatic label remain intact.',
+    inputSchema: obj({
+      answer_id: { type: 'integer', minimum: 1 }, interpretation_id: { type: 'integer', minimum: 1 },
+      previous_correction_id: { type: ['integer', 'null'], minimum: 1 },
+      replacement: { type: 'string', enum: ['positive', 'negative', 'neutral', 'uncertain'] },
+      reason: { type: 'string', minLength: 1, maxLength: 1000 },
+      request_id: { type: 'string', minLength: 1, maxLength: 128 },
+    }, ['answer_id', 'interpretation_id', 'replacement', 'reason', 'request_id']),
+    call: (a) => ({ method: 'POST', path: `/api/answers/${a.answer_id}/corrections`, body: {
+      interpretation_id: a.interpretation_id, previous_correction_id: a.previous_correction_id ?? null,
+      replacement: a.replacement, reason: a.reason, request_id: a.request_id,
+    } }),
+  },
+  {
+    name: 'hearsay_stance_rate',
+    readOnly: true,
+    description: 'Positive-stance rate and negative, neutral, uncertain, and absent counts for an exact surface and capture-time analysis revision at a correction cutoff.',
+    inputSchema: obj({ surface: SURFACE, entity_id: { type: 'integer', minimum: 1 }, revision: { type: 'string' },
+      comparison_key: { type: 'string' }, cutoff: { type: 'integer', minimum: 0 }, days: DAYS },
+      ['surface', 'entity_id', 'revision']),
+    call: (a) => ({ method: 'GET', path: `/api/stance-rate${query(a, ['surface', 'entity_id', 'revision', 'comparison_key', 'cutoff', 'days'])}` }),
   },
   {
     name: 'hearsay_citation_gap',

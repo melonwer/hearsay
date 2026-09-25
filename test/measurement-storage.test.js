@@ -47,6 +47,12 @@ test('populated v4 data survives current migrations with a readable v4 backup an
   assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM responses')?.n), 2);
   assert.equal(String(get(db, 'SELECT text FROM responses WHERE id = 1')?.text), 'Acme is a good option.');
   assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM mentions')?.n), 1);
+  const legacyInterpretation = get(db, `SELECT method, stance, legacy_recommended
+    FROM mention_interpretations WHERE mention_id = (SELECT id FROM mentions LIMIT 1)`);
+  assert.equal(legacyInterpretation?.method, 'legacy_heuristic');
+  assert.equal(legacyInterpretation?.stance, null);
+  assert.equal(Number(legacyInterpretation?.legacy_recommended),
+    Number(get(db, 'SELECT recommended FROM mentions LIMIT 1')?.recommended));
   assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM citations')?.n), 1);
   assert.deepEqual({ ...get(db, `SELECT search_policy, execution_profile_id, benchmark_revision_id,
     analysis_revision, query_metadata_status FROM responses WHERE id = 1`) }, {
@@ -221,7 +227,7 @@ test('queued target keeps its original definitions and stores provider evidence 
 
   const exported = exportAll(db);
   const tables = /** @type {Record<string, Record<string, unknown>[]>} */ (exported.tables);
-  assert.equal(exported.exportFormatVersion, 2);
+  assert.equal(exported.exportFormatVersion, 3);
   assert.equal(exported.databaseSchemaVersion, SCHEMA_VERSION);
   assert.equal(tables.execution_profiles.length, 1);
   assert.equal(tables.benchmark_revisions.length, 1);

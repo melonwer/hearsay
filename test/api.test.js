@@ -15,9 +15,70 @@ import { buildConfig } from '../core/config.js';
 import { get, run as dbRun } from '../core/db.js';
 import { _setFetch } from '../core/providers/shared.js';
 import { isRunning } from '../core/runner.js';
+import { analyzeResponse, STANCE_REVISION } from '../core/analyze.js';
+import { storeInterpretation } from '../core/interpretations.js';
 
 after(() => {
   _setFetch(); // restore the real fetch, matching test/providers.test.js
+});
+
+test('answer review, correction, stance rate, and page share one versioned decision', async () => {
+  const app = await boot();
+  try {
+    const entity = await api(app.base, 'POST', '/api/entities', { name: 'Notewell', is_self: true,
+      ambiguous_name: false });
+    assert.equal(entity.status, 201);
+    const prompt = await api(app.base, 'POST', '/api/prompts', { text: 'Which tool?' });
+    assert.equal(prompt.status, 201);
+    const now = new Date().toISOString().slice(0, 19) + 'Z';
+    const runId = dbRun(app.db, `INSERT INTO runs(started_at,trigger,status)
+      VALUES(?,'manual','done')`, [now]).lastInsertRowid;
+    const text = 'I do not recommend Notewell.';
+    const responseId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,
+      text,created_at,surface,lane,target_status,comparability_status,comparison_key,analysis_revision)
+      VALUES(?,?,'openai','fixture',0,? ,? ,'openai-api','tracking','completed',
+        'comparable','fixture-key',?)`, [runId, prompt.body.id, text, now, STANCE_REVISION]).lastInsertRowid;
+    const mention = analyzeResponse(text, [{ id: entity.body.id, name: 'Notewell' }]).mentions[0];
+    const mentionId = dbRun(app.db, `INSERT INTO mentions(response_id,entity_id,first_index,
+      occurrences,rank,recommended,snippet) VALUES(?,?,?,?,?,?,?)`, [
+      responseId, mention.entity_id, mention.first_index, mention.occurrences,
+      mention.rank, mention.recommended, mention.snippet,
+    ]).lastInsertRowid;
+    const interpretationId = storeInterpretation(app.db, mentionId, STANCE_REVISION, mention, now);
+
+    const before = await api(app.base, 'GET', `/api/answers/${responseId}/review?cutoff=0`);
+    assert.equal(before.status, 200);
+    assert.equal(before.body.mentions[0].originalStance, 'negative');
+    assert.equal(before.body.mentions[0].ruleId, 'explicit_rejection');
+    const initialRate = await api(app.base, 'GET', `/api/stance-rate?surface=openai-api&entity_id=${entity.body.id}&revision=${STANCE_REVISION}&comparison_key=fixture-key`);
+    assert.equal(initialRate.status, 200);
+    assert.deepEqual([initialRate.body.n, initialRate.body.negative, initialRate.body.positive], [1, 1, 0]);
+
+    const corrected = await api(app.base, 'POST', `/api/answers/${responseId}/corrections`, {
+      interpretation_id: interpretationId, replacement: 'positive', reason: 'Human reviewed the answer',
+      request_id: 'api-correction-1',
+    });
+    assert.equal(corrected.status, 200);
+    assert.equal(corrected.body.mentions[0].effectiveStance, 'positive');
+    const oldView = await api(app.base, 'GET', `/api/answers/${responseId}/review?cutoff=0`);
+    assert.equal(oldView.body.mentions[0].effectiveStance, 'negative');
+    const currentRate = await api(app.base, 'GET', `/api/stance-rate?surface=openai-api&entity_id=${entity.body.id}&revision=${STANCE_REVISION}&comparison_key=fixture-key`);
+    assert.deepEqual([currentRate.body.n, currentRate.body.positive], [1, 1]);
+    const listed = await api(app.base, 'GET', '/api/answers');
+    const listedMention = listed.body.items.find((item) => item.id === responseId).mentions[0];
+    assert.deepEqual([listedMention.stance, listedMention.recommended, listedMention.captured_recommended,
+      listedMention.analysis_revision], ['positive', 1, 0, STANCE_REVISION]);
+    const page = await fetch(`${app.base}/answers`).then((result) => result.text());
+    assert.match(page, /Review brand stance/);
+    assert.match(page, /Human reviewed the answer/);
+    assert.match(page, new RegExp(`/api/answers/${responseId}/corrections`));
+    const ambiguity = await api(app.base, 'PATCH', `/api/entities/${entity.body.id}`, { ambiguous_name: true });
+    assert.equal(ambiguity.body.ambiguous_name, 1);
+    const entitiesPage = await fetch(`${app.base}/entities`).then((result) => result.text());
+    assert.match(entitiesPage, new RegExp(`data-entity-ambiguous="${entity.body.id}"`));
+  } finally {
+    await app.close();
+  }
 });
 
 /**

@@ -367,6 +367,65 @@ export const MIGRATIONS = [
       ALTER TABLE responses ADD COLUMN cost_price_version TEXT;
     `,
   },
+  {
+    version: 7,
+    sql: `
+      ALTER TABLE entities ADD COLUMN ambiguous_name INTEGER NOT NULL DEFAULT 0
+        CHECK (ambiguous_name IN (0,1));
+      CREATE TABLE mention_interpretations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mention_id INTEGER NOT NULL REFERENCES mentions(id) ON DELETE CASCADE,
+        analysis_revision TEXT NOT NULL,
+        method TEXT NOT NULL CHECK (method IN ('positive_stance','legacy_heuristic')),
+        stance TEXT CHECK (stance IN ('positive','negative','neutral','uncertain')),
+        legacy_recommended INTEGER CHECK (legacy_recommended IN (0,1)),
+        rule_id TEXT,
+        evidence_start INTEGER,
+        evidence_end INTEGER,
+        review_flags TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        UNIQUE(mention_id, analysis_revision),
+        CHECK ((method = 'legacy_heuristic' AND stance IS NULL AND legacy_recommended IS NOT NULL
+          AND rule_id IS NULL AND evidence_start IS NULL AND evidence_end IS NULL)
+          OR (method = 'positive_stance' AND stance IS NOT NULL AND legacy_recommended IS NULL
+          AND rule_id IS NOT NULL AND evidence_start IS NOT NULL AND evidence_end > evidence_start))
+      );
+      CREATE INDEX idx_mention_interpretations_revision
+        ON mention_interpretations(analysis_revision, mention_id);
+      INSERT INTO mention_interpretations(mention_id, analysis_revision, method,
+        legacy_recommended, created_at)
+        SELECT m.id, COALESCE(r.analysis_revision, 'legacy-heuristic-v1'),
+          'legacy_heuristic', m.recommended, r.created_at
+        FROM mentions m JOIN responses r ON r.id = m.response_id;
+      CREATE TRIGGER legacy_mention_interpretation AFTER INSERT ON mentions
+      WHEN COALESCE((SELECT analysis_revision FROM responses WHERE id = NEW.response_id),
+        'legacy-heuristic-v1') = 'legacy-heuristic-v1'
+      BEGIN
+        INSERT INTO mention_interpretations(mention_id, analysis_revision, method,
+          legacy_recommended, created_at)
+        SELECT NEW.id, COALESCE(r.analysis_revision, 'legacy-heuristic-v1'),
+          'legacy_heuristic', NEW.recommended, r.created_at
+        FROM responses r WHERE r.id = NEW.response_id;
+      END;
+      CREATE TABLE mention_corrections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        interpretation_id INTEGER NOT NULL REFERENCES mention_interpretations(id) ON DELETE CASCADE,
+        original_value TEXT NOT NULL,
+        previous_value TEXT NOT NULL,
+        replacement TEXT NOT NULL CHECK (replacement IN ('positive','negative','neutral','uncertain')),
+        reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 1000),
+        created_at TEXT NOT NULL,
+        predecessor_id INTEGER REFERENCES mention_corrections(id),
+        request_id TEXT NOT NULL UNIQUE
+      );
+      CREATE INDEX idx_mention_corrections_history
+        ON mention_corrections(interpretation_id, id);
+      CREATE TRIGGER mention_interpretations_no_update BEFORE UPDATE ON mention_interpretations
+        BEGIN SELECT RAISE(ABORT, 'interpretations are immutable'); END;
+      CREATE TRIGGER mention_corrections_no_update BEFORE UPDATE ON mention_corrections
+        BEGIN SELECT RAISE(ABORT, 'corrections are immutable'); END;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

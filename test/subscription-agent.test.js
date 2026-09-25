@@ -534,7 +534,7 @@ test('subscription targets keep queued definitions and normalized evidence after
         search_policy, prompt_text_snapshot FROM responses WHERE id = ?`, [target.responseId]);
       assert.ok(queued?.execution_profile_id);
       assert.ok(queued?.benchmark_revision_id);
-      assert.equal(queued?.analysis_revision, 'legacy-heuristic-v1');
+      assert.equal(queued?.analysis_revision, 'stance-en-v1');
       assert.equal(queued?.search_policy, 'required');
       assert.equal(queued?.prompt_text_snapshot, 'Which tracker is best?');
       dbRun(db, 'UPDATE prompts SET text = ? WHERE id = 1', ['Edited while the CLI is running']);

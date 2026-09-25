@@ -18,7 +18,7 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [x] C05 — Anthropic search evidence and bounded continuation (`7ae20df`)
 - [ ] C06 — Gemini grounding evidence adapter (held for legal review; grounding disabled)
 - [x] C07 — Perplexity and subscription evidence provenance
-- [ ] C08 — conservative recommendation classification
+- [x] C08 — conservative recommendation classification
 - [ ] C09 — exact series metrics and dashboard scope
 - [ ] C10 — question, search, source, and answer report; Release A gate
 - [ ] C11 — buyer-focused benchmark setup

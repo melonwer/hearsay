@@ -159,6 +159,14 @@ function threeRunDb(t) {
   return db;
 }
 
+test('new stance revisions suppress lost/gained heuristic recommendation alerts', (t) => {
+  const db = threeRunDb(t);
+  exec(db, "UPDATE responses SET analysis_revision = 'stance-en-v1' WHERE run_id = 3");
+  const alerts = evaluate(db, 3, { now: '2026-07-26T08:00:00Z' });
+  assert.equal(alerts.some((alert) => alert.type === 'LOST_RECOMMENDATION' ||
+    alert.type === 'GAINED_RECOMMENDATION'), false);
+});
+
 const NOW = '2026-07-26T12:00:00Z';
 
 /**

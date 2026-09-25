@@ -11,12 +11,12 @@
  * against that raw text, ±120-char word-trimmed snippets, 1-based rank by first index.
  * Citations (§6.3): native → markdown → bare URLs, deduped by URL keeping the earliest
  * rank, domain lowercased and `www.`-stripped, entity matched via `entities.domains`
- * including subdomains. Recommendation detection (§6.4): R1 trigger proximity,
- * R2 list leadership, R3 short-answer lead — deterministic, no ML sentiment (§1.5).
+ * including subdomains. Stance classification uses conservative, entity-specific
+ * English claims and records the evidence span and rule for review.
  *
  * Field names deliberately mirror the SQL columns in §3 and the JSON in §10.3
- * (`entity_id`, `first_index`, `occurrences`, `rank`, `recommended`, `snippet`), so a
- * result row can be bound straight into an INSERT. `recommended` is 0|1 like the column.
+ * (`entity_id`, `first_index`, `occurrences`, `rank`, `recommended`, `snippet`).
+ * `recommended` is 0|1 like the column.
  */
 
 /**
@@ -25,6 +25,7 @@
  * @property {string} name
  * @property {string[]} [aliases]
  * @property {string[]} [domains]
+ * @property {boolean} [ambiguousName] request identity review for an ordinary-word name
  */
 
 /**
@@ -33,7 +34,12 @@
  * @property {number} first_index char offset of the first match in the raw answer
  * @property {number} occurrences total consumed matches for this entity
  * @property {number} rank 1 = first entity mentioned in the answer
- * @property {number} recommended 0|1 per §6.4
+ * @property {number} recommended compatibility bit; 1 only for a positive stance
+ * @property {'positive'|'negative'|'neutral'|'uncertain'} stance
+ * @property {string} rule_id
+ * @property {number} evidence_start UTF-16 offset into the immutable answer
+ * @property {number} evidence_end exclusive UTF-16 offset into the immutable answer
+ * @property {string[]} review_flags
  * @property {string} snippet ±120 chars of context, original casing
  */
 
@@ -51,28 +57,7 @@ export const MIN_ALIAS_LENGTH = 3;
 /** Context kept either side of the first match when building a snippet (§6.2). */
 export const SNIPPET_RADIUS = 120;
 
-/** Trigger phrases for R1 proximity (§6.4), matched case-insensitively. */
-export const TRIGGER_PHRASES = /** @type {readonly string[]} */ ([
-  'recommend',
-  'recommended',
-  'best',
-  'top pick',
-  'top choice',
-  "i'd suggest",
-  'i would suggest',
-  'great choice',
-  'go with',
-  '#1',
-]);
-
-/** R1 window: a match must start no more than this many chars after a trigger ends (§6.4). */
-export const TRIGGER_WINDOW = 80;
-
-/** R3 applies only to answers shorter than this (§6.4). */
-export const SHORT_ANSWER_CHARS = 400;
-
-/** A list item line (§6.4 R2). */
-const LIST_ITEM_RE = /^\s*(?:[-*•]|\d+[.)])\s+/;
+export const STANCE_REVISION = 'stance-en-v1';
 
 /**
  * Escape regex metacharacters (§6.2 #4). Only ECMAScript SyntaxCharacters are escaped,
@@ -226,90 +211,109 @@ export function snippetAround(text, start, end) {
   return `${from > 0 ? '…' : ''}${body}${to < text.length ? '…' : ''}`;
 }
 
+/** @typedef {'positive'|'negative'|'neutral'|'uncertain'} Stance */
+/** @typedef {{stance:Stance,ruleId:string,start:number,end:number,flags:string[]}} StanceDecision */
+
 /**
- * Character span of the first list item of the first list in the answer (§6.4 R2),
- * or null when the answer contains no list.
+ * Find the clause containing a particular alias. Newlines and sentence punctuation
+ * delimit evidence, while a numbered-list marker stays in its item's span.
  * @param {string} text
- * @returns {{start:number, end:number}|null}
+ * @param {AliasMatch} match
+ * @returns {{start:number,end:number}}
  */
-export function firstListItemSpan(text) {
-  let offset = 0;
-  for (const line of text.split('\n')) {
-    if (LIST_ITEM_RE.test(line)) return { start: offset, end: offset + line.length };
-    offset += line.length + 1;
+function clauseSpan(text, match) {
+  const lineStart = text.lastIndexOf('\n', match.start - 1) + 1;
+  const lineEndAt = text.indexOf('\n', match.end);
+  const lineEnd = lineEndAt < 0 ? text.length : lineEndAt;
+  let start = lineStart;
+  let end = lineEnd;
+  const punctuation = /[.!?;](?=\s|$)/g;
+  const line = text.slice(lineStart, lineEnd);
+  const listMarker = /^\s*\d+[.)]\s+/.exec(line);
+  for (const hit of line.matchAll(punctuation)) {
+    const at = lineStart + (hit.index ?? 0);
+    if (listMarker && at < lineStart + listMarker[0].length) continue;
+    if (at < match.start) start = at + 1;
+    else if (at >= match.end && end === lineEnd) end = at + 1;
   }
-  return null;
+  return { start, end };
 }
 
 /**
- * Character span of the first sentence (§6.4 R3): everything up to and including the
- * first `.`, `!` or `?` that is followed by whitespace or the end of the answer.
+ * Classify an entity's local claim. The patterns must bind to the alias itself;
+ * a positive phrase elsewhere in the answer cannot endorse another entity.
  * @param {string} text
- * @returns {{start:number, end:number}}
+ * @param {AliasMatch} match
+ * @param {boolean} ambiguousName
+ * @returns {StanceDecision}
  */
-export function firstSentenceSpan(text) {
-  const stop = /[.!?](?=\s|$)/.exec(text);
-  return { start: 0, end: stop ? stop.index + 1 : text.length };
-}
+function stanceForMatch(text, match, ambiguousName) {
+  const span = clauseSpan(text, match);
+  const before = text.slice(span.start, match.start).replace(/[\s*`_]+$/g, '');
+  const after = text.slice(match.end, span.end).replace(/^[\s*`_]+/g, '');
+  const clause = text.slice(span.start, span.end);
+  /** @type {string[]} */
+  const flags = [];
+  if (ambiguousName) flags.push('ambiguous_entity_name');
 
-/**
- * End offsets of every trigger-phrase occurrence (§6.4 R1). Curly apostrophes are
- * normalised to straight ones so "I’d suggest" counts.
- * @param {string} text
- * @returns {number[]}
- */
-function triggerEnds(text) {
-  const normalised = text.replace(/’/g, "'").toLowerCase();
-  /** @type {number[]} */
-  const ends = [];
-  for (const phrase of TRIGGER_PHRASES) {
-    let from = 0;
-    for (;;) {
-      const at = normalised.indexOf(phrase, from);
-      if (at === -1) break;
-      from = at + 1;
-      // Word boundaries on both sides, exactly like alias matching (§6.2 #3): '#1'
-      // must not fire inside '#10', 'best' inside 'asbestos', 'go with' inside
-      // 'cargo with'.
-      if (!isBoundaryAt(normalised, at - 1) || !isBoundaryAt(normalised, at + phrase.length)) continue;
-      ends.push(at + phrase.length);
+  const decision = (/** @type {Stance} */ stance, /** @type {string} */ ruleId, start = span.start, end = span.end) =>
+    ({ stance, ruleId, start, end, flags });
+  if (ambiguousName) return decision('uncertain', 'identity_review');
+  const withoutAlias = `${before} ${after}`;
+  if (/[^\p{Script=Latin}\p{Number}\p{Punctuation}\p{Separator}\p{Mark}]/u.test(withoutAlias)) {
+    flags.push('unsupported_language');
+    return decision('uncertain', 'unsupported_language');
+  }
+  const quoteOpen = (text.slice(span.start, match.start).match(/["“]/g) ?? []).length;
+  const quoteClose = (text.slice(match.end, span.end).match(/["”]/g) ?? []).length;
+  if (quoteOpen % 2 === 1 && quoteClose % 2 === 1) {
+    flags.push('quoted_claim');
+    return decision('uncertain', 'quoted_claim');
+  }
+  if (/\b(?:if|unless|might|may|could|perhaps|maybe|depending|potentially)\b/i.test(clause)) {
+    flags.push('conditional_claim');
+    return decision('uncertain', 'conditional_claim');
+  }
+  if (/\b(?:but|however|yet|although)\s+(?:it|this|that|the\s+(?:tool|product|option))\b/i.test(after)) {
+    flags.push('mixed_claims');
+    return decision('uncertain', 'mixed_claims');
+  }
+
+  const currentLine = text.slice(text.lastIndexOf('\n', match.start - 1) + 1, text.indexOf('\n', match.end) < 0 ? text.length : text.indexOf('\n', match.end));
+  if (/^\s*(?:[-*•]|\d+[.)])\s/.test(currentLine)) {
+    let lineEnd = text.lastIndexOf('\n', match.start - 1);
+    while (lineEnd >= 0) {
+      const headingStart = text.lastIndexOf('\n', lineEnd - 1) + 1;
+      const preceding = text.slice(headingStart, lineEnd).trim();
+      if (/^\s*(?:[-*•]|\d+[.)])\s/.test(preceding)) {
+        lineEnd = headingStart - 1;
+        continue;
+      }
+      if (/\b(?:products?|tools?|options?)\s+to\s+avoid\s*:/i.test(preceding)) {
+        return decision('negative', 'avoid_heading', headingStart, span.end);
+      }
+      break;
     }
   }
-  return ends;
-}
 
-/**
- * @typedef {Object} AnswerContext
- * @property {number[]} triggerEnds
- * @property {{start:number,end:number}|null} listItem
- * @property {{start:number,end:number}} firstSentence
- * @property {boolean} short
- */
-
-/**
- * Recommendation heuristics (§6.4) for one entity in one answer.
- * @param {number[]} starts every match start for this entity, ascending
- * @param {AnswerContext} ctx precomputed answer facts, shared across entities
- * @returns {boolean}
- */
-function isRecommended(starts, ctx) {
-  if (starts.length === 0) return false;
-  const first = starts[0];
-
-  // R1 — proximity to a trigger phrase.
-  for (const end of ctx.triggerEnds) {
-    for (const start of starts) {
-      if (start >= end && start - end <= TRIGGER_WINDOW) return true;
-    }
+  if (/\b(?:do\s+not|don't|does\s+not|doesn't|would\s+not|wouldn't|won't|cannot|can't|never)\s+(?:(?:really|ever|usually)\s+)?(?:recommend|suggest|choose|pick|use)\s*$/i.test(before) ||
+      /\b(?:don't|do\s+not)\s+think\s+(?:I|we)\s+(?:would|should)\s+(?:recommend|suggest|choose|pick|use)\s*$/i.test(before) ||
+      /\b(?:avoid|skip|reject|discourage|do\s+not\s+use)\s*$/i.test(before) ||
+      /^(?:is|are|would\s+be|seems?)\s+(?:not\s+(?:(?:a|the)\s+)?(?:good|strong|recommended|suitable|right|best)|unsuitable|(?:a|the)\s+(?:poor|bad)\s+(?:choice|option|fit)|inferior)\b/i.test(after) ||
+      /^should\s+(?:be\s+)?avoided\b/i.test(after)) {
+    return decision('negative', 'explicit_rejection');
   }
-
-  // R2 — first mention inside the first item of the first list.
-  if (ctx.listItem && first >= ctx.listItem.start && first < ctx.listItem.end) return true;
-
-  // R3 — short answer, first mention in the first sentence.
-  if (ctx.short && first < ctx.firstSentence.end) return true;
-
-  return false;
+  if (/\b(?:recommend|suggest|choose|pick|use|go\s+with)\s*$/i.test(before) ||
+      /\b(?:best|top|strongest|first)\s+(?:pick|choice|option|recommendation)(?:\s+\w+){0,2}\s+(?:is|:)\s*$/i.test(before) ||
+      /#1\s*:\s*$/i.test(before) ||
+      /^(?:is|would\s+be|remains)\s+(?:(?:the|a)\s+)?(?:best|top|great|good|strong|excellent|usual|recommended)\s+(?:pick|choice|option|fit|tool|product)\b/i.test(after)) {
+    return decision('positive', 'explicit_endorsement');
+  }
+  if (/^(?:offers|supports|includes|provides|has|integrates|costs|stores|exports)\b/i.test(after) ||
+      /^works\s+with\b/i.test(after)) {
+    return decision('neutral', 'factual_claim');
+  }
+  return decision('uncertain', 'no_supported_claim');
 }
 
 /**
@@ -428,7 +432,7 @@ export function extractCitations(text, entities, nativeCitations = []) {
 }
 
 /**
- * Mention detection (§6.2) plus recommendation heuristics (§6.4) for one answer.
+ * Mention detection plus a conservative stance interpretation for one answer.
  * @param {string} text
  * @param {AnalyzeEntity[]} entities
  * @returns {MentionResult[]} ordered by rank
@@ -438,31 +442,36 @@ export function extractMentions(text, entities) {
   const matches = findAliasMatches(body, entities);
   if (matches.length === 0) return [];
 
-  /** @type {Map<number, {starts:number[], first:AliasMatch}>} */
+  /** @type {Map<number, AliasMatch[]>} */
   const byEntity = new Map();
   for (const match of matches) {
     const bucket = byEntity.get(match.entityId);
-    if (bucket) bucket.starts.push(match.start);
-    else byEntity.set(match.entityId, { starts: [match.start], first: match });
+    if (bucket) bucket.push(match);
+    else byEntity.set(match.entityId, [match]);
   }
-
-  /** @type {AnswerContext} */
-  const ctx = {
-    triggerEnds: triggerEnds(body),
-    listItem: firstListItemSpan(body),
-    firstSentence: firstSentenceSpan(body),
-    short: body.length < SHORT_ANSWER_CHARS,
-  };
 
   /** @type {MentionResult[]} */
   const mentions = [];
-  for (const [entityId, { starts, first }] of byEntity) {
+  for (const [entityId, entityMatches] of byEntity) {
+    const first = entityMatches[0];
+    const ambiguousName = entities.some((entity) => entity.id === entityId && entity.ambiguousName === true);
+    const decisions = entityMatches.map((match) => stanceForMatch(body, match, ambiguousName));
+    const labels = new Set(decisions.map((decision) => decision.stance).filter((stance) => stance !== 'neutral'));
+    const conflict = labels.size > 1 || decisions.some((decision) => decision.stance === 'uncertain') && decisions.length > 1;
+    const selected = conflict
+      ? /** @type {StanceDecision} */ ({ stance: 'uncertain', ruleId: 'mixed_claims', start: decisions[0].start, end: decisions.at(-1)?.end ?? decisions[0].end, flags: ['mixed_claims'] })
+      : decisions.find((decision) => decision.stance !== 'neutral') ?? decisions[0];
     mentions.push({
       entity_id: entityId,
       first_index: first.start,
-      occurrences: starts.length,
+      occurrences: entityMatches.length,
       rank: 0, // assigned below, once every entity's first index is known
-      recommended: isRecommended(starts, ctx) ? 1 : 0,
+      recommended: selected.stance === 'positive' ? 1 : 0,
+      stance: selected.stance,
+      rule_id: selected.ruleId,
+      evidence_start: selected.start,
+      evidence_end: selected.end,
+      review_flags: selected.flags,
       snippet: snippetAround(body, first.start, first.end),
     });
   }
