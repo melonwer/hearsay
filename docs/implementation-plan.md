@@ -6,14 +6,14 @@ Repository: https://github.com/melonwer/hearsay
 
 Reviewed baseline: `d7c9573a8ed045cd5727be4a6cc2e900898a6856` (also the current `main` when this plan was prepared). Database schema at this baseline: version 4.
 
-## Implementation progress (25 September 2026)
+## Implementation progress (26 September 2026)
 
-The checkboxes track completed commit gates. A partial C03 implementation is committed, but C03 remains open until its full acceptance and validation criteria pass. See [implementation-review.md](implementation-review.md) for evidence and remaining gates.
+The checkboxes track completed commit gates. C03's budget, preview, and usage-accounting checks pass. C06 remains held for legal review, so the release gates stay open. See [implementation-review.md](implementation-review.md) for evidence and limits.
 
 - [x] C00 — provider contracts and baseline (`a66546f`)
 - [x] C01 — versioned measurement and evidence contracts (`d241a31`)
 - [x] C02 — evidence storage, exports, and runner snapshots (`4905bb5` through `097f0f5`)
-- [ ] C03 — search budgets and usage accounting (in progress through `7ae20df`)
+- [x] C03 — search budgets and usage accounting (`ae2df79`; earlier slices through `7ae20df`)
 - [x] C04 — OpenAI search evidence adapter (`b647107`)
 - [x] C05 — Anthropic search evidence and bounded continuation (`7ae20df`)
 - [ ] C06 — Gemini grounding evidence adapter (held for legal review; grounding disabled)
@@ -21,7 +21,7 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [x] C08 — conservative recommendation classification (all 24 fixture labels approved by user 2026-09-25)
 - [x] C09 — exact series metrics and dashboard scope
 - [x] C10 — question, search, source, and answer report
-- [ ] Release A gate — C03 usage accounting and C06 legal review remain open
+- [ ] Release A gate — C06 legal review remains open
 - [x] C11 — buyer-focused benchmark setup
 - [x] C12 — reviewable evidence-linked opportunities
 - [x] C13 — interventions and follow-up plans
@@ -30,7 +30,7 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [x] C16 — demo separation and tracking health (`3422f93`, `285e412`)
 - [x] C17 — workflow documentation and review handoff
 - [x] E01–E16 — deterministic end-to-end acceptance scenarios ([evidence](implementation-acceptance.md))
-- [ ] Release B gate — Release A blockers C03 and C06 prevent the full handoff
+- [ ] Release B gate — C06 legal review prevents the full handoff
 
 ## 1. Objective and authority
 
