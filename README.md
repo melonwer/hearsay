@@ -18,13 +18,13 @@ Anthropic, Gemini and Perplexity coverage.
 
 ## What it does
 
-Your customers now ask ChatGPT and Perplexity which product to buy, and you have no
-idea what those answers say about you. The tools that can tell you charge $99 to $1,000
-a month and give you back a single score with no margin of error.
+Buyers ask AI tools which product to buy. Hearsay records how the specific API or
+signed-in agent route you select answers your own reviewed questions.
 
 Hearsay asks your buying questions several times and counts how often you get mentioned
-and recommended. Every rate comes with a margin of error and the number of answers
-behind it, and every answer is kept so you can read the exact text any figure came from.
+or receive a positive recommendation. Answer rates show a confidence interval and the
+number of comparable answers behind them. Retained answers let you inspect the text
+and evidence behind each selected series.
 An explicitly enabled Codex agent or Claude Code agent runs through its authenticated
 local CLI. Those measurements retain final answers, provider-confirmed web-search
 events, citations and redacted event artifacts. They are sibling evidence to API runs,
@@ -33,8 +33,8 @@ overage — subscription runs are not free or unlimited.
 
 Direct API keys are optional. Add keys for OpenAI, Anthropic, Gemini and/or Perplexity
 when you want direct API measurements and expanded coverage. API providers bill those
-questions separately, usually by usage. Hearsay's built-in dollar calculator and actual
-spend figure cover API usage only; they do not estimate or report subscription allowance
+questions separately, usually by usage. Hearsay's built-in quote and computed usage
+cost cover API calls only; they do not estimate or report subscription allowance
 consumption.
 
 OpenAI API runs can use live web search on `gpt-5.6-luna`. Set
@@ -53,6 +53,12 @@ Anthropic API runs can use the basic server-side web search tool on
 search to three calls per target and one continuation within the target timeout.
 The `auto` policy includes complete answers where Claude chooses not to search.
 The same on-demand quote and separate daily-schedule consent apply.
+An `auto` answer without search is comparable only when the provider response confirms
+that no search ran. A `required` answer needs a completed search event. A missing query
+string is shown as unavailable, never reconstructed from an answer or source URL.
+Gemini API and Perplexity API remain available on their existing routes. Gemini
+grounded search is disabled pending legal review; Perplexity Sonar's historical
+built-in search is labeled as a legacy profile without verified query wording.
 
 ## Install it by asking
 
@@ -285,30 +291,18 @@ read the numbers honestly. Install it with
 `mkdir -p ~/.claude/skills && cp -r skill ~/.claude/skills/hearsay-ai-visibility`, where
 `~` means your home folder, or just ask your assistant to install `skill/SKILL.md`.
 
-<!-- TODO: record docs/demo.gif (a real Claude Code session) and embed it here. -->
-
 <p>
-  <img src="docs/screenshot-light.png" alt="Hearsay dashboard, light theme, showing share of AI voice with confidence intervals, provider trends and alerts" width="49%">
+  <img src="docs/screenshot-light.png" alt="Hearsay demo dashboard, light theme, with tracking health, an exact series, and share of AI voice" width="49%">
   <img src="docs/screenshot-dark.png" alt="Hearsay dashboard, dark theme" width="49%">
 </p>
 
-Light and dark themes. Clicking any figure opens the answers it was calculated from.
+Light and dark themes. Select a series, then open its comparable answer receipts.
 
 ## Why it exists
 
-68% of US Google searches end without a click (SparkToro, June 2026, on January to
-April 2026 US clickstream data,
-[study](https://sparktoro.com/blog/in-2026-less-than-one-third-of-google-searches-still-send-a-click/)),
-and where an AI Overview appears, on more than 20% of searches,
-[the share of those searches that produce a click falls by nearly 60%](https://searchengineland.com/google-zero-click-searches-2026-study-479717).
-Buying research is moving into AI answers, and the tools that measure it charge by the
-piece. Profound's $99/mo entry tier covers ChatGPT only, with Claude, API access and
-single sign-on locked behind an Enterprise plan
-([pricing](https://www.tryprofound.com/pricing)). Otterly charges $29 to $439/mo extra
-just to add Claude ([pricing](https://otterly.ai/pricing/)). Semrush meters $99/mo *per
-domain* for 25 prompts ([pricing](https://www.semrush.com/pricing/ai/)). Agencies have
-started
-[building their own trackers to escape $99 to $1,000/mo pricing](https://digiday.com/marketing/marketers-question-expensive-ai-visibility-tools-as-inconsistent-results-fuel-skepticism/).
+Buying questions now receive AI answers as well as conventional search results. A
+stored answer is useful when you can see which route produced it, whether search
+actually ran, and which evidence supports the number in a report.
 
 Hearsay is a measurement method you can run anywhere. It asks each question repeatedly,
 publishes the margin of error, keeps the answers behind every figure, and hands the
@@ -316,21 +310,21 @@ whole job to your AI assistant if you would rather not click through a dashboard
 
 ## What you get
 
-Every rate is measured by asking the same question many times and counting, and each one
-is published with a margin of error (a Wilson 95% confidence interval) and the number of
-answers it came from. A figure resting on fewer than five answers is labelled low
-sample.
+Answer rates come from repeated questions and show a Wilson 95% confidence interval
+and comparable-answer count. Fewer than five comparable answers are labeled low sample.
+Share of AI voice instead counts tracked-entity mentions in non-branded questions.
 
 Questions are grouped into intents, meaning one buying question written several ways.
 Hearsay shows you how much the answers move when you ask again, and separately how much
 they move when you reword the question. Rewording moves them more, which is why
 single-prompt tracking is unstable.
 
-Every answer is stored and searchable, and every metric links to the answers behind it.
-The citation gap report shows which websites get cited instead of you, domain by domain,
-in the answers where your brand never comes up. Alerts fire when your mentions drop,
-when a competitor passes you, and when you win or lose a recommendation, each one
-carrying the answers that triggered it.
+Every retained answer is searchable. Exact-series reports link their rates to the
+comparable answers and show attempted targets that could not enter those rates. Evidence
+keeps search queries, returned sources, page fetches, and final-answer citations
+separate. A source returned by search is not a citation in the answer. Measurement
+health alerts flag gaps and changes that start a new series; historical heuristic
+business alerts remain labeled as legacy context.
 
 The cost calculator estimates direct API usage before an API run starts and records a
 computed usage cost afterwards. It shows a known subtotal when some billing units are
@@ -361,21 +355,26 @@ subscription allowance in dollars.
 
 ![Hearsay's cost calculator on the Settings page](docs/screenshot-cost.png)
 
-## How it compares
+## From evidence to action
 
-Checked against each vendor's public pricing page on 2026-07-26, except the Peec figures,
-which come from a [third-party pricing review](https://trakkr.ai/reviews/peec-review/pricing)
-of the same date rather than from peec.ai.
+Select one exact measurement series and window. Use **Evidence** to inspect the buyer
+question, completed search actions, available query wording, source observations,
+final citations, and answer stance. Hearsay keeps branded questions separate from
+non-branded discovery rates by default. A low rate or repeated gap is a reason to
+investigate; it does not explain why a model answered that way.
 
-| | Hearsay | [Profound](https://www.tryprofound.com/pricing) | [Peec AI](https://trakkr.ai/reviews/peec-review/pricing) | [elmo](https://github.com/elmohq/elmo) |
-|---|---|---|---|---|
-| Price | Free; subscription runs use your existing plan allowance and may incur overage; optional API runs are billed directly by those providers | $99/mo entry (ChatGPT only) → $399/mo → Enterprise | $95 to $495/mo, Enterprise custom | Free |
-| License | MIT | Proprietary SaaS | Proprietary SaaS | MIT |
-| Engines | Codex agent and Claude Code agent through signed-in CLIs; optional OpenAI, Anthropic, Gemini and Perplexity APIs | Entry tier: ChatGPT only; Claude Enterprise-gated | 3 of 6 engines on self-serve tiers | ChatGPT, Claude, Perplexity, Gemini, AI Overviews |
-| Margin of error | Wilson 95% intervals, plus rerun and rewording spread reported separately | None published | None published | None |
-| Stored answers | Every answer kept, searchable, linked from every metric | Answer-engine responses on paid tiers | Prompt-level views on paid tiers | Stores responses |
-| Assistant access | MCP and JSON API built in; Codex/Claude Code can operate Hearsay and supply their configured subscription measurements; other MCP clients operate Hearsay but are not runners | API on Enterprise only | API and MCP as higher-tier add-ons | None |
-| What you install | Node plus any signed-in CLI you choose; API-only needs keys; core data is one file plus local subscription artifacts (`git clone` plus `node server.js`) | Nothing, it is hosted | Nothing, it is hosted | Container and database software first (Docker Compose, Postgres, pg-boss) |
+Save an investigation on **Opportunities**. Keep the observed receipt IDs and your
+hypothesis separate. An assistant can propose a candidate, but a person must accept it.
+A page-change plan needs reviewed page evidence. After you ship a change yourself, save
+its publication time and follow-up windows. The comparison reports coverage and
+uncertainty for the frozen baseline and review snapshots. It describes changes in the
+observations without crediting the intervention for them. **Weekly review** combines
+that evidence with your reported outcomes, time, expenses, and partial API costs. It
+does not infer leads or return on investment from mention counts.
+
+The built-in API price table is versioned and was checked on 2026-09-24. Prices can
+change. The quote uses the configured panel and known price components; it is a
+forecast, not a bill or a hard cap on hosted search calls.
 
 ## Methodology
 
@@ -394,9 +393,9 @@ and none of the hidden instructions the consumer apps add. Treat each configured
 as its own directional baseline; no amount of extra sampling makes sibling surfaces a
 single comparable score.
 
-The channel is still small. Under 0.2% of e-commerce visits come from AI tools
-([organicllm.org](https://organicllm.org)), though complex, considered purchases run
-several times higher. Hearsay's costs are built for a channel that size.
+The report measures the questions you selected. It does not estimate how often buyers
+ask those questions, how much traffic an answer caused, or whether a later business
+outcome came from a specific content change.
 
 ## No cloud version, no lock-in
 
@@ -417,7 +416,8 @@ several times higher. Hearsay's costs are built for a channel that size.
 > starts fresh without touching the old demo.
 > The `/api/export` endpoint at
 > `http://127.0.0.1:<the-port-in-data/hearsay.port>/api/export` exports all database
-> records — questions, runs, answers and metrics — as one JSON file. It does not package
+> records, including questions, runs, answers, evidence, opportunities, follow-up plans,
+> outcomes and ledger entries, as one JSON file. It does not package
 > artifact files; back up `data/artifacts/` (or your configured `HEARSAY_DATA_DIR`)
 > separately.
 
@@ -428,9 +428,9 @@ into Slack or email. Then multi-client workspaces with white-label HTML and PDF 
 opt-in sentiment scoring that uses your existing keys, CSV export, and a Docker image
 for people who want one.
 
-v1.2 adds Google AI Overviews per question through an optional search API, more engines
-(Grok, DeepSeek, Copilot), and shared prompt packs from the community. v2 adds trend
-annotations, so you can mark the day you shipped the comparison page.
+Possible later work includes Google AI Overviews through a separately reviewed search
+contract, more engines, and shared prompt packs. Shipped changes can already be recorded
+with publication times and follow-up plans in Opportunities.
 
 ## Contributing and security
 

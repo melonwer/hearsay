@@ -23,3 +23,18 @@ To correct a record, create a new record ID and set `supersedes_id` to the earli
 Enter time in minutes under an activity such as implementation or review. Enter an expense with its own currency; an unknown billed amount can remain blank. A ledger entry may link to an opportunity, but an unlinked workspace expense is not assigned to a measurement series by date alone. Different currencies are not converted or added without a supplied basis.
 
 JSON, Markdown, and HTML weekly-review exports use the same selected report object. Outcome CSV export includes active and superseded rows and neutralizes spreadsheet formula prefixes in text cells. Exports are local downloads; Hearsay does not send email or webhooks from this workflow.
+
+## API and assistant access
+
+Call `GET /api/series` first, then pass one returned `series_id` with explicit
+`start` and `end` UTC timestamps to
+`GET /api/weekly-review?series_id=...&start=...&end=...`. The window must span seven
+days and the end is exclusive. `GET /api/weekly-review/export` takes the same
+selection and a `format` of `json`, `markdown`, or `html`. The read-only
+`hearsay_weekly_review` MCP tool uses the same three selection fields.
+
+The Weekly review form sends manual records to `POST /api/outcomes`, CSV batches to
+`POST /api/outcomes/import`, and time or expense entries to `POST /api/ledger`.
+`GET /api/outcomes/export` downloads the saved outcome CSV. These write routes
+record what the user supplied; they do not call an inference provider, verify a
+conversion, or approve a new measurement run.

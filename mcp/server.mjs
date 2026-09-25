@@ -73,7 +73,7 @@ const TOOLS = [
     name: 'hearsay_status',
     readOnly: true,
     description:
-      'Check whether the local Hearsay AI-visibility tracker is running and configured: enabled providers (ChatGPT, Claude, Gemini, Perplexity), tracked brand/competitor/prompt counts, last measurement run, schedule, and 30-day computed API usage cost or known subtotal. Call this FIRST for any AI visibility / GEO / AI SEO / brand-monitoring question.',
+      'Check whether local Hearsay is running and configured: enabled API and signed-in agent routes, tracked brand/competitor/prompt counts, last measurement run, tracking schedule and collection health, and 30-day computed API usage cost or known subtotal. Call this first for AI visibility questions.',
     inputSchema: obj({}),
     call: () => ({ method: 'GET', path: '/api/status' }),
   },
@@ -264,7 +264,7 @@ const TOOLS = [
     name: 'hearsay_alerts',
     readOnly: true,
     description:
-      'List AI-visibility alerts: lost/gained recommendations, competitors overtaking share of AI voice, mention-rate drops — each with severity and the underlying numbers. open_only=true (default) shows unacknowledged alerts.',
+      'List saved alerts. New-series alerts describe measurement health and changed collection conditions. Historical heuristic recommendation and mention alerts remain labeled legacy context; inspect their receipts before drawing a conclusion. open_only=true (default) shows unacknowledged alerts.',
     inputSchema: obj({ open_only: { type: 'boolean', description: 'Default true' } }),
     call: (a) => ({ method: 'GET', path: `/api/alerts?open=${a?.open_only === false ? '0' : '1'}` }),
   },

@@ -39,7 +39,7 @@ The matrix records the original C00 gates. OpenAI and Anthropic basic-search rou
 
 ## Source and price provenance
 
-These pages were checked on 2026-09-24. Prices change and must be stored with a checked version in C03; the current `core/cost.js` table covers token prices and the Sonar request fee, not the planned search and continuation components.
+These pages were checked on 2026-09-24. This section began as the C00 baseline contract. The current `core/cost.js` table has a checked version with token, Sonar request, and supported OpenAI and Anthropic search prices. C03 remains open for the rest of its usage-accounting acceptance gate. Price changes require a new checked version.
 
 | Provider | Contract source | Pricing source and unit to retain |
 |---|---|---|

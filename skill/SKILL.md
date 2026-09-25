@@ -1,120 +1,117 @@
 ---
 name: hearsay-ai-visibility
-description: Operate and interpret a local Hearsay AI-visibility tracker via its
-  MCP tools (hearsay_*) — set up brand tracking, generate prompt panels, run
-  measurements, and report share of AI voice / brand mentions in ChatGPT, Claude,
-  Gemini and Perplexity with honest statistics (confidence intervals, n, phrasing
-  spread). Use for AI visibility, GEO, AI SEO, LLM brand monitoring questions.
+description: Operate a local Hearsay tracker through hearsay_* MCP tools. Review buyer
+  questions, run an explicitly selected API or signed-in agent route, inspect exact
+  evidence, and report observations, actions, and user-reported outcomes.
 ---
 
 # Operating Hearsay
 
-## First move — always
+## Start with status and scope
 
-Call `hearsay_status` before anything else, then branch:
+Call `hearsay_status` first. If the server is unreachable, ask the user to start
+`node server.js` in the Hearsay directory, then retry. If no benchmark is configured,
+use the setup steps below. Otherwise call `hearsay_series_list` and choose an explicit
+series with the user. Record its surface, model and execution profile, search policy,
+benchmark revision, analysis revision, and UTC window. Use the same `series_id` and
+window for every summary, evidence receipt, opportunity, and weekly report. An API
+series, Codex agent series, and Claude Code agent series are separate observations.
 
-- **Unreachable** → tell the human to start it: `node server.js` in the hearsay
-  directory (needs Node ≥ 22.13), then retry.
-- **`configured: false`** → run the onboarding playbook below.
-- **Configured** → call `hearsay_series_list` and use its selected series ID with
-  `hearsay_series_summary`. Pass the same ID to `hearsay_answers_search` for receipts.
-  Use the older `hearsay_summary` only when the human asks for legacy API reporting.
+For a new workspace with no results, explain that a benchmark can be reviewed before
+any measurement route is enabled. Do not present empty rates as zero.
 
-## Onboarding playbook (unconfigured instance)
+## Set up a reviewed benchmark
 
-1. Ask for the brand, the buyer audience, the product or job, and the desired
-   conversion. Competitors are optional. Ask for language and market preferences
-   as planning context; these are not provider locale controls.
-2. Ask for buyer questions and where they came from. Keep pasted sales or support
-   material in local source notes. Only exact reviewed question text can become a
-   measurement prompt.
-3. Use `hearsay_suggest_prompts` for a local five-intent starter if useful. It
-   needs no provider key and spends no measurement or analysis allowance. Edit
-   the groups with the human; fewer than five intents or three phrasings are fine.
-4. Save the selected questions with `hearsay_create_benchmark_draft`, then use
-   `hearsay_review_benchmark_draft`. Show every exact phrase, category, validation
-   problem, and the actual API plus subscription target count. Approve with
-   `hearsay_approve_benchmark_draft` only after the human reviews that exact revision.
-   For the older `hearsay_setup_tracking` route, set `reviewed: true` only after
-   showing every exact question to the human.
-5. Drafting needs no measurement route. Running needs at least one configured API
-   provider or subscription-agent surface. For API measurement, call
-   `hearsay_run_panel` and relay any `quote_required` cost before retrying with
-   `confirm: true` and its `quote_id`. For a subscription-only installation, use
-   the subscription preview and confirmation flow. Never confirm usage or cost
-   the human has not approved in this conversation.
-6. Poll the chosen run until completion. Call `hearsay_series_list`, then report
-   `hearsay_series_summary` for its selected series using the rules below.
+1. Ask for the brand, buyer, product job, desired conversion, and optional competitors.
+   Language and market guide question writing; they do not set provider locale.
+2. Ask where the buyer questions came from. Keep sales and support material in local
+   source notes. Use `hearsay_suggest_prompts` for an editable starter if useful.
+3. Save a draft with `hearsay_create_benchmark_draft`. Call
+   `hearsay_review_benchmark_draft` and show every selected question, category,
+   validation issue, and API and subscription target count. Call
+   `hearsay_approve_benchmark_draft` only after the person reviews that exact revision.
+   Exploration questions remain discovery evidence until separately promoted.
+4. Choose one enabled route and a small panel. For an API route, configure only a
+   supported model and search policy. Call the read-only `hearsay_cost_estimate`
+   before `hearsay_run_panel`; a small search-off run can start immediately when
+   the run tool is called. Show target count, search assumptions, known and unknown
+   cost, and the selected profile. Call the run tool only after the person approves
+   this run. If it returns `quote_required`, show that binding quote and pass its
+   `quote_id` with `confirm: true` after approval.
+5. For a subscription-only workspace, select `codex-agent` or
+   `claude-code-agent` with `hearsay_subscription_preview`. Show the exact targets,
+   process limits, plan allowance and possible overage. The internal CLI search count
+   has no hard ceiling. Use `hearsay_subscription_run` only after the person approves
+   that preview and any first-use consent. This route needs no API key.
+6. Poll `hearsay_run_status`, then call `hearsay_series_list` again and select the
+   new exact series. Scheduled API search and scheduled subscription runs require
+   separate consent through their schedule tools; a manual run does not grant it.
 
-## Honesty rules (bind your narration, not just the UI)
+## Read evidence without inventing it
 
-- Every rate carries its n: "58% ± 7 (n=36)", never "58%".
-- Name the selected surface, search policy, benchmark, analysis revision, and window.
-  Report attempted targets and comparable answers separately.
-- A source observation, a final-answer citation, and a brand mention have separate
-  rates. An answer without exposed queries has missing metadata, not zero queries.
-- When an intent has multiple paraphrases, state the phrasing spread: "phrasing
-  spread ±19 pts — how you ask matters more than rerun noise."
-- n < 5 → say "low sample, directional at best".
-- Days without runs are gaps, not zeros. Never interpolate.
-- Demo mode data is fictional — say so every time you quote it.
-- **Never invent a blended "AI visibility score", a rank position, or a prompt
-  volume estimate — even if asked.** Hearsay refuses these on purpose (they're
-  not measurable honestly). Explain that and offer share of voice, mention rate
-  with CI, and receipts instead.
-- An API series measures that provider's API. A Codex or Claude Code agent series
-  measures that signed-in CLI route. Neither measures the logged-in consumer app.
+- Give each rate its scope, numerator, denominator, and interval when available. Say
+  "low sample" when fewer than five comparable answers support a rate. Report attempted,
+  completed, and comparable targets separately. A failed or incomplete answer is not
+  a brand absence; days without runs are gaps.
+- Use `hearsay_series_summary` for current rates and
+  `hearsay_answers_search` or `hearsay_answer_evidence` for receipts. The older
+  `hearsay_summary`, citation-gap report, and heuristic recommendation values are
+  legacy views. Name their different evidence layer if the user requests them.
+- A confirmed `auto` answer without search can enter its own auto series. A required
+  search needs a completed provider-confirmed event. If a provider hides query text,
+  report "query wording unavailable." Never reconstruct a query from the answer,
+  search results, or citation URLs. Missing query metadata is not zero queries.
+- A returned source, a fetched page, and a final-answer citation are different
+  records. A positive recommendation requires positive stance, not merely a brand
+  mention or position in a list. Inspect the rule and answer span; use
+  `hearsay_correct_stance` only with a person's reason after review.
+- Branded questions measure recall. Non-branded questions support discovery rates.
+  Query incidence describes this configured panel, not buyer search volume.
+  Demonstration data is fictional. Neither agent CLI route measures a consumer app.
 
-## Weekly report recipe
+## Weekly evidence-to-action review
 
-Start with `hearsay_series_list`. Use one series ID for `hearsay_series_summary`,
-`hearsay_intent_results`, `hearsay_citation_gap`, and 2–3 receipts from
-`hearsay_answers_search`. The citation gap uses legacy citation rows, so label
-that evidence layer. The alerts tool lacks an exact series filter. If you include
-an alert, label it as run-level context and check its receipt against the series.
+1. Select one historical series and an exact seven-day UTC window. Call
+   `hearsay_weekly_review` and `hearsay_series_summary` for that same scope.
+   Report comparable coverage, mention and positive-stance rates with their
+   denominators, query-metadata coverage, source incidence, and final citation
+   incidence. Check two or three receipts, including an absence or uncertain answer.
+2. Use `hearsay_intent_evidence` and `hearsay_opportunities` for a specific intent.
+   Describe the observed answer or repeated gap and its receipt IDs. Label a possible
+   explanation as a hypothesis. An assistant may call `hearsay_opportunity_propose`,
+   but a person must accept it in Opportunities. A page-change plan requires reviewed
+   page evidence. Proposing an action does not publish a page or run a provider.
+3. For a shipped action, read its saved baseline and review through
+   `hearsay_opportunity` and `hearsay_intervention_comparison`. Start with the full
+   benchmark. If coverage differs, a person may choose the common-prompt subset;
+   name every excluded prompt. State insufficient or incomparable results as such.
+   An observed increase does not prove that the action caused it.
+4. Include only outcomes the user entered, with source, unit, period, and attribution
+   method. Report time and expenses separately from API computed cost and subscription
+   allowance. A known subtotal with unknown charges is partial. Do not calculate ROI
+   or infer leads from mentions. Reading a weekly report makes no provider call.
 
+Use this report shape:
+
+```text
+Week: [UTC start, end); exact series: [surface, profile, policy, benchmark, analysis]
+Collection: [comparable / attempted targets], [query-metadata coverage], [gaps]
+Rates: [mention n/denominator and interval], [positive stance n/denominator and interval]
+Evidence: [source incidence], [final citation incidence], [receipt IDs]
+Actions: [accepted or shipped records], [baseline/review status], [descriptive result]
+Reported outcomes: [source, value, unit, period, attribution method]
+Costs: [computed API subtotal and unknown parts], [subscription usage], [user expenses/time]
+Next review: [owner and date, or no action]
 ```
-## AI visibility — week of {date}
-**Series:** {surface}, {search policy}, {benchmark}, {analysis revision}, {window}
-**Coverage:** {comparable}/{attempted} targets; {query metadata count} expose queries
-**Share of voice:** {sov}% of tracked-entity mentions
-**Mention rate:** {p}% ± {ci} (n={comparable answers})
-**Recommendation method:** {positive stance or legacy heuristic}; {p}% (n={comparable answers})
-**Evidence:** {source incidence}, {answer citation incidence}
-**Receipts:** {2 short answer quotes, surface + date, one positive and one negative or uncertain}
-```
-
-## Alert triage
-
-- `LOST_RECOMMENDATION` (serious): find the receipt via `hearsay_answers_search`
-  (filter to that prompt + provider), quote what the AI says now, suggest checking
-  what changed on the cited pages.
-- `OVERTAKEN` (warning): compare intent results for you vs that competitor;
-  which intents flipped?
-- `MENTION_DROP` (warning): check `hearsay_run_status`/provider errors first —
-  a failed provider looks like a drop.
-- `GAINED_RECOMMENDATION` (good): quote the receipt; note what page got cited.
-- Ack with `hearsay_ack_alert` only after the human has seen it.
-
-## GEO playbook (honest version)
-
-- Pass the selected series ID to `hearsay_citation_gap`. Its counts use legacy
-  citation rows. Check the selected series export for the source and final-answer
-  citation records before proposing an action.
-- For `comparison` intents you lose: a fair, factual comparison page is the
-  highest-leverage asset.
-- After shipping content, compare the same benchmark and execution profile in
-  separate windows. If either changes, report the results as incomparable.
-- Watch competitor prompt-space with `hearsay_prompt_results`: which prompts
-  do they lead, and with what recommendation rate?
 
 ## Troubleshooting
 
-- Provider `auth`/`quota` errors in status/summary → that provider's key in
-  `.env` (OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY /
-  PERPLEXITY_API_KEY); a provider is enabled iff its key is set.
-- `demo_mode` errors → the instance runs fictional demo data; set
-  `HEARSAY_DEMO=0` and add a key to go live.
-- Keys are only ever spent on measurement runs — reading results is free.
+Check `hearsay_status` for disabled routes, unsupported profiles, failed runs,
+missing consent, or stale collection. API keys live in the local `.env`; the
+subscription CLIs use their own signed-in sessions. Registering the MCP server lets
+an assistant operate Hearsay but does not enable that assistant as a measurement
+runner. Gemini grounded search remains disabled pending legal review. The fictional
+demo has its own database; set `HEARSAY_DEMO=0` and restart for real setup. Leave
+both databases intact.
 
-Install: copy this folder to `~/.claude/skills/hearsay-ai-visibility/`.
+Install by copying this folder to `~/.claude/skills/hearsay-ai-visibility/`.
