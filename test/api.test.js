@@ -25,7 +25,7 @@ after(() => {
 test('evidence API and page expose the same scoped receipts without rendering stored markup or unsafe links', async () => {
   const app = await boot();
   try {
-    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'How should I compare tools?' })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'How should I compare tools?' })).body;
     const now = new Date().toISOString().slice(0, 19) + 'Z';
     const runId = dbRun(app.db, "INSERT INTO runs(started_at,trigger,status) VALUES(?,'manual','done')", [now]).lastInsertRowid;
     const answerId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
@@ -74,7 +74,7 @@ test('evidence API and page expose the same scoped receipts without rendering st
     assert.deepEqual(themed.body.report.themeGroups.map((group) => [group.label, group.responseIncidence]),
       [['Pricing & <review>', 1]]);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 4);
+    assert.equal(exported.body.exportFormatVersion, 5);
     assert.equal(exported.body.tables.query_themes.length, 1);
     assert.equal(exported.body.tables.query_theme_assignments.length, 1);
 
@@ -128,7 +128,7 @@ test('answer review, correction, stance rate, and page share one versioned decis
     const entity = await api(app.base, 'POST', '/api/entities', { name: 'Notewell', is_self: true,
       ambiguous_name: false });
     assert.equal(entity.status, 201);
-    const prompt = await api(app.base, 'POST', '/api/prompts', { text: 'Which tool?' });
+    const prompt = await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'Which tool?' });
     assert.equal(prompt.status, 201);
     const now = new Date().toISOString().slice(0, 19) + 'Z';
     const runId = dbRun(app.db, `INSERT INTO runs(started_at,trigger,status)
@@ -185,7 +185,7 @@ test('exact series summary, dashboard, answer drilldown, and export stay on one 
   const app = await boot();
   try {
     const entity = (await api(app.base, 'POST', '/api/entities', { name: 'Notewell', is_self: true })).body;
-    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'Which tool?' })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'Which tool?' })).body;
     const legacyId = seedResponse(app.db, prompt.id, 'Notewell is available.');
     dbRun(app.db, `INSERT INTO mentions(response_id,entity_id,first_index,occurrences,rank,recommended,snippet)
       VALUES(?,?,0,1,1,0,'Notewell is available.')`, [legacyId, entity.id]);
@@ -324,10 +324,114 @@ test('status: configured flips true with a brand and an active prompt', async ()
   const app = await boot();
   try {
     await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
-    await api(app.base, 'POST', '/api/prompts', { text: 'best acme-like tool?' });
+    await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'best acme-like tool?' });
     const { body } = await api(app.base, 'GET', '/api/status');
     assert.equal(body.configured, true);
     assert.equal(body.counts.activePrompts, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test('tracking question creation requires exact review and rejects case or spacing duplicates', async () => {
+  const app = await boot();
+  try {
+    const missing = await api(app.base, 'POST', '/api/prompts', { text: 'Which tool is best?' });
+    assert.equal(missing.status, 422);
+    assert.equal(missing.body.error.code, 'review_required');
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM prompts')?.n), 0);
+
+    const first = await api(app.base, 'POST', '/api/prompts',
+      { text: 'Which tool is best?', reviewed: true });
+    assert.equal(first.status, 201);
+    const duplicate = await api(app.base, 'POST', '/api/prompts',
+      { text: '  WHICH   TOOL IS BEST?  ', reviewed: true });
+    assert.equal(duplicate.status, 422);
+    assert.equal(duplicate.body.error.code, 'duplicate_question');
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM prompts WHERE active = 1')?.n), 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test('an entity edit invalidates review until the exact unchanged question is reapproved', async () => {
+  const app = await boot();
+  try {
+    const brand = await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
+    const prompt = await api(app.base, 'POST', '/api/prompts',
+      { text: 'Which tool is best?', reviewed: true });
+    assert.equal((await api(app.base, 'GET', '/api/status')).body.configured, true);
+    const updatedBrand = await api(app.base, 'PATCH', `/api/entities/${brand.body.id}`,
+      { aliases: ['Acme Co'] });
+    assert.equal(updatedBrand.status, 200);
+    assert.equal((await api(app.base, 'GET', '/api/status')).body.reviewNeeded, true);
+    const reviewed = await api(app.base, 'PATCH', `/api/prompts/${prompt.body.id}`,
+      { text: 'Which tool is best?', reviewed: true });
+    assert.equal(reviewed.status, 200);
+    assert.equal((await api(app.base, 'GET', '/api/status')).body.configured, true);
+  } finally {
+    await app.close();
+  }
+});
+
+test('draft review rejects placeholders and duplicates, then approves a keyless subscription panel atomically', async () => {
+  const app = await boot({ HEARSAY_CODEX_ENABLED: '1', HEARSAY_SUBSCRIPTION_SAMPLES: '2' });
+  try {
+    const payload = {
+      context: { audience: 'design teams', productJob: 'summarize interviews',
+        desiredConversion: 'book a demo', languagePreference: 'English', marketContext: 'US' },
+      brand: { name: 'Acme', domains: ['acme.example'] },
+      intents: [{ label: 'Compare interview tools', category: 'comparison', paraphrases: [
+        { text: 'How does {Competitor} compare?', sourceNote: 'From sales call' },
+        { text: 'Which interview tool fits design teams?', sourceNote: 'From buyer email' },
+        { text: ' which INTERVIEW tool fits design teams? ', sourceNote: 'Duplicate wording' },
+      ] }],
+    };
+    const created = await api(app.base, 'POST', '/api/setup/drafts', { payload });
+    assert.equal(created.status, 201);
+    const draftId = created.body.id;
+    const badReview = await api(app.base, 'GET', `/api/setup/drafts/${draftId}/review`);
+    assert.equal(badReview.status, 200);
+    assert.ok(badReview.body.validationErrors.some((item) => /placeholder/i.test(item.message)));
+    assert.ok(badReview.body.validationErrors.some((item) => /duplicate/i.test(item.message)));
+    const rejected = await api(app.base, 'POST', `/api/setup/drafts/${draftId}/approve`,
+      { approve: true, revision: 1, review_hash: badReview.body.reviewHash });
+    assert.equal(rejected.status, 422);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM entities')?.n), 0);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM prompts')?.n), 0);
+
+    const corrected = { ...payload, intents: [{ ...payload.intents[0], paraphrases: [
+      { text: 'Which interview tool fits design teams?', sourceNote: 'From buyer email' },
+      { text: 'How do interview tools compare for design teams?', sourceNote: 'From sales call' },
+    ] }] };
+    const updated = await api(app.base, 'PUT', `/api/setup/drafts/${draftId}`,
+      { revision: 1, payload: corrected });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.revision, 2);
+    const stale = await api(app.base, 'POST', `/api/setup/drafts/${draftId}/approve`,
+      { approve: true, revision: 1, review_hash: badReview.body.reviewHash });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error.code, 'stale_draft');
+    const review = await api(app.base, 'GET', `/api/setup/drafts/${draftId}/review`);
+    assert.equal(review.status, 200);
+    assert.deepEqual([review.body.projectedActiveQuestionCount, review.body.apiCalls,
+      review.body.subscriptionCalls, review.body.totalCalls], [2, 0, 4, 4]);
+    assert.equal(review.body.hasRunRoute, true);
+    assert.deepEqual(review.body.validationErrors, []);
+    const approved = await api(app.base, 'POST', `/api/setup/drafts/${draftId}/approve`,
+      { approve: true, revision: 2, review_hash: review.body.reviewHash });
+    assert.equal(approved.status, 200);
+    assert.equal(approved.body.activeQuestionCount, 2);
+    assert.equal(approved.body.panelReady, true);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM prompts WHERE active = 1')?.n), 2);
+    assert.deepEqual((await api(app.base, 'GET', '/api/prompts')).body.map((row) => row.source_note),
+      ['From buyer email', 'From sales call']);
+    const exported = await api(app.base, 'GET', '/api/export');
+    assert.equal(exported.body.exportFormatVersion, 5);
+    assert.equal(exported.body.tables.benchmark_drafts.length, 1);
+    assert.ok(JSON.stringify(exported.body.tables.benchmark_drafts).includes('From buyer email'));
+    assert.ok(!String(get(app.db, 'SELECT snapshot_json FROM benchmark_revisions ORDER BY created_at DESC LIMIT 1')?.snapshot_json)
+      .includes('From buyer email'));
   } finally {
     await app.close();
   }
@@ -342,7 +446,7 @@ test('status: configured flips true with a brand and an active prompt', async ()
 async function bootRunnable(env = {}) {
   const app = await boot({ OPENAI_API_KEY: 'test-key-not-real', HEARSAY_SAMPLES: '1', ...env });
   await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true, domains: ['acme.example'] });
-  await api(app.base, 'POST', '/api/prompts', { text: 'best acme-like tool?' });
+  await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'best acme-like tool?' });
   _setFetch(async () => {
     await sleep(50);
     return new Response(
@@ -462,7 +566,7 @@ test('daily API search needs separate recurring consent and invalidates changed 
     });
     assert.equal(enabled.status, 201);
     assert.equal((await api(app.base, 'GET', '/api/search-schedule')).body.approved, true);
-    await api(app.base, 'POST', '/api/prompts', { text: 'another question?' });
+    await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'another question?' });
     assert.equal((await api(app.base, 'GET', '/api/search-schedule')).body.approved, false);
     assert.equal((await api(app.base, 'DELETE', '/api/search-schedule')).body.disabled, true);
   } finally {
@@ -492,7 +596,7 @@ test('Anthropic web-search run persists linked result and final citation with pr
   const app = await boot({ ANTHROPIC_API_KEY: 'fixture-key', HEARSAY_ANTHROPIC_SEARCH_POLICY: 'auto',
     HEARSAY_SAMPLES: '1', HEARSAY_CONFIRM_USD: '999' });
   await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
-  await api(app.base, 'POST', '/api/prompts', { text: 'best tracker?' });
+  await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'best tracker?' });
   assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM prompts WHERE active = 1')?.n), 1);
   let providerCalls = 0;
   _setFetch(async () => {
@@ -542,8 +646,16 @@ test('API confirmation rejects a quote after the approved prompt changes', async
     dbRun(app.db, 'UPDATE prompts SET text = ? WHERE active = 1', ['Edited after the quote']);
     const stale = await api(app.base, 'POST', '/api/run', { confirm: true, quote_id: quote.body.quoteId });
     assert.equal(stale.status, 409);
-    assert.equal(stale.body.error.code, 'stale_quote');
+    assert.equal(stale.body.error.code, 'review_required');
     assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
+    const editedId = Number(get(app.db, 'SELECT id FROM prompts WHERE active = 1')?.id);
+    const reapproved = await api(app.base, 'PATCH', `/api/prompts/${editedId}`,
+      { text: 'Edited and reviewed after the quote', reviewed: true });
+    assert.equal(reapproved.status, 200);
+    const staleApproved = await api(app.base, 'POST', '/api/run',
+      { confirm: true, quote_id: quote.body.quoteId });
+    assert.equal(staleApproved.status, 409);
+    assert.equal(staleApproved.body.error.code, 'stale_quote');
     const fresh = await api(app.base, 'POST', '/api/run', {});
     assert.notEqual(fresh.body.quoteId, quote.body.quoteId);
   } finally {
@@ -555,7 +667,7 @@ test('run: zero enabled providers → 400 no_providers, and no empty run row is 
   const app = await boot(); // no provider keys
   try {
     await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
-    await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' });
+    await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'best tool?' });
     // confirm:true bypasses the quote gate — without a guard this wrote a 0-call
     // status='done' run that later shadowed real prior runs in alert evaluation.
     const { status, body } = await api(app.base, 'POST', '/api/run', { confirm: true });
@@ -595,68 +707,48 @@ test('run quote uses configured price overrides for an unlisted model', async ()
   }
 });
 
-test('suggest: zero keys → 200 starter pack, nothing persisted', async () => {
-  const app = await boot(); // no provider keys
+test('suggest: keyless starter offers five editable intents and three phrasings each without saving', async () => {
+  const app = await boot();
   try {
     const before = (await api(app.base, 'GET', '/api/prompts')).body.length;
     const { status, body } = await api(app.base, 'POST', '/api/prompts/suggest', {});
     assert.equal(status, 200);
     assert.equal(body.source, 'starter-pack');
-    assert.ok(Array.isArray(body.intents) && body.intents.length > 0);
-    assert.ok(body.intents.every((/** @type {*} */ i) => typeof i.label === 'string' && Array.isArray(i.paraphrases)));
+    assert.equal(body.reason, 'zero-usage-local-draft');
+    assert.equal(body.intents.length, 5);
+    assert.ok(body.intents.every((intent) => intent.paraphrases.length === 3));
+    assert.ok(body.intents.flatMap((intent) => intent.paraphrases)
+      .every((text) => !/\{[^}]+\}/u.test(text)));
     assert.equal((await api(app.base, 'GET', '/api/prompts')).body.length, before);
   } finally {
     await app.close();
   }
 });
 
-test('suggest: with a key, the first enabled provider drafts — competitors included', async () => {
+test('suggest: even with a provider key and competitor, drafting makes zero provider calls', async () => {
   const app = await boot({ OPENAI_API_KEY: 'sk-test-suggest' });
   try {
     await api(app.base, 'POST', '/api/setup', {
       brand: { name: 'Acme', domains: ['acme.example'] },
       competitors: [{ name: 'Jotta', domains: ['jotta.example'] }],
     });
-    /** @type {{url: string, body: string}[]} */
-    const calls = [];
-    const draft = {
-      intents: [{ label: 'best acme-like tool', category: 'general', paraphrases: ['best tool?', 'top tools 2026', 'which tool should I pick?'] }],
-    };
-    _setFetch(async (url, init = {}) => {
-      calls.push({ url: String(url), body: String(init.body ?? '') });
-      return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(draft) } }] }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+    let calls = 0;
+    _setFetch(async () => {
+      calls += 1;
+      throw new Error('Drafting must not call a provider');
     });
-    const { status, body } = await api(app.base, 'POST', '/api/prompts/suggest', { category_hint: 'meeting notes' });
-    assert.equal(status, 200);
-    assert.equal(body.source, 'llm');
-    assert.equal(body.intents.length, 1);
-    assert.equal(body.intents[0].label, 'best acme-like tool');
-    assert.equal(calls.length, 1);
-    assert.ok(calls[0].url.includes('api.openai.com'));
-    // The §6.7 drafting prompt must carry the tracked competitors, not just the brand.
-    assert.match(String(JSON.parse(calls[0].body).messages[0].content), /Competitors: Jotta/);
-    assert.equal((await api(app.base, 'GET', '/api/prompts')).body.length, 0); // draft only
-  } finally {
-    _setFetch();
-    await app.close();
-  }
-});
-
-test('suggest: provider failure falls back to the starter pack, labeled honestly', async () => {
-  const app = await boot({ OPENAI_API_KEY: 'sk-test-suggest' });
-  try {
-    await api(app.base, 'POST', '/api/setup', { brand: { name: 'Acme' }, competitors: [{ name: 'Jotta' }] });
-    // 401 classifies as auth without a retry, so no backoff sleep in the test.
-    _setFetch(async () => new Response('{"error":{"message":"bad key"}}', { status: 401 }));
-    const { status, body } = await api(app.base, 'POST', '/api/prompts/suggest', {});
+    const { status, body } = await api(app.base, 'POST', '/api/prompts/suggest', {
+      context: { audience: 'design teams', productJob: 'summarize interviews',
+        desiredConversion: 'book a demo' },
+    });
     assert.equal(status, 200);
     assert.equal(body.source, 'starter-pack');
-    assert.equal(body.reason, 'provider-error');
-    // The fallback pack sees the tracked rival too, not a {Competitor} placeholder.
-    assert.ok(body.intents.some((/** @type {*} */ i) => String(i.label).includes('Jotta')));
+    assert.equal(body.intents.length, 5);
+    assert.ok(body.intents.every((intent) => intent.paraphrases.length === 3));
+    assert.ok(body.intents.flatMap((intent) => intent.paraphrases)
+      .some((text) => text.includes('Jotta')));
+    assert.equal(calls, 0);
+    assert.equal((await api(app.base, 'GET', '/api/prompts')).body.length, 0);
   } finally {
     _setFetch();
     await app.close();
@@ -666,7 +758,15 @@ test('suggest: provider failure falls back to the starter pack, labeled honestly
 test('setup: happy path creates brand + competitors + intents transactionally', async () => {
   const app = await boot();
   try {
+    const unreviewed = await api(app.base, 'POST', '/api/setup', {
+      brand: { name: 'Acme' },
+      intents: [{ label: 'compare tools', paraphrases: ['Which tool is best?'] }],
+    });
+    assert.equal(unreviewed.status, 422);
+    assert.equal(unreviewed.body.error.code, 'review_required');
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM prompts')?.n), 0);
     const { status, body } = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', aliases: ['Acme AI'], domains: ['acme.example'] },
       competitors: [{ name: 'Jotta', domains: ['jotta.example'] }],
       intents: [
@@ -687,9 +787,10 @@ test('setup: happy path creates brand + competitors + intents transactionally', 
 test('setup: dedupe-skip on rerun; append paraphrase to existing intent', async () => {
   const app = await boot();
   try {
-    const payload = { brand: { name: 'Acme' }, intents: [{ label: 'best tool', paraphrases: ['best tool?'] }] };
+    const payload = { reviewed: true, brand: { name: 'Acme' }, intents: [{ label: 'best tool', paraphrases: ['best tool?'] }] };
     await api(app.base, 'POST', '/api/setup', payload);
     const again = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme' },
       intents: [{ label: 'best tool', paraphrases: ['best tool?', 'which tool is best'] }],
     });
@@ -705,6 +806,7 @@ test('setup: validation is all-or-nothing (bad alias → 422, zero writes)', asy
   const app = await boot();
   try {
     const { status, body } = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', aliases: ['ab'] },
       intents: [{ label: 'ok', paraphrases: ['ok?'] }],
     });
@@ -725,6 +827,7 @@ test('setup: empty body 422; payload-internal domain dupe 422; competitor-name b
     assert.equal(empty.body.error.code, 'nothing_to_do');
 
     const dupe = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', domains: ['same.example'] },
       competitors: [{ name: 'Jotta', domains: ['same.example'] }],
     });
@@ -818,7 +921,7 @@ test('entities: PATCH is_self=true on an archived entity is refused, brand stays
   try {
     await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
     const jotta = (await api(app.base, 'POST', '/api/entities', { name: 'Jotta' })).body;
-    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'best tool?' })).body;
     const responseId = seedResponse(app.db, prompt.id);
     dbRun(
       app.db,
@@ -834,8 +937,15 @@ test('entities: PATCH is_self=true on an archived entity is refused, brand stays
     const patch = await api(app.base, 'PATCH', `/api/entities/${jotta.id}`, { is_self: true });
     assert.equal(patch.status, 409);
 
-    const status = await api(app.base, 'GET', '/api/status');
-    assert.equal(status.body.configured, true, 'the live brand must keep is_self');
+    assert.equal(Number(get(app.db, 'SELECT is_self FROM entities WHERE name = ?', ['Acme'])?.is_self),
+      1, 'the live brand must keep is_self');
+    const beforeReview = await api(app.base, 'GET', '/api/status');
+    assert.equal(beforeReview.body.reviewNeeded, true);
+    const review = await api(app.base, 'GET', '/api/prompts/review');
+    const approved = await api(app.base, 'POST', '/api/prompts/review',
+      { reviewed: true, review_hash: review.body.reviewHash });
+    assert.equal(approved.status, 200);
+    assert.equal((await api(app.base, 'GET', '/api/status')).body.configured, true);
   } finally {
     await app.close();
   }
@@ -848,7 +958,7 @@ test('entities: DELETE of a cited-but-unmentioned entity archives — no danglin
     // 1 citation. The old mentions-only guard hard-deleted it, leaving
     // citations.entity_id (no FK) pointing at a row that no longer exists.
     const quillo = (await api(app.base, 'POST', '/api/entities', { name: 'Quillo', domains: ['quillo.co'] })).body;
-    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'best tool?' })).body;
     const responseId = seedResponse(app.db, prompt.id);
     dbRun(
       app.db,
@@ -880,7 +990,7 @@ test('answers page: a legacy non-http citation never renders as a clickable href
   const app = await boot();
   try {
     await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
-    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'best tool?' })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'best tool?' })).body;
     const responseId = seedResponse(app.db, prompt.id, 'Some answer text with no links.');
     // Simulates a row stored before the analyzer's http(s) allowlist existed.
     dbRun(
@@ -901,7 +1011,7 @@ test('answer history keeps the response prompt snapshot after the tracked prompt
   const app = await boot();
   try {
     await api(app.base, 'POST', '/api/entities', { name: 'Acme', is_self: true });
-    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'Which notes tool did buyers ask about?' })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { reviewed: true, text: 'Which notes tool did buyers ask about?' })).body;
     const responseId = seedResponse(app.db, prompt.id, 'The historical answer.');
     dbRun(app.db, 'UPDATE responses SET prompt_text_snapshot = ? WHERE id = ?', ['Which notes tool did buyers ask about?', responseId]);
     dbRun(app.db, 'UPDATE prompts SET text = ? WHERE id = ?', ['Which calendar tool is current?', prompt.id]);
@@ -999,6 +1109,7 @@ test('subscription preview and run quote expose exact agent surface without API 
   const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
   try {
     const setup = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', domains: ['acme.example'] },
       intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
     });
@@ -1023,6 +1134,7 @@ test('subscription consent rejects a stale question quote before any CLI work', 
   const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
   try {
     await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', domains: ['acme.example'] },
       intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
     });
@@ -1032,8 +1144,17 @@ test('subscription consent rejects a stale question quote before any CLI work', 
       surfaces: ['codex-agent'], confirm: true, quote_id: quote.body.quoteId,
     });
     assert.equal(stale.status, 409);
-    assert.equal(stale.body.error.code, 'stale_quote');
+    assert.equal(stale.body.error.code, 'review_required');
     assert.equal((await api(app.base, 'GET', '/api/runs/latest')).status, 404);
+    const promptId = Number(get(app.db, 'SELECT id FROM prompts WHERE active = 1')?.id);
+    const reapproved = await api(app.base, 'PATCH', `/api/prompts/${promptId}`,
+      { text: 'Which reviewed tracker is best?', reviewed: true });
+    assert.equal(reapproved.status, 200);
+    const staleApproved = await api(app.base, 'POST', '/api/subscription/run', {
+      surfaces: ['codex-agent'], confirm: true, quote_id: quote.body.quoteId,
+    });
+    assert.equal(staleApproved.status, 409);
+    assert.equal(staleApproved.body.error.code, 'stale_quote');
   } finally {
     await app.close();
   }
@@ -1048,6 +1169,7 @@ test('subscription cancellation is available through HTTP and the settings UI', 
   });
   try {
     const setup = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', domains: ['acme.example'] },
       intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
     });
@@ -1084,6 +1206,7 @@ test('exploration prompts are persisted separately and promote explicitly', asyn
   const app = await boot();
   try {
     const setup = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', domains: ['acme.example'] },
       intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
     });
@@ -1093,7 +1216,7 @@ test('exploration prompts are persisted separately and promote explicitly', asyn
     assert.equal(exploration.body.tracking_state, 'exploration');
     assert.equal(exploration.body.active, 0);
     const intentId = Number(get(app.db, 'SELECT id FROM intents WHERE label = ?', ['best tracker'])?.id);
-    const promoted = await api(app.base, 'POST', `/api/prompts/${exploration.body.id}/promote`, { intent_id: intentId });
+    const promoted = await api(app.base, 'POST', `/api/prompts/${exploration.body.id}/promote`, { reviewed: true, intent_id: intentId });
     assert.equal(promoted.status, 200);
     assert.equal(promoted.body.tracking_state, 'tracking');
     assert.equal(promoted.body.active, 1);
@@ -1106,6 +1229,7 @@ test('subscription schedule requires separate consent and stores the local-time 
   const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
   try {
     const setup = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', domains: ['acme.example'] },
       intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
     });
@@ -1166,6 +1290,7 @@ test('subscription scheduling does not accept verified results from a cron run',
   const app = await boot({ HEARSAY_CODEX_ENABLED: '1' });
   try {
     const setup = await api(app.base, 'POST', '/api/setup', {
+      reviewed: true,
       brand: { name: 'Acme', domains: ['acme.example'] },
       intents: [{ label: 'best tracker', paraphrases: ['Which tracker is best?'] }],
     });

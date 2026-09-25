@@ -37,6 +37,7 @@ import {
 } from '../core/runner.js';
 import { localDate, localHm, shouldRun, startScheduler } from '../core/scheduler.js';
 import { saveApiSearchSchedule } from '../core/api-search-schedule.js';
+import { reviewTrackingPrompt } from '../core/benchmark-draft.js';
 
 /**
  * @param {string} name
@@ -581,11 +582,12 @@ function seedDb(opts = {}) {
   ]);
   dbRun(db, 'INSERT INTO intents(label, created_at) VALUES(?, ?)', ['best AI meeting notes tool', now]);
   for (let i = 0; i < (opts.prompts ?? 2); i += 1) {
-    dbRun(db, 'INSERT INTO prompts(intent_id, text, category, active, created_at) VALUES(1, ?, ?, 1, ?)', [
+    const promptId = dbRun(db, 'INSERT INTO prompts(intent_id, text, category, active, created_at) VALUES(1, ?, ?, 1, ?)', [
       `paraphrase ${i}`,
       'general',
       now,
-    ]);
+    ]).lastInsertRowid;
+    reviewTrackingPrompt(db, promptId);
   }
   return db;
 }

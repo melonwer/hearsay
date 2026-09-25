@@ -31,6 +31,7 @@ import { CodexCliRunner, ClaudeCliRunner } from '../core/agent-runners.js';
 import { artifactAvailability, writeArtifact } from '../core/artifacts.js';
 import { openDb, run as dbRun, get } from '../core/db.js';
 import { DemoModeError, SubscriptionConfirmationError, runSubscriptionPanel, subscriptionPreview } from '../core/subscription-runner.js';
+import { reviewTrackingPrompt } from '../core/benchmark-draft.js';
 
 test('restricted profiles use the verified Codex and Claude Code argument arrays', () => {
   assert.deepEqual(codexArgs('/tmp/hearsay-agent'), [
@@ -465,6 +466,7 @@ function subscriptionDb(t) {
   dbRun(db, 'INSERT INTO entities(id, name, aliases, domains, is_self, created_at) VALUES(?,?,?,?,?,?)', [1, 'Acme', '[]', '[]', 1, '2026-08-01T00:00:00Z']);
   dbRun(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-01T00:00:00Z']);
   dbRun(db, 'INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin) VALUES(?,?,?,?,?,?,?,?)', [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-01T00:00:00Z', 'tracking', 'user_authored']);
+  reviewTrackingPrompt(db, 1);
   dbRun(db, 'INSERT INTO runs(id, started_at, trigger, status, total_calls, done_calls) VALUES(?,?,?,?,?,?)', [99, '2026-08-01T00:00:00Z', 'manual', 'done', 0, 0]);
   t.after(() => db.close());
   return db;
@@ -513,6 +515,7 @@ test('subscription-only preview and run need no provider API key and queue all t
   dbRun(db, 'INSERT INTO entities(id, name, aliases, domains, is_self, created_at) VALUES(?,?,?,?,?,?)', [1, 'Acme', '[]', '[]', 1, '2026-08-01T00:00:00Z']);
   dbRun(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-01T00:00:00Z']);
   dbRun(db, 'INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin) VALUES(?,?,?,?,?,?,?,?)', [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-01T00:00:00Z', 'tracking', 'user_authored']);
+  reviewTrackingPrompt(db, 1);
   const preview = subscriptionPreview({ db, config, surfaces: ['codex-agent'], samples: 2 });
   assert.deepEqual([preview.totalTargets, preview.perSurface[0].invocations], [2, 2]);
   const result = await runSubscriptionPanel({ db, config, surfaces: ['codex-agent'], samples: 2, confirm: true, runners: { 'codex-agent': fakeSubscriptionRunner('codex-agent') } });

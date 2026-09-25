@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { openDb, all, get, run } from '../core/db.js';
 import { stableIdentity } from '../core/measurement-contract.js';
+import { reviewTrackingPrompt } from '../core/benchmark-draft.js';
 import {
   DEFAULT_SUBSCRIPTION_GRACE_MINUTES,
   SCHEDULE_CONSENT_VERSION,
@@ -62,6 +63,7 @@ test('a late scheduler records one missed local-date occurrence and does not rep
     run(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-09T00:00:00Z']);
     run(db, `INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin)
       VALUES(?,?,?,?,?,?,?,?)`, [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-09T00:00:00Z', 'tracking', 'user_authored']);
+    reviewTrackingPrompt(db, 1);
     saveSubscriptionSchedule(db, {
       runAt: '07:00',
       timeZone: 'Europe/Berlin',
@@ -97,6 +99,7 @@ test('a due occurrence is claimed before the runner and remains single across re
     run(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-09T00:00:00Z']);
     run(db, `INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin)
       VALUES(?,?,?,?,?,?,?,?)`, [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-09T00:00:00Z', 'tracking', 'user_authored']);
+    reviewTrackingPrompt(db, 1);
     saveSubscriptionSchedule(db, {
       runAt: '07:00',
       timeZone: 'Europe/Berlin',
@@ -141,6 +144,7 @@ test('a changed execution budget stops a consented scheduled occurrence before C
     run(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-09T00:00:00Z']);
     run(db, `INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin)
       VALUES(?,?,?,?,?,?,?,?)`, [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-09T00:00:00Z', 'tracking', 'user_authored']);
+    reviewTrackingPrompt(db, 1);
     const approved = [{ surface: 'codex-agent', timeoutMs: 120000, maxSearchCalls: null }];
     saveSubscriptionSchedule(db, {
       runAt: '07:00', timeZone: 'Europe/Berlin', surfaces: ['codex-agent'], lane: 'tracking',
@@ -168,6 +172,7 @@ test('scheduler leaves a due occurrence unclaimed while another live run exists'
     run(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-09T00:00:00Z']);
     run(db, `INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin)
       VALUES(?,?,?,?,?,?,?,?)`, [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-09T00:00:00Z', 'tracking', 'user_authored']);
+    reviewTrackingPrompt(db, 1);
     saveSubscriptionSchedule(db, {
       runAt: '07:00',
       timeZone: 'Europe/Berlin',
@@ -208,6 +213,7 @@ test('a stale claimed subscription occurrence is recovered with abandoned target
     run(db, 'INSERT INTO intents(id, label, created_at) VALUES(?,?,?)', [1, 'best tracker', '2026-08-09T00:00:00Z']);
     run(db, `INSERT INTO prompts(id, intent_id, text, category, active, created_at, tracking_state, origin)
       VALUES(?,?,?,?,?,?,?,?)`, [1, 1, 'Which tracker is best?', 'general', 1, '2026-08-09T00:00:00Z', 'tracking', 'user_authored']);
+    reviewTrackingPrompt(db, 1);
     const schedule = saveSubscriptionSchedule(db, {
       runAt: '07:00',
       timeZone: 'Europe/Berlin',
