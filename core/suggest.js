@@ -38,7 +38,7 @@ import { containsAlias } from './analyze.js';
 export const MAX_PROMPT_CHARS = 300;
 
 /** Intents requested from the model, and the ceiling applied to whatever comes back (§6.7). */
-export const MIN_INTENTS = 8;
+export const MIN_INTENTS = 5;
 export const MAX_INTENTS = 12;
 
 /** Paraphrases per intent (§6.6 default). */
@@ -209,55 +209,67 @@ export function postProcess(draft, ctx) {
 }
 
 /**
- * The static starter pack (§20.3): eight generic placeholder prompts plus up to four
- * slots filled from the user's own entities. Placeholders the user has to decide on
- * (`{audience}`, `{job-to-be-done}`, `{key feature}`) are left in braces on purpose —
- * they are prompts to edit, not prompts to run blind.
+ * A five-intent, three-phrasing starter pack for review. It uses concrete wording even
+ * when the user has not named a competitor. Each phrase is editable before approval.
  *
- * @param {{brand: BrandInput, competitors?: {name:string}[], categoryHint?: string, year?: number}} input
+ * @param {{brand?: BrandInput, competitors?: {name:string}[], categoryHint?: string,
+ *   productJob?: string, audience?: string, desiredConversion?: string, year?: number}} input
  * @returns {SuggestedIntent[]}
  */
 export function starterPack(input) {
-  const brand = input?.brand ?? { name: '{Brand}' };
-  const brandName = String(brand.name ?? '').trim() || '{Brand}';
-  const competitors = (input?.competitors ?? []).map((c) => String(c?.name ?? '').trim()).filter(Boolean);
-  const category = String(input?.categoryHint ?? '').trim() || '{category}';
-  const rival = competitors[0] ?? '{Competitor}';
-  const year = input?.year ?? new Date().getUTCFullYear();
-
-  /** @type {{text:string, category:string}[]} */
-  const rows = [
-    { text: `What's the best ${category} for {audience}?`, category: 'general' },
-    { text: `Top 5 ${category} in ${year}`, category: 'general' },
-    { text: `${brandName} vs ${rival} — which is better?`, category: 'comparison' },
-    { text: `Is ${brandName} worth it?`, category: 'general' },
-    { text: 'Cheapest way to {job-to-be-done}', category: 'pricing' },
-    { text: `Best free alternative to ${rival}`, category: 'comparison' },
-    { text: `${category} with the best {key feature}`, category: 'use-case' },
-    { text: `What do people say about ${brandName}?`, category: 'general' },
-  ];
-
-  // Four category-specific slots, filled from the entities the user already has.
-  for (const competitor of competitors.slice(1, 5)) {
-    rows.push({ text: `${brandName} vs ${competitor} — which is better?`, category: 'comparison' });
-  }
-
-  const aliases = brandAliases({ name: brandName, aliases: brand.aliases });
+  const brandName = String(input?.brand?.name ?? '').trim();
+  const audience = String(input?.audience ?? '').trim() || 'a small team';
+  const job = String(input?.productJob ?? '').trim() || 'this work';
+  const category = String(input?.categoryHint ?? '').trim() || 'tools for this work';
+  const rival = (input?.competitors ?? []).map((c) => String(c?.name ?? '').trim()).find(Boolean);
+  const brandSubject = brandName || 'this product';
   /** @type {SuggestedIntent[]} */
-  const intents = [];
-  const seen = new Set();
-  for (const row of rows.slice(0, MAX_INTENTS)) {
-    const text = cleanText(row.text);
-    const key = text.toLowerCase();
-    if (text === '' || seen.has(key)) continue;
-    seen.add(key);
-    intents.push({
-      label: text,
-      category: containsAlias(text, aliases) ? 'branded' : row.category,
-      paraphrases: [text],
-    });
-  }
-  return intents;
+  const intents = [
+    {
+      label: 'Find options', category: 'general', paraphrases: [
+        `What are the best ${category} for ${audience}?`,
+        `Which ${category} should ${audience} consider?`,
+        `What options can help ${audience} with ${job}?`,
+      ],
+    },
+    {
+      label: 'Match the job', category: 'use-case', paraphrases: [
+        `Which ${category} work well for ${audience} doing ${job}?`,
+        `How can ${audience} choose a tool for ${job}?`,
+        `What features matter most to ${audience} for ${job}?`,
+      ],
+    },
+    {
+      label: 'Compare options', category: 'comparison', paraphrases: rival ? [
+        `How does ${rival} compare with other ${category} for ${audience}?`,
+        `What are the main alternatives to ${rival} for ${job}?`,
+        `When should ${audience} choose ${rival} over another option?`,
+      ] : [
+        `How should ${audience} compare ${category}?`,
+        `What tradeoffs should ${audience} consider among ${category}?`,
+        `Which differences matter most when choosing ${category} for ${job}?`,
+      ],
+    },
+    {
+      label: 'Understand cost', category: 'pricing', paraphrases: [
+        `How much should ${audience} budget for ${category}?`,
+        `What does it usually cost to get help with ${job}?`,
+        `How can ${audience} compare the price of ${category}?`,
+      ],
+    },
+    {
+      label: brandName ? `Consider ${brandName}` : 'Consider a provider',
+      category: brandName ? 'branded' : 'general', paraphrases: [
+        `Is ${brandSubject} a good fit for ${audience}?`,
+        `How does ${brandSubject} help with ${job}?`,
+        `What should ${audience} know before choosing ${brandSubject}?`,
+      ],
+    },
+  ];
+  return intents.map((intent) => ({
+    ...intent,
+    paraphrases: intent.paraphrases.map((text) => cleanText(text)),
+  }));
 }
 
 /**

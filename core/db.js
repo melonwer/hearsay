@@ -443,6 +443,25 @@ export const MIGRATIONS = [
         ON query_theme_assignments(normalized_key, theme_id);
     `,
   },
+  {
+    version: 9,
+    sql: `
+      CREATE TABLE benchmark_drafts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','approved')),
+        payload_json TEXT NOT NULL,
+        review_hash TEXT,
+        approved_benchmark_id TEXT REFERENCES benchmark_revisions(id),
+        approval_receipt_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        approved_at TEXT
+      );
+      ALTER TABLE prompts ADD COLUMN source_note TEXT;
+      ALTER TABLE prompts ADD COLUMN approval_fingerprint TEXT;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

@@ -134,41 +134,36 @@ test('parseDraft survives a code fence, preamble and a bare array', () => {
   assert.equal(parseDraft('{"oops":true}'), null);
 });
 
-test('starterPack fills placeholders from the entities and quarantines branded rows (§20.3)', () => {
-  const intents = starterPack({ brand: BRAND, competitors: COMPETITORS, categoryHint: 'AI meeting notes tools', year: 2026 });
+test('starterPack gives five editable buyer intents with three complete phrasings each', () => {
+  const intents = starterPack({ brand: BRAND, competitors: COMPETITORS,
+    categoryHint: 'AI meeting notes tools', audience: 'operations teams', productJob: 'summarize meetings' });
 
-  assert.ok(intents.length >= 8 && intents.length <= 12);
-  assert.ok(
-    intents.some((intent) => intent.label === "What's the best AI meeting notes tools for {audience}?"),
-    'unfillable placeholders stay in braces for the user to edit',
-  );
-  assert.ok(intents.some((intent) => intent.label === 'Top 5 AI meeting notes tools in 2026'));
-  assert.ok(intents.some((intent) => intent.label === 'Notewell vs Jotta — which is better?'));
-  assert.ok(
-    intents.some((intent) => intent.label === 'Notewell vs EchoPad — which is better?'),
-    'the extra slots are filled from the remaining competitors',
-  );
-
-  for (const intent of intents) {
-    assert.equal(intent.paraphrases.length, 1, 'a starter row is a single-paraphrase intent the user can extend');
-    assert.ok(intent.label.length <= MAX_PROMPT_CHARS);
-    const branded = /Notewell/.test(intent.label);
-    assert.equal(intent.category === 'branded', branded, `category mismatch for "${intent.label}"`);
+  assert.equal(intents.length, 5);
+  assert.deepEqual(intents.map((intent) => intent.paraphrases.length), [3, 3, 3, 3, 3]);
+  assert.deepEqual(intents.map((intent) => intent.category), ['general', 'use-case', 'comparison', 'pricing', 'branded']);
+  assert.match(intents[0].paraphrases[0], /operations teams/);
+  assert.match(intents[2].paraphrases[0], /Jotta/);
+  assert.match(intents[4].paraphrases[0], /Notewell/);
+  for (const intent of intents) for (const phrase of intent.paraphrases) {
+    assert.ok(phrase.length <= MAX_PROMPT_CHARS);
+    assert.doesNotMatch(phrase, /\{[^{}]+\}|\[[^\[\]]+\]|<[^<>]+>/);
   }
 });
 
-test('starterPack still works with no competitors and no category', () => {
+test('starterPack can draft without a competitor, category, or provider key', () => {
   const intents = starterPack({ brand: { name: 'Notewell' } });
-  assert.ok(intents.length >= 8);
-  assert.ok(intents.some((intent) => intent.label.includes('{Competitor}')));
-  assert.ok(intents.some((intent) => intent.label.includes('{category}')));
+  assert.equal(intents.length, 5);
+  assert.equal(intents[2].category, 'comparison');
+  assert.match(intents[2].paraphrases[0], /compare/);
+  assert.ok(intents.every((intent) => intent.paraphrases.length === 3));
+  assert.ok(intents.flatMap((intent) => intent.paraphrases).every((text) => !/[{}<>]/.test(text)));
 });
 
 test('suggestIntents falls back to the starter pack when no key is configured', async () => {
   const result = await suggestIntents({ brand: BRAND, competitors: COMPETITORS, year: 2026 });
   assert.equal(result.source, 'starter');
   assert.equal(result.reason, 'no-provider-key');
-  assert.ok(result.intents.length >= 8);
+  assert.equal(result.intents.length, 5);
 });
 
 test('suggestIntents uses the injected model call and post-processes its draft', async () => {
@@ -216,7 +211,7 @@ test('suggestIntents retries once on a malformed draft, then falls back (§6.7)'
   assert.match(attempts[1], /JSON only/, 'the retry asks harder');
   assert.equal(bad.source, 'starter');
   assert.equal(bad.reason, 'unparseable-draft');
-  assert.ok(bad.intents.length >= 8, 'the flow is never a dead end');
+  assert.equal(bad.intents.length, 5, 'the flow is never a dead end');
 
   let calls = 0;
   const recovered = await suggestIntents({
@@ -245,7 +240,7 @@ test('suggestIntents swallows a provider failure into the starter pack', async (
 
 test('buildDraftPrompt asks for the §6.6 shape without leaking anything but entities', () => {
   const prompt = buildDraftPrompt({ brand: BRAND, competitors: COMPETITORS, categoryHint: 'AI notes', keywords: 'transcription' });
-  assert.match(prompt, /8-12 intents/);
+  assert.match(prompt, /5-12 intents/);
   assert.match(prompt, /exactly 3 paraphrases/);
   assert.match(prompt, /under 300 characters/);
   assert.match(prompt, /"intents":\[/);
