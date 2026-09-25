@@ -16,9 +16,9 @@ Call `hearsay_status` before anything else, then branch:
 - **Unreachable** → tell the human to start it: `node server.js` in the hearsay
   directory (needs Node ≥ 22.13), then retry.
 - **`configured: false`** → run the onboarding playbook below.
-- **Configured** → answer the question with the *narrowest* tool that holds the
-  answer (summary for headlines, intent_results for per-question, answers_search
-  for receipts). Don't sweep every tool.
+- **Configured** → call `hearsay_series_list` and use its selected series ID with
+  `hearsay_series_summary`. Pass the same ID to `hearsay_answers_search` for receipts.
+  Use the older `hearsay_summary` only when the human asks for legacy API reporting.
 
 ## Onboarding playbook (unconfigured instance)
 
@@ -33,12 +33,16 @@ Call `hearsay_status` before anything else, then branch:
    estimated cost and get an explicit yes before calling again with
    `confirm: true`. **Never confirm spend the human hasn't approved in this
    conversation.**
-6. Poll `hearsay_run_status` until `done`, then narrate `hearsay_summary` using
-   the honesty rules below.
+6. Poll `hearsay_run_status` until `done`. Call `hearsay_series_list`, then report
+   `hearsay_series_summary` for the selected series using the rules below.
 
 ## Honesty rules (bind your narration, not just the UI)
 
 - Every rate carries its n: "58% ± 7 (n=36)", never "58%".
+- Name the selected surface, search policy, benchmark, analysis revision, and window.
+  Report attempted targets and comparable answers separately.
+- A source observation, a final-answer citation, and a brand mention have separate
+  rates. An answer without exposed queries has missing metadata, not zero queries.
 - When an intent has multiple paraphrases, state the phrasing spread: "phrasing
   spread ±19 pts — how you ask matters more than rerun noise."
 - n < 5 → say "low sample, directional at best".
@@ -48,23 +52,26 @@ Call `hearsay_status` before anything else, then branch:
   volume estimate — even if asked.** Hearsay refuses these on purpose (they're
   not measurable honestly). Explain that and offer share of voice, mention rate
   with CI, and receipts instead.
-- These numbers measure the API surface, not the logged-in consumer apps —
-  a documented, directional baseline (see /methodology). Say "directional" when
-  the stakes sound high.
+- An API series measures that provider's API. A Codex or Claude Code agent series
+  measures that signed-in CLI route. Neither measures the logged-in consumer app.
 
 ## Weekly report recipe
 
-Compose from `hearsay_summary` + `hearsay_intent_results` + `hearsay_alerts` +
-`hearsay_citation_gap` + 2–3 receipts from `hearsay_answers_search`:
+Start with `hearsay_series_list`. Use one series ID for `hearsay_series_summary`,
+`hearsay_intent_results`, `hearsay_citation_gap`, and 2–3 receipts from
+`hearsay_answers_search`. The citation gap uses legacy citation rows, so label
+that evidence layer. The alerts tool lacks an exact series filter. If you include
+an alert, label it as run-level context and check its receipt against the series.
 
 ```
 ## AI visibility — week of {date}
-**Share of AI voice:** {sov}% ({delta} pts vs prior week) · answers analyzed: {n}
-**Mention rate:** {p}% ± {ci} (n={n}) {phrasing spread if >1 paraphrase}
-**Movers:** {intents with the biggest CI-respecting change, one line each}
-**Alerts:** {open alerts, severity + one-line detail each}
-**Cited instead of you:** {top 3 gap domains, with counts}
-**Receipts:** {2 short answer quotes, provider + date, one good one bad}
+**Series:** {surface}, {search policy}, {benchmark}, {analysis revision}, {window}
+**Coverage:** {comparable}/{attempted} targets; {query metadata count} expose queries
+**Share of voice:** {sov}% of tracked-entity mentions
+**Mention rate:** {p}% ± {ci} (n={comparable answers})
+**Recommendation method:** {positive stance or legacy heuristic}; {p}% (n={comparable answers})
+**Evidence:** {source incidence}, {answer citation incidence}
+**Receipts:** {2 short answer quotes, surface + date, one positive and one negative or uncertain}
 ```
 
 ## Alert triage
@@ -81,12 +88,13 @@ Compose from `hearsay_summary` + `hearsay_intent_results` + `hearsay_alerts` +
 
 ## GEO playbook (honest version)
 
-- `hearsay_citation_gap` domains are the shortlist: earn citations there
-  (guest content, listings, docs) rather than chasing a score.
+- Pass the selected series ID to `hearsay_citation_gap`. Its counts use legacy
+  citation rows. Check the selected series export for the source and final-answer
+  citation records before proposing an action.
 - For `comparison` intents you lose: a fair, factual comparison page is the
   highest-leverage asset.
-- After shipping content: `hearsay_run_panel`, then compare **intent-level**
-  numbers before/after — respect the CIs; a within-CI wiggle is not a win.
+- After shipping content, compare the same benchmark and execution profile in
+  separate windows. If either changes, report the results as incomparable.
 - Watch competitor prompt-space with `hearsay_prompt_results`: which prompts
   do they lead, and with what recommendation rate?
 

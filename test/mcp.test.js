@@ -109,10 +109,11 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
   const list = await rpc(mcp, 'tools/list', {}, 2);
   const tools = list.result.tools;
-  assert.equal(tools.length, 22);
+  assert.equal(tools.length, 25);
   const names = tools.map((/** @type {*} */ t) => t.name);
   for (const name of [
-    'hearsay_status', 'hearsay_summary', 'hearsay_intent_results', 'hearsay_prompt_results',
+    'hearsay_status', 'hearsay_summary', 'hearsay_series_list', 'hearsay_series_summary',
+    'hearsay_series_export', 'hearsay_intent_results', 'hearsay_prompt_results',
     'hearsay_answers_search', 'hearsay_answer_review', 'hearsay_correct_stance',
     'hearsay_stance_rate', 'hearsay_citation_gap', 'hearsay_alerts', 'hearsay_cost_estimate',
     'hearsay_suggest_prompts', 'hearsay_setup_tracking', 'hearsay_run_panel',
@@ -127,7 +128,8 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   const readOnly = tools.filter((/** @type {*} */ t) => t.annotations?.readOnlyHint === true).map((/** @type {*} */ t) => t.name).sort();
   assert.deepEqual(readOnly, [
     'hearsay_alerts', 'hearsay_answer_review', 'hearsay_answers_search', 'hearsay_citation_gap', 'hearsay_cost_estimate',
-    'hearsay_intent_results', 'hearsay_prompt_results', 'hearsay_run_status', 'hearsay_stance_rate',
+    'hearsay_intent_results', 'hearsay_prompt_results', 'hearsay_run_status', 'hearsay_series_export',
+    'hearsay_series_list', 'hearsay_series_summary', 'hearsay_stance_rate',
     'hearsay_status', 'hearsay_subscription_preview', 'hearsay_summary',
   ]);
   assert.equal(tools.find((/** @type {*} */ t) => t.name === 'hearsay_ack_alert').inputSchema.required?.includes('id'), true);
@@ -138,6 +140,12 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
 test('mcp tools/call: happy path, param mapping, error mapping, unreachable', async () => {
   const backend = await stubBackend({
     'GET /api/summary': { status: 200, body: { brand: { id: 1, name: 'Acme' }, windowDays: 7 } },
+    'GET /api/series': { status: 200, body: { selectedSeriesId: 'series-one', series: [] } },
+    'GET /api/series/summary': { status: 200, body: { selectedSeriesId: 'series-one', coverage: {} } },
+    'GET /api/series/export': { status: 200, body: { selectedSeriesId: 'series-one', answers: [] } },
+    'GET /api/intents/results': { status: 200, body: { selectedSeriesId: 'series-one', results: [] } },
+    'GET /api/prompts/results': { status: 200, body: { selectedSeriesId: 'series-one', results: [] } },
+    'GET /api/gap': { status: 200, body: { selectedSeriesId: 'series-one', results: [] } },
     'GET /api/answers': { status: 200, body: { total: 0, page: 1, items: [] } },
     'GET /api/answers/9/review': { status: 200, body: { responseId: 9, revision: 'stance-en-v1', mentions: [] } },
     'POST /api/answers/9/corrections': { status: 200, body: { responseId: 9, correctionCutoff: 1 } },
@@ -158,8 +166,23 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
   assert.equal(JSON.parse(summary.result.content[0].text).brand.name, 'Acme');
   assert.equal(backend.seen.at(-1).url, '/api/summary?days=7');
 
+  await call(20, 'hearsay_series_list', { days: 7 });
+  assert.equal(backend.seen.at(-1).url, '/api/series?days=7');
+  await call(21, 'hearsay_series_summary', { series_id: 'series-one' });
+  assert.equal(backend.seen.at(-1).url, '/api/series/summary?series_id=series-one');
+  await call(22, 'hearsay_series_export', { series_id: 'series-one', comparable_only: true });
+  assert.equal(backend.seen.at(-1).url, '/api/series/export?series_id=series-one&eligible=1');
+  await call(24, 'hearsay_intent_results', { series_id: 'series-one' });
+  assert.equal(backend.seen.at(-1).url, '/api/intents/results?series_id=series-one');
+  await call(25, 'hearsay_prompt_results', { series_id: 'series-one' });
+  assert.equal(backend.seen.at(-1).url, '/api/prompts/results?series_id=series-one');
+  await call(26, 'hearsay_citation_gap', { series_id: 'series-one' });
+  assert.equal(backend.seen.at(-1).url, '/api/gap?series_id=series-one');
+
   await call(3, 'hearsay_answers_search', { provider: 'perplexity', limit: 10, page: 2 });
   assert.equal(backend.seen.at(-1).url, '/api/answers?provider=perplexity&page=2&per=10');
+  await call(23, 'hearsay_answers_search', { series_id: 'series-one', comparable_only: true });
+  assert.equal(backend.seen.at(-1).url, '/api/answers?series_id=series-one&eligible=1');
 
   await call(10, 'hearsay_answer_review', { answer_id: 9, cutoff: 0 });
   assert.equal(backend.seen.at(-1).url, '/api/answers/9/review?cutoff=0');

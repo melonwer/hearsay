@@ -28,7 +28,8 @@ import {
 } from '../layout.js';
 import { barChartH, lineChart, meter, sparkline } from '../svg.js';
 import { metrics, soft } from '../data.js';
-import { brandEntity, colorIndexFor, latestReceipts, listAlerts, listEntities, PROVIDERS } from '../queries.js';
+import { brandEntity, colorIndexFor, latestReceipts, listAlerts, listEntities } from '../queries.js';
+import { surfaceLabel } from '../../core/subscription-model.js';
 
 /** Window the dashboard reports on, in days (§7). */
 export const WINDOW_DAYS = 30;
@@ -74,13 +75,13 @@ export function deltaPoints(last7, last14) {
 /** @typedef {{n: number, mentioned: number, p: number|null, lo?: number, hi?: number}|null} MentionStat */
 
 /** §7 `recommendationRate` — same null contract. */
-/** @typedef {{n: number, recommended: number, p: number|null}|null} RecStat */
+/** @typedef {{n: number, recommended: number, p: number|null, lo?:number|null, hi?:number|null}|null} RecStat */
 
 /** §7 `shareOfVoice` row. */
 /** @typedef {{entityId: number, name: string, isSelf: boolean, mentions: number, sov: number}} SovRow */
 
 /** §7 `sovTrend` row — a day with no completed run simply has no entry (§19.6 #10). */
-/** @typedef {{date: string, series: {entityId: number, sov: number, n: number}[]}} TrendDay */
+/** @typedef {{date: string, n:number, series: {entityId: number, sov: number, n: number}[]}} TrendDay */
 
 /** §7 `citationGap` row. */
 /** @typedef {{domain: string, count: number, sampleUrl: string, topPromptId: number|null}} GapRow */
@@ -116,7 +117,7 @@ export function deltaPoints(last7, last14) {
  * @typedef {Object} DashboardKpis
  * @property {{value: number|null, delta: number|null, points: Point[]}} sov
  * @property {{rate: MentionStat, delta: number|null}} mentionRate
- * @property {{rate: {p: number|null, n: number}|null, delta: number|null}} recRate
+ * @property {{rate: {p: number|null, n: number, lo?:number, hi?:number}|null, delta: number|null}} recRate
  * @property {{n:number,spendUsd:number|null,spendKnownSubtotalUsd:number|null,
  *   spendCostStatus:'known'|'partial'|'unavailable',spendAttemptedCalls:number,points:Point[]}} answers
  * @property {number|null} phrasingSpread mean paraphrase spread, null below two paraphrases (§6.6)
@@ -125,6 +126,9 @@ export function deltaPoints(last7, last14) {
 /**
  * @typedef {Object} DashboardView
  * @property {number} days window every panel reports on
+ * @property {ReturnType<typeof metrics.resolveMeasurementSeries>} series
+ * @property {ReturnType<typeof metrics.listMeasurementSeries>} seriesOptions
+ * @property {string} recMethod
  * @property {boolean} demo
  * @property {{id: number, name: string}|null} brand
  * @property {number} entityCount
@@ -134,6 +138,7 @@ export function deltaPoints(last7, last14) {
  * @property {LeaderRow[]} leaderboard
  * @property {import('../queries.js').AlertRow[]} alerts
  * @property {GapRow[]} gap
+ * @property {ReturnType<typeof metrics.evidenceIncidence>|null} evidence
  * @property {ReturnType<typeof latestReceipts>} receipts
  * @property {number} nowMs render clock, so `relTime` stays deterministic in tests
  */
@@ -143,12 +148,17 @@ export function deltaPoints(last7, last14) {
  * the bridge; when a metric is unavailable the panel stays empty rather than filled in.
  *
  * @param {PageDeps} deps
- * @param {{days?: number, now?: Date}} [opts]
+ * @param {{days?: number, now?: Date, seriesId?:string}} [opts]
  * @returns {DashboardView}
  */
 export function buildView({ db, config }, opts = {}) {
   const days = opts.days ?? WINDOW_DAYS;
   const now = opts.now ?? new Date();
+  const seriesOptions = metrics.listMeasurementSeries(db, { now, days });
+  const series = opts.seriesId
+    ? seriesOptions.find((item) => item.id === opts.seriesId) ?? null
+    : metrics.resolveMeasurementSeries(db, { now, days });
+  const scope = { days, series };
   const entities = listEntities(db);
   const colorIndex = colorIndexFor(entities);
   const brand = brandEntity(db);
@@ -160,14 +170,15 @@ export function buildView({ db, config }, opts = {}) {
    * @param {*} fallback
    * @returns {*}
    */
-  const m = (name, args, fallback) => soft(/** @type {*} */ (metrics), name, { db, now, ...args }, fallback);
+  const m = (name, args, fallback) => series === null ? fallback
+    : soft(/** @type {*} */ (metrics), name, { db, now, ...args }, fallback);
 
   /** @type {SovRow[]} */
-  const sovNow = m('shareOfVoice', { days }, []);
+  const sovNow = m('shareOfVoice', scope, []);
   /** @type {typeof sovNow} */
-  const sov7 = m('shareOfVoice', { days: 7 }, []);
+  const sov7 = m('shareOfVoice', { ...scope, days: 7 }, []);
   /** @type {typeof sovNow} */
-  const sov14 = m('shareOfVoice', { days: 14 }, []);
+  const sov14 = m('shareOfVoice', { ...scope, days: 14 }, []);
 
   /**
    * @param {typeof sovNow} rows
@@ -183,31 +194,39 @@ export function buildView({ db, config }, opts = {}) {
   };
 
   /** @type {TrendDay[]} */
-  const trendRows = m('sovTrend', { days }, []);
+  const trendRows = m('sovTrend', scope, []);
 
   /** @type {MentionStat} */
-  const mentionRate = brandId === null ? null : m('mentionRate', { entityId: brandId, days }, null);
+  const mentionRate = brandId === null ? null : m('mentionRate', { ...scope, entityId: brandId }, null);
   /** @type {MentionStat} */
-  const mention7 = brandId === null ? null : m('mentionRate', { entityId: brandId, days: 7 }, null);
+  const mention7 = brandId === null ? null : m('mentionRate', { ...scope, entityId: brandId, days: 7 }, null);
   /** @type {MentionStat} */
-  const mention14 = brandId === null ? null : m('mentionRate', { entityId: brandId, days: 14 }, null);
+  const mention14 = brandId === null ? null : m('mentionRate', { ...scope, entityId: brandId, days: 14 }, null);
+
+  const recMethod = series?.analysisRevision && series.analysisRevision !== 'legacy-heuristic-v1'
+    ? 'stanceRecommendationRate' : 'recommendationRate';
+  /** @param {number} entityId @param {number} windowDays */
+  const recommendation = (entityId, windowDays) => m(recMethod, {
+    ...scope, entityId, days: windowDays, analysisRevision: series?.analysisRevision ?? undefined,
+  }, null);
 
   /** @type {RecStat} */
-  const recRate = brandId === null ? null : m('recommendationRate', { entityId: brandId, days }, null);
+  const recRate = brandId === null ? null : recommendation(brandId, days);
   /** @type {RecStat} */
-  const rec7 = brandId === null ? null : m('recommendationRate', { entityId: brandId, days: 7 }, null);
+  const rec7 = brandId === null ? null : recommendation(brandId, 7);
   /** @type {RecStat} */
-  const rec14 = brandId === null ? null : m('recommendationRate', { entityId: brandId, days: 14 }, null);
+  const rec14 = brandId === null ? null : recommendation(brandId, 14);
 
   /** @type {{provider:string,n:number,brandMentionRate:{p:number|null,lo?:number,hi?:number},avgRank:number|null,citationShare:number|null,citationN?:number,lastError:string|null}[]} */
-  const providerRows = m('providerBreakdown', { days }, []);
+  const providerRows = m('providerBreakdown', scope, []);
   /** @type {{intentId:number,label:string,n:number,pooled:{p:number|null,lo?:number,hi?:number},rerunSpread:number|null,phrasingSpread:number|null,paraphraseCount:number}[]} */
-  const intentRows = m('intentTable', { days }, []);
+  const intentRows = m('intentTable', scope, []);
   /** @type {GapRow[]} */
-  const gapRows = m('citationGap', { days, limit: 8 }, []);
+  const gapRows = m('citationGap', { ...scope, limit: 8 }, []);
+  const evidence = brandId === null ? null : m('evidenceIncidence', { ...scope, entityId: brandId }, null);
   /** @type {{totalUsd:number|null,knownSubtotalUsd:number|null,
    * costStatus:'known'|'partial'|'unavailable',attemptedCalls:number}|null} */
-  const spend = m('actualSpend', { days }, null);
+  const spend = m('actualSpend', scope, null);
 
   // Phrasing spread only means something once an intent actually has paraphrases (§6.6).
   const spreads = intentRows.filter(
@@ -225,16 +244,19 @@ export function buildView({ db, config }, opts = {}) {
     sov: Number(row.sov ?? 0),
     mentions: Number(row.mentions ?? 0),
     /** @type {MentionStat} */
-    mentionRate: m('mentionRate', { entityId: row.entityId, days }, null),
+    mentionRate: m('mentionRate', { ...scope, entityId: row.entityId }, null),
     /** @type {RecStat} */
-    recRate: m('recommendationRate', { entityId: row.entityId, days }, null),
+    recRate: recommendation(row.entityId, days),
     /** @type {number|null} */
-    avgRank: m('avgRank', { entityId: row.entityId, days }, null),
+    avgRank: m('avgRank', { ...scope, entityId: row.entityId }, null),
     delta7d: deltaPoints(sovCounts(sov7, row.entityId), sovCounts(sov14, row.entityId)),
   }));
 
   return {
     days,
+    series,
+    seriesOptions,
+    recMethod,
     demo: config.demo,
     brand: brand ? { id: brand.id, name: brand.name } : null,
     entityCount: entities.length,
@@ -257,7 +279,8 @@ export function buildView({ db, config }, opts = {}) {
         ),
       },
       recRate: {
-        rate: recRate ? { p: recRate.p, n: recRate.n } : null,
+        rate: recRate ? { p: recRate.p, n: recRate.n,
+          lo: recRate.lo ?? undefined, hi: recRate.hi ?? undefined } : null,
         delta: deltaPoints(
           rec7 ? { n: rec7.n, k: rec7.recommended } : null,
           rec14 ? { n: rec14.n, k: rec14.recommended } : null,
@@ -269,10 +292,7 @@ export function buildView({ db, config }, opts = {}) {
         spendKnownSubtotalUsd: spend?.knownSubtotalUsd ?? null,
         spendCostStatus: spend?.costStatus ?? 'unavailable',
         spendAttemptedCalls: spend?.attemptedCalls ?? 0,
-        points: trendRows.map((day) => ({
-          x: epochDay(day.date),
-          y: day.series.reduce((sum, entry) => sum + Number(entry.n ?? 0), 0),
-        })),
+        points: trendRows.map((day) => ({ x: epochDay(day.date), y: Number(day.n ?? 0) })),
       },
       phrasingSpread,
     },
@@ -295,11 +315,11 @@ export function buildView({ db, config }, opts = {}) {
             .filter((point) => Number.isFinite(point.y)),
         })),
     },
-    providers: PROVIDERS.map((id) => {
-      const row = providerRows.find((entry) => entry.provider === id);
+    providers: providerRows.map((row) => {
+      const id = row.provider;
       return {
         provider: id,
-        label: PROVIDER_LABEL[id] ?? id,
+        label: PROVIDER_LABEL[id] ?? surfaceLabel(series?.surface),
         enabled:
           Boolean(config.providers[/** @type {import('../../core/config.js').ProviderId} */ (id)]?.enabled) ||
           Boolean(row && Number(row.n) > 0),
@@ -312,9 +332,12 @@ export function buildView({ db, config }, opts = {}) {
       };
     }),
     leaderboard,
-    alerts: listAlerts(db, { open: true, limit: 5 }),
+    alerts: series ? listAlerts(db, { open: true, limit: 5, series }) : [],
     gap: gapRows,
-    receipts: brandId === null ? [] : latestReceipts(db, brandId, { limit: 2, days, now }),
+    evidence,
+    receipts: brandId === null || series === null ? [] : latestReceipts(db, brandId, {
+      limit: 2, days, now, start: series.start, end: series.end, series,
+    }),
     nowMs: now.getTime(),
   };
 }
@@ -328,6 +351,35 @@ export function buildView({ db, config }, opts = {}) {
 function normaliseCounts(points) {
   const max = Math.max(1, ...points.map((point) => point.y));
   return points.map((point) => ({ x: point.x, y: point.y / max }));
+}
+
+/** @param {ReturnType<typeof buildView>} view @param {Record<string,string|number>} [extra] */
+function answersHref(view, extra = {}) {
+  const params = new URLSearchParams({ days: String(view.days), eligible: '1' });
+  if (view.series) params.set('series_id', view.series.id);
+  for (const [key, value] of Object.entries(extra)) params.set(key, String(value));
+  return `/answers?${params.toString()}`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function seriesSelector(view) {
+  const options = view.seriesOptions.map((item) => html`<option value="${item.id}"${item.id === view.series?.id ? raw(' selected') : ''}>
+    ${surfaceLabel(item.surface)} · ${item.searchPolicy ?? 'legacy'} · profile ${item.executionProfileId?.slice(0, 8) ?? 'legacy'}
+    · benchmark ${item.benchmarkRevisionId?.slice(0, 8) ?? 'legacy'} · ${item.analysisRevision ?? 'legacy'}
+    · ${item.comparableAnswers}/${item.attemptedTargets} comparable
+  </option>`);
+  return html`<section class="card" aria-label="Measurement series">
+    <form method="get" action="/" class="filter-row">
+      <label>Measurement series <select name="series_id">${options}</select></label>
+      <input type="hidden" name="days" value="${view.days}" />
+      <button type="submit" class="btn">Show series</button>
+    </form>
+    ${view.series ? html`<p class="muted small">${surfaceLabel(view.series.surface)} · ${view.series.searchPolicy ?? 'legacy'}
+      · profile ${view.series.executionProfileId ?? 'legacy'} · benchmark ${view.series.benchmarkRevisionId ?? 'legacy'}
+      · analysis ${view.series.analysisRevision ?? 'legacy'} · ${view.series.start} to ${view.series.end} UTC (end exclusive)
+      · attempted ${view.series.attemptedTargets}, complete ${view.series.completeAnswers}, comparable ${view.series.comparableAnswers},
+      verified search ${view.series.verifiedSearchAnswers}, query metadata ${view.series.queryMetadataAnswers}.</p>` : ''}
+  </section>`;
 }
 
 /**
@@ -346,7 +398,7 @@ function kpiRow(view) {
     <article class="card kpi">
       <h2>Share of AI voice</h2>
       <p class="kpi-value">${pct(k.sov.value)}</p>
-      <p class="kpi-sub muted">${view.days}d · n=${k.answers.n} answers</p>
+      <p class="kpi-sub muted">${view.days}d · ${view.leaderboard.find((row) => row.isSelf)?.mentions ?? 0}/${view.leaderboard.reduce((sum, row) => sum + row.mentions, 0)} tracked-entity mentions</p>
       ${deltaLine(k.sov.delta)}
       ${raw(sparkline({ points: k.sov.points, color: 'var(--s1)', title: 'Share of AI voice, by day' }))}
     </article>
@@ -359,19 +411,38 @@ function kpiRow(view) {
     <article class="card kpi">
       <h2>Recommendation rate</h2>
       <p class="kpi-value">${rateWithCI(k.recRate.rate)}</p>
-      <p class="kpi-sub muted">legacy heuristic answers only; review new stance labels in Answers</p>
+      <p class="kpi-sub muted">${view.recMethod === 'stanceRecommendationRate'
+        ? 'positive stance among comparable answers' : 'legacy heuristic among comparable answers'}</p>
       ${deltaLine(k.recRate.delta)}${spreadLine}
     </article>
     <article class="card kpi">
       <h2>Answers analysed</h2>
       <p class="kpi-value">${k.answers.n}</p>
-      <p class="kpi-sub muted">${view.days}d · ${k.answers.spendCostStatus === 'known'
+      <p class="kpi-sub muted">${view.series?.surface.endsWith('-agent') ? 'Subscription allowance cost unavailable' : `${view.days}d · ${k.answers.spendCostStatus === 'known'
         ? `computed API usage ${usd(k.answers.spendUsd)}`
         : k.answers.spendCostStatus === 'partial'
           ? `computed API subtotal ${usd(k.answers.spendKnownSubtotalUsd)} plus unknown costs`
-          : k.answers.spendAttemptedCalls === 0 ? 'no API calls recorded' : 'API usage cost unknown'}</p>
+          : k.answers.spendAttemptedCalls === 0 ? 'no API calls recorded' : 'API usage cost unknown'}`}</p>
       ${raw(sparkline({ points: normaliseCounts(k.answers.points), color: 'var(--s1)', title: 'Answers per day' }))}
     </article>
+  </section><p><a href="${answersHref(view)}">Inspect the ${k.answers.n} comparable answers →</a></p>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function evidencePanel(view) {
+  if (!view.evidence) return '';
+  const e = view.evidence;
+  /** @param {import('../../core/metrics.js').Rate} rate */
+  const displayRate = (rate) => rateWithCI({ n: rate.n, p: rate.p,
+    lo: rate.lo ?? undefined, hi: rate.hi ?? undefined });
+  return html`<section class="card" aria-label="Evidence incidence">
+    <h2>Evidence incidence</h2>
+    <p class="muted small">Each count is distinct comparable answers in this series and window. A search result is separate from an answer citation or a brand mention.</p>
+    <dl class="kv">
+      <dt>Answers with reported sources</dt><dd>${e.responsesWithSourceObservations}/${e.n} · ${displayRate(e.sourceRate)}</dd>
+      <dt>Answers with final-answer citations</dt><dd>${e.responsesWithAnswerCitations}/${e.n} · ${displayRate(e.citationRate)}</dd>
+      <dt>Answers mentioning the brand</dt><dd>${e.responsesWithMentions}/${e.n} · ${displayRate(e.mentionRate)}</dd>
+    </dl>
   </section>`;
 }
 
@@ -509,7 +580,8 @@ function leaderboardPanel(view) {
         <td class="num" data-sort="${row.mentionRate?.p ?? -1}">${rateWithCI(row.mentionRate)}</td>
         <td class="num" data-sort="${row.avgRank ?? 99}">${num(row.avgRank, 1)}</td>
         <td class="num" data-sort="${row.recRate?.p ?? -1}">
-          ${rateWithCI(row.recRate ? { p: row.recRate.p, n: row.recRate.n } : null)}
+          ${rateWithCI(row.recRate ? { p: row.recRate.p, n: row.recRate.n,
+            lo: row.recRate.lo ?? undefined, hi: row.recRate.hi ?? undefined } : null)}
         </td>
         <td class="num" data-sort="${row.delta7d ?? 0}">
           ${row.delta7d === null
@@ -586,7 +658,7 @@ function citationGapPanel(view) {
   const rows = view.gap.map((row) => ({ label: row.domain, value: Number(row.count ?? 0), color: 'var(--muted)' }));
   const links = view.gap.map(
     (row) => html`<li>
-      <a href="/answers?days=${view.days}${row.topPromptId ? raw(`&amp;prompt_id=${Number(row.topPromptId)}`) : ''}"
+      <a href="${answersHref(view, row.topPromptId ? { prompt_id: row.topPromptId } : {})}"
         >${row.domain}</a
       >
       <span class="muted">${row.count} answers</span>
@@ -621,7 +693,7 @@ function receiptsPanel(view) {
       </p>
       <p class="receipt-prompt">${truncate(receipt.prompt, 90)}</p>
       <p class="receipt-snippet">${receipt.snippet}</p>
-      <p><a href="/answers?prompt_id=${receipt.promptId}&amp;provider=${receipt.provider}">See the full answer →</a></p>
+      <p><a href="${answersHref(view, { prompt_id: receipt.promptId, provider: receipt.provider })}">See the full answer →</a></p>
     </article>`,
   );
   return html`<section aria-label="Latest receipts">
@@ -648,7 +720,27 @@ export function render(ctx, view) {
     return layout({ title: 'Dashboard', active: '/', ctx, body });
   }
 
-  const body = html`${kpiRow(view)}${trendPanel(view)}${providerRow(view)}${leaderboardPanel(view)}${alertsPanel(view)}${citationGapPanel(
+  if (view.series === null) {
+    const body = html`${view.seriesOptions.length ? seriesSelector(view) : ''}${emptyState({
+      title: view.seriesOptions.length ? 'Selected series has no data in this window' : 'No measurement series has data yet',
+      line: 'Run a reviewed tracking panel to create comparable answer evidence.',
+      hint: 'The dashboard will select a series with real observations when one is available.',
+      action: { href: '/setup', label: 'Review setup' },
+    })}`;
+    return layout({ title: 'Dashboard', active: '/', ctx, body });
+  }
+  if (view.series.comparableAnswers === 0) {
+    const targets = new URLSearchParams({ series_id: view.series.id, days: String(view.days) });
+    const body = html`${seriesSelector(view)}${emptyState({
+      title: 'No comparable answers in this series',
+      line: `${view.series.attemptedTargets} targets were attempted, but none has a complete comparable answer in this window.`,
+      hint: 'Inspect failed and incomplete targets before interpreting a missing rate.',
+      action: { href: `/answers?${targets.toString()}`, label: 'Inspect targets' },
+    })}`;
+    return layout({ title: 'Dashboard', active: '/', ctx, body });
+  }
+
+  const body = html`${seriesSelector(view)}${kpiRow(view)}${evidencePanel(view)}${trendPanel(view)}${providerRow(view)}${leaderboardPanel(view)}${alertsPanel(view)}${citationGapPanel(
     view,
   )}${receiptsPanel(view)}`;
   return layout({ title: 'Dashboard', active: '/', ctx, body });

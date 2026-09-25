@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { highlightAnswer } from '../highlight.js';
 import { colorIndexFor, listEntities, listPrompts, PROVIDERS, queryAnswers } from '../queries.js';
 import { SURFACES } from '../../core/subscription-model.js';
+import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metrics.js';
 
 const ALL_SURFACES = /** @type {readonly string[]} */ ([...SURFACES]);
 
@@ -47,11 +48,15 @@ function intParam(query, key) {
  * @property {number} days
  * @property {number} page 1-based
  * @property {number} per
+ * @property {string|null} seriesId
+ * @property {boolean} eligibleOnly
  */
 
 /**
  * @typedef {Object} AnswersView
  * @property {AnswerFilterState} filters
+ * @property {ReturnType<typeof resolveMeasurementSeries>} series
+ * @property {ReturnType<typeof listMeasurementSeries>} seriesOptions
  * @property {import('../queries.js').Entity[]} entities
  * @property {import('../queries.js').Prompt[]} prompts
  * @property {Map<number, number>} colorIndex entity id → series slot index (§11.1)
@@ -69,22 +74,35 @@ export function buildView({ db }, query) {
   const prompts = listPrompts(db);
   const provider = query.get('provider');
   const surface = query.get('surface');
+  const now = new Date();
+  const days = intParam(query, 'days') ?? 30;
+  const seriesOptions = listMeasurementSeries(db, { now, days });
+  const requestedSeriesId = query.get('series_id');
+  const series = requestedSeriesId
+    ? seriesOptions.find((item) => item.id === requestedSeriesId) ?? null
+    : resolveMeasurementSeries(db, { now, days });
   const filters = {
     provider: provider !== null && PROVIDERS.includes(provider) ? provider : null,
     surface: surface !== null && ALL_SURFACES.includes(surface) ? surface : null,
     promptId: intParam(query, 'prompt_id'),
     entityId: intParam(query, 'entity_id'),
-    days: intParam(query, 'days') ?? 30,
+    days,
     page: intParam(query, 'page') ?? 1,
     per: 20,
+    seriesId: requestedSeriesId ?? series?.id ?? null,
+    eligibleOnly: query.get('eligible') === '1',
   };
   return {
     filters,
+    series,
+    seriesOptions,
     entities,
     prompts,
     colorIndex: colorIndexFor(entities),
-    result: queryAnswers(db, filters),
-    nowMs: Date.now(),
+    result: series === null ? { total: 0, page: 1, per: 20, pages: 1, items: [] }
+      : queryAnswers(db, { ...filters, series, start: series.start, end: series.end, now,
+        eligibleOnly: filters.eligibleOnly }),
+    nowMs: now.getTime(),
   };
 }
 
@@ -92,7 +110,8 @@ export function buildView({ db }, query) {
  * Rebuild the query string with one value changed — how the range presets and the
  * pager keep every other filter intact.
  *
- * @param {{provider: string|null, surface: string|null, promptId: number|null, entityId: number|null, days: number, page: number}} filters
+ * @param {{provider: string|null, surface: string|null, promptId: number|null, entityId: number|null,
+ *   days: number, page: number, seriesId:string|null, eligibleOnly:boolean}} filters
  * @param {Record<string, string|number|null>} [patch]
  * @returns {string}
  */
@@ -103,6 +122,8 @@ export function queryString(filters, patch = {}) {
     surface: filters.surface,
     prompt_id: filters.promptId,
     entity_id: filters.entityId,
+    series_id: filters.seriesId,
+    eligible: filters.eligibleOnly ? '1' : null,
     days: filters.days,
     page: filters.page,
     ...patch,
@@ -123,6 +144,10 @@ export function queryString(filters, patch = {}) {
  */
 function filterRow(view) {
   const { filters } = view;
+  const seriesOptions = view.seriesOptions.map((series) => html`<option value="${series.id}"${series.id === filters.seriesId ? raw(' selected') : ''}>
+    ${SURFACE_LABEL[series.surface] ?? series.surface} · ${series.searchPolicy ?? 'legacy'} ·
+    ${series.analysisRevision ?? 'legacy'} · ${series.comparableAnswers}/${series.attemptedTargets} comparable
+  </option>`);
   const providerOptions = PROVIDERS.map(
     (id) =>
       html`<option value="${id}"${filters.provider === id ? raw(' selected') : ''}>${PROVIDER_LABEL[id] ?? id}</option>`,
@@ -150,6 +175,10 @@ function filterRow(view) {
   );
 
   return html`<form class="card filter-row" method="get" action="/answers">
+    <label>
+      <span>Measurement series</span>
+      <select name="series_id">${seriesOptions}</select>
+    </label>
     <label>
       <span>Engine</span>
       <select name="provider">
@@ -179,6 +208,7 @@ function filterRow(view) {
       </select>
     </label>
     <input type="hidden" name="days" value="${filters.days}" />
+    <label><input type="checkbox" name="eligible" value="1"${filters.eligibleOnly ? raw(' checked') : ''} /> Comparable answers only</label>
     <button type="submit" class="btn">Apply</button>
     <span class="range-group" role="group" aria-label="Date range">${ranges}</span>
     <a class="btn btn-quiet" href="/answers">Clear</a>
@@ -339,7 +369,8 @@ export function render(ctx, view) {
         })}`
       : html`${filterRow(view)}
           <p class="result-count muted">
-            ${result.total} answers · page ${result.page} of ${result.pages} · last ${view.filters.days} days
+            ${result.total} answers · page ${result.page} of ${result.pages} · ${view.series?.surface ?? 'no series'}
+            · ${view.series?.start ?? ''} to ${view.series?.end ?? ''} UTC · ${view.filters.eligibleOnly ? 'comparable only' : 'all target states'}
           </p>
           ${result.items.map((item) => answerCard(view, item))}${pager(view)}`;
 

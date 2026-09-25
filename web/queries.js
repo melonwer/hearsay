@@ -214,11 +214,32 @@ export function listIntents(db) {
 
 /**
  * @param {Db} db
- * @param {{open?: boolean, limit?: number}} [opts]
+ * @param {{open?: boolean, limit?: number, series?:AnswerFilters['series'] & {start:string,end:string}}} [opts]
  * @returns {AlertRow[]}
  */
-export function listAlerts(db, { open = true, limit = 200 } = {}) {
-  const where = open ? 'WHERE a.acknowledged = 0' : '';
+export function listAlerts(db, { open = true, limit = 200, series } = {}) {
+  const clauses = open ? ['a.acknowledged = 0'] : [];
+  /** @type {(string|number|null)[]} */
+  const params = [];
+  if (series) {
+    clauses.push(`a.surface IS ? AND EXISTS (SELECT 1 FROM responses r WHERE r.run_id = a.run_id
+      AND (a.prompt_id IS NULL OR a.prompt_id = r.prompt_id)
+      AND (a.provider IS NULL OR a.provider = r.provider)
+      AND r.surface = ? AND r.execution_profile_id IS ? AND r.benchmark_revision_id IS ?
+      AND r.analysis_revision IS ? AND r.comparison_key IS ? AND r.search_policy IS ?
+      AND r.created_at >= ? AND r.created_at < ?)
+      AND NOT EXISTS (SELECT 1 FROM responses r2 WHERE r2.run_id = a.run_id
+        AND (a.prompt_id IS NULL OR a.prompt_id = r2.prompt_id)
+        AND (a.provider IS NULL OR a.provider = r2.provider)
+        AND r2.surface IS a.surface
+        AND NOT (r2.execution_profile_id IS ? AND r2.benchmark_revision_id IS ?
+          AND r2.analysis_revision IS ? AND r2.comparison_key IS ? AND r2.search_policy IS ?))`);
+    params.push(series.surface, series.surface, series.executionProfileId, series.benchmarkRevisionId,
+      series.analysisRevision, series.comparisonKey, series.searchPolicy, series.start, series.end);
+    params.push(series.executionProfileId, series.benchmarkRevisionId,
+      series.analysisRevision, series.comparisonKey, series.searchPolicy);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = all(
     db,
     `SELECT a.id, a.created_at, a.run_id, a.severity, a.type, a.entity_id, a.prompt_id, a.provider, a.surface,
@@ -230,7 +251,7 @@ export function listAlerts(db, { open = true, limit = 200 } = {}) {
        ${where}
       ORDER BY a.created_at DESC, a.id DESC
       LIMIT ?`,
-    [Math.max(1, Math.min(1000, Math.floor(limit)))],
+    [...params, Math.max(1, Math.min(1000, Math.floor(limit)))],
   );
   return rows.map((row) => ({
     id: Number(row.id),
@@ -304,6 +325,11 @@ export function activePromptCount(db) {
  * @property {number} [page] 1-based
  * @property {number} [per]
  * @property {Date} [now]
+ * @property {string} [start] inclusive UTC boundary
+ * @property {string} [end] exclusive UTC boundary
+ * @property {{surface:string,executionProfileId:string|null,benchmarkRevisionId:string|null,
+ *   analysisRevision:string|null,comparisonKey:string|null,searchPolicy:string|null}} [series]
+ * @property {boolean} [eligibleOnly]
  */
 
 /**
@@ -327,6 +353,10 @@ export function activePromptCount(db) {
  * @property {string|null} cli_executable
  * @property {string|null} artifact_ref
  * @property {string} analysis_revision
+ * @property {string|null} execution_profile_id
+ * @property {string|null} benchmark_revision_id
+ * @property {string|null} comparison_key
+ * @property {string|null} search_policy
  * @property {number} correction_cutoff
  * @property {ReturnType<typeof answerReview>} review
  * @property {{id:number, entity_id: number, name: string, first_index: number, occurrences: number,
@@ -351,11 +381,32 @@ export function queryAnswers(db, filters = {}) {
   const per = Math.max(1, Math.min(100, Math.floor(filters.per ?? 20)));
   const page = Math.max(1, Math.floor(filters.page ?? 1));
   const days = Math.max(1, Math.min(3650, Math.floor(filters.days ?? 30)));
+  const now = filters.now ?? new Date();
 
   /** @type {string[]} */
-  const clauses = ['r.created_at >= ?'];
-  /** @type {(string|number)[]} */
-  const params = [windowStart(days, filters.now)];
+  const clauses = ['r.created_at >= ?', 'r.created_at < ?'];
+  /** @type {(string|number|null)[]} */
+  const params = [filters.start ?? windowStart(days, now),
+    filters.end ?? new Date(now.getTime() + 1000).toISOString().slice(0, 19) + 'Z'];
+
+  if (filters.series) {
+    clauses.push('r.surface = ?', 'r.execution_profile_id IS ?',
+      'r.benchmark_revision_id IS ?', 'r.analysis_revision IS ?',
+      'r.comparison_key IS ?', 'r.search_policy IS ?');
+    params.push(filters.series.surface, filters.series.executionProfileId,
+      filters.series.benchmarkRevisionId, filters.series.analysisRevision,
+      filters.series.comparisonKey, filters.series.searchPolicy);
+  }
+  if (filters.eligibleOnly) {
+    clauses.push("r.lane = 'tracking'", "r.target_status = 'completed'",
+      "r.comparability_status = 'comparable'", "r.error IS NULL",
+      "r.text IS NOT NULL", "trim(r.text) <> ''",
+      "(r.answer_status IS NULL OR r.answer_status = 'complete')", "p.category <> 'branded'");
+    if (filters.series?.searchPolicy === 'required') clauses.push("r.web_status = 'verified'");
+    if (filters.series?.surface === 'codex-agent' || filters.series?.surface === 'claude-code-agent') {
+      clauses.push("r.web_status = 'verified'");
+    }
+  }
 
   if (filters.provider) {
     clauses.push('r.provider = ?');
@@ -375,7 +426,7 @@ export function queryAnswers(db, filters = {}) {
   }
   const where = `WHERE ${clauses.join(' AND ')}`;
 
-  const totalRow = get(db, `SELECT COUNT(*) AS n FROM responses r ${where}`, params);
+  const totalRow = get(db, `SELECT COUNT(*) AS n FROM responses r JOIN prompts p ON p.id = r.prompt_id ${where}`, params);
   const total = Number(totalRow?.n ?? 0);
   const pages = Math.max(1, Math.ceil(total / per));
 
@@ -384,6 +435,7 @@ export function queryAnswers(db, filters = {}) {
     `SELECT r.id, r.provider, r.surface, r.model, r.sample_idx, r.created_at, r.text, r.error, r.prompt_id,
             r.lane, r.target_status, r.comparability_status, r.web_status,
             r.prompt_text_snapshot, r.prompt_origin, r.cli_executable, r.artifact_ref,
+            r.execution_profile_id, r.benchmark_revision_id, r.comparison_key, r.search_policy,
             COALESCE(r.prompt_text_snapshot, p.text) AS prompt
        FROM responses r
        JOIN prompts p ON p.id = r.prompt_id
@@ -418,6 +470,10 @@ export function queryAnswers(db, filters = {}) {
     cli_executable: row.cli_executable === null || row.cli_executable === undefined ? null : String(row.cli_executable),
     artifact_ref: row.artifact_ref === null || row.artifact_ref === undefined ? null : String(row.artifact_ref),
     analysis_revision: String(review.captureRevision),
+    execution_profile_id: row.execution_profile_id === null ? null : String(row.execution_profile_id),
+    benchmark_revision_id: row.benchmark_revision_id === null ? null : String(row.benchmark_revision_id),
+    comparison_key: row.comparison_key === null ? null : String(row.comparison_key),
+    search_policy: row.search_policy === null ? null : String(row.search_policy),
     correction_cutoff: review.correctionCutoff,
     review,
     mentions: [],
@@ -528,29 +584,23 @@ export function queryAnswers(db, filters = {}) {
  *
  * @param {Db} db
  * @param {number} brandId
- * @param {{limit?: number, days?: number, now?: Date}} [opts]
+ * @param {AnswerFilters & {limit?:number}} [opts]
  * @returns {{id: number, provider: string, prompt: string, promptId: number, createdAt: string, snippet: string, recommended: number}[]}
  */
-export function latestReceipts(db, brandId, { limit = 2, days = 30, now } = {}) {
-  return all(
-    db,
-    `SELECT r.id, r.provider, r.created_at, r.prompt_id, p.text AS prompt, m.snippet, m.recommended
-       FROM mentions m
-       JOIN responses r ON r.id = m.response_id
-       JOIN prompts   p ON p.id = r.prompt_id
-      WHERE m.entity_id = ? AND r.error IS NULL AND r.created_at >= ?
-      ORDER BY r.created_at DESC, r.id DESC
-      LIMIT ?`,
-    [Number(brandId), windowStart(days, now), Math.max(1, Math.floor(limit))],
-  ).map((row) => ({
-    id: Number(row.id),
-    provider: String(row.provider),
-    prompt: String(row.prompt),
-    promptId: Number(row.prompt_id),
-    createdAt: String(row.created_at),
-    snippet: String(row.snippet ?? ''),
-    recommended: Number(row.recommended) === 1 ? 1 : 0,
-  }));
+export function latestReceipts(db, brandId, { limit = 2, ...filters } = {}) {
+  return queryAnswers(db, { ...filters, entityId: brandId, eligibleOnly: true,
+    per: Math.max(1, Math.floor(limit)) }).items.map((item) => {
+    const mention = item.mentions.find((row) => row.entity_id === brandId);
+    return {
+      id: item.id,
+      provider: item.provider,
+      prompt: item.prompt,
+      promptId: item.prompt_id,
+      createdAt: item.created_at,
+      snippet: mention?.snippet ?? '',
+      recommended: mention?.recommended ?? 0,
+    };
+  });
 }
 
 /**

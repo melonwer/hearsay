@@ -49,6 +49,14 @@ async function newApp(t, { fixture = false, env = {} } = {}) {
   return { ...app, base: `http://127.0.0.1:${app.port}`, origin: `http://127.0.0.1:${app.port}` };
 }
 
+/** @param {{base:string}} app @param {string} surface */
+async function seriesId(app, surface) {
+  const listed = await fetch(`${app.base}/api/series`).then((response) => response.json());
+  const series = listed.series.find((item) => item.surface === surface);
+  assert.ok(series, `Missing fixture series ${surface}`);
+  return series.id;
+}
+
 /* ------------------------------------------------------------------ *
  * Status codes and error envelopes (§10.1, §10.3)
  * ------------------------------------------------------------------ */
@@ -417,6 +425,28 @@ test('a cold database redirects to the wizard (§11.8)', async (t) => {
   }
 });
 
+test('configured dashboard explains empty and failed-only measurement windows', async (t) => {
+  const app = await newApp(t);
+  const now = isoNow();
+  exec(app.db, `INSERT INTO entities(id,name,aliases,domains,is_self,created_at)
+    VALUES(1,'Notewell','[]','[]',1,?)`, [now]);
+  const empty = await fetch(`${app.base}/`).then((response) => response.text());
+  assert.match(empty, /No measurement series has data yet/);
+
+  exec(app.db, 'INSERT INTO intents(id,label,created_at) VALUES(1,?,?)', ['Which tool?', now]);
+  exec(app.db, `INSERT INTO prompts(id,intent_id,text,category,active,created_at)
+    VALUES(1,1,'Which tool?','general',1,?)`, [now]);
+  exec(app.db, "INSERT INTO runs(id,started_at,trigger,status) VALUES(1,?,'api','failed')", [now]);
+  exec(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,created_at,
+    surface,lane,target_status,comparability_status,comparison_key,search_policy,
+    answer_status,error) VALUES(1,1,'openai','fixture',0,?,'openai-api','tracking',
+    'failed','non_comparable','failed-series','off','failed','transport')`, [now]);
+  const failed = await fetch(`${app.base}/`).then((response) => response.text());
+  assert.match(failed, /No comparable answers in this series/);
+  assert.match(failed, /1 targets were attempted/);
+  assert.match(failed, /Inspect targets/);
+});
+
 test('setup presents subscription and optional API routes in each configuration state', async (t) => {
   const states = [
     {
@@ -492,10 +522,13 @@ test('settings puts subscription surfaces before API panels and distinguishes al
 
 test('cost views show a known subtotal when a failed API call has unknown billing', async (t) => {
   const app = await newApp(t, { fixture: true });
+  exec(app.db, `UPDATE responses SET provider = 'openai', surface = 'openai-api',
+    comparison_key = 'fixture:openai' WHERE id = 4`);
   const settings = await (await fetch(`${app.base}/settings`)).text();
   assert.match(settings, /\$0\.0045 known subtotal plus unknown components/);
-  const dashboard = await (await fetch(`${app.base}/`)).text();
-  assert.match(dashboard, /computed API subtotal \$0\.0045 plus unknown costs/);
+  const openaiSeries = await seriesId(app, 'openai-api');
+  const dashboard = await (await fetch(`${app.base}/?series_id=${openaiSeries}`)).text();
+  assert.match(dashboard, /computed API subtotal \$0\.0021 plus unknown costs/);
   const status = await (await fetch(`${app.base}/api/status`)).json();
   assert.equal(status.spend30dUsd, null);
   assert.equal(status.spend30dKnownSubtotalUsd, 0.0045);
@@ -521,8 +554,9 @@ test('startup guidance names configured subscription routes and offers both rout
 
 test('fixture data reaches the answers page, marked up as it was counted (§11.4)', async (t) => {
   const app = await newApp(t, { fixture: true });
+  const openaiSeries = await seriesId(app, 'openai-api');
 
-  const res = await fetch(`${app.base}/answers`);
+  const res = await fetch(`${app.base}/answers?series_id=${openaiSeries}`);
   const body = await res.text();
   assert.equal(res.status, 200);
 
@@ -531,28 +565,37 @@ test('fixture data reaches the answers page, marked up as it was counted (§11.4
   // …with the analyser's own spans marked, coloured by entity rather than by rank (§11.1).
   assert.ok(body.includes('<mark class="mk mk-s1" title="Notewell">Notewell</mark>'), 'brand should be marked s1');
   assert.ok(body.includes('<mark class="mk mk-s2" title="Larkspur">Larkspur</mark>'), 'competitor should be marked s2');
-  // Citations, the recommendation pill, and the consumer-product provider names.
+  // Citations and the consumer-product provider name.
   assert.ok(body.includes('roundup.example'), 'citation domains should render');
-  assert.ok(body.includes('pill-good">recommended'), 'a recommended answer should be badged');
-  assert.ok(body.includes('ChatGPT') && body.includes('Perplexity'), 'providers use consumer names');
-  // The stored error collapses behind its error-kind chip instead of vanishing.
-  assert.ok(body.includes('pill pill-error">timeout'), 'errored calls keep their error-kind chip');
-  assert.ok(body.includes('4 answers'), 'the result count should include the errored call');
+  assert.ok(body.includes('ChatGPT'), 'provider uses its consumer name');
+  assert.ok(body.includes('1 answers'), 'the selected series contains one answer');
+  assert.ok(!body.includes('Tessellate is cheaper'), 'another series does not appear');
 
-  // Filtering is server-side: the same page, narrowed by query string.
-  const filtered = await fetch(`${app.base}/answers?provider=gemini`);
+  const filtered = await fetch(`${app.base}/answers?series_id=${openaiSeries}&provider=gemini`);
   const filteredBody = await filtered.text();
   assert.equal(filtered.status, 200);
-  assert.ok(filteredBody.includes('1 answers'), 'the provider filter should narrow the result count');
+  assert.ok(filteredBody.includes('No answers match'), 'the provider filter should narrow the result count');
   assert.ok(!filteredBody.includes('most reviewers land on'), 'the ChatGPT answer should be filtered out');
+
+  const geminiSeries = await seriesId(app, 'gemini-api');
+  const gemini = await fetch(`${app.base}/answers?series_id=${geminiSeries}`).then((response) => response.text());
+  assert.ok(gemini.includes('pill-good">recommended'), 'a recommended answer is badged');
+  const perplexitySeries = await seriesId(app, 'perplexity-api');
+  const failed = await fetch(`${app.base}/answers?series_id=${perplexitySeries}`).then((response) => response.text());
+  assert.ok(failed.includes('Perplexity'), 'the error retains its provider');
+  assert.ok(failed.includes('pill pill-error">timeout'), 'the failed target stays inspectable');
 });
 
 test('fixture data reaches the dashboard, prompts and alerts pages', async (t) => {
   const app = await newApp(t, { fixture: true });
 
-  const dashboard = await (await fetch(`${app.base}/`)).text();
+  const openaiSeries = await seriesId(app, 'openai-api');
+  const dashboard = await (await fetch(`${app.base}/?series_id=${openaiSeries}`)).text();
   assert.ok(dashboard.includes('Notewell'), 'the brand should appear on the dashboard');
   assert.ok(dashboard.includes('Notewell mention rate fell on ChatGPT'), 'open alerts should surface');
+  const otherSeries = await seriesId(app, 'gemini-api');
+  const otherDashboard = await fetch(`${app.base}/?series_id=${otherSeries}`).then((response) => response.text());
+  assert.ok(!otherDashboard.includes('Notewell mention rate fell on ChatGPT'), 'another series must not inherit the alert');
   assert.ok(dashboard.includes('most reviewers land on'), 'latest receipts should quote a real snippet');
   // §19.6 #4: no naked percentages — the KPI rates carry their n.
   assert.ok(dashboard.includes('class="rate-n">n='), 'rates must ship with their sample size');

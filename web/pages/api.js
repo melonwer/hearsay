@@ -35,7 +35,7 @@ import {
 } from '../queries.js';
 import { aliasesFor, MIN_ALIAS_LENGTH } from '../../core/analyze.js';
 import { answerReview, appendCorrection, STANCES } from '../../core/interpretations.js';
-import { stanceRecommendationRate } from '../../core/metrics.js';
+import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
   createExplorationPrompt,
@@ -1408,6 +1408,80 @@ export function summary({ db, config }, days, surface) {
   };
 }
 
+/** @param {import('node:sqlite').DatabaseSync} db @param {URL} url @param {string} now */
+function selectedSeries(db, url, now) {
+  const days = intQuery(url, 'days', DEFAULT_DAYS, 1, 3650);
+  const seriesId = url.searchParams.get('series_id');
+  const start = url.searchParams.get('start');
+  const end = url.searchParams.get('end');
+  if ((start === null) !== (end === null)) {
+    throw new ApiError(400, 'bad_request', 'start and end must be supplied together');
+  }
+  if (start !== null && (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(start) ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(end ?? '') ||
+      !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(end ?? '')) || start >= (end ?? ''))) {
+    throw new ApiError(400, 'bad_request', 'start and end must be ordered UTC timestamps');
+  }
+  const range = start === null ? {} : { start, end: /** @type {string} */ (end) };
+  try {
+    return { days, series: resolveMeasurementSeries(db, { now, days,
+      seriesId: seriesId || undefined, ...range }), range };
+  } catch (error) {
+    if (error instanceof RangeError) throw new ApiError(404, 'series_not_found', error.message);
+    throw error;
+  }
+}
+
+/** @param {import('node:sqlite').DatabaseSync} db @param {URL} url */
+function exactSeriesSummary(db, url) {
+  const now = isoNow();
+  const { days, series } = selectedSeries(db, url, now);
+  if (series === null) return { selectedSeriesId: null, series: null, windowDays: days,
+    brand: brandEntity(db), mentionRate: null, recommendationRate: null,
+    shareOfVoice: [], providers: [], coverage: null };
+  const brand = brandEntity(db);
+  const options = { series, now, start: series.start, end: series.end };
+  const mentionRate = brand === null ? null : metrics.mentionRate(db, { ...options, entityId: brand.id });
+  const recommendationRate = brand === null ? null
+    : series.analysisRevision && series.analysisRevision !== 'legacy-heuristic-v1'
+      ? stanceRecommendationRate(db, { ...options, entityId: brand.id,
+        analysisRevision: series.analysisRevision })
+      : metrics.recommendationRate(db, { ...options, entityId: brand.id });
+  return {
+    selectedSeriesId: series.id, series, windowDays: days,
+    brand: brand === null ? null : { id: brand.id, name: brand.name },
+    coverage: { attemptedTargets: series.attemptedTargets, completeAnswers: series.completeAnswers,
+      comparableAnswers: series.comparableAnswers, verifiedSearchAnswers: series.verifiedSearchAnswers,
+      queryMetadataAnswers: series.queryMetadataAnswers,
+      metricEligibleAnswers: mentionRate?.n ?? 0 },
+    mentionRate,
+    evidenceIncidence: brand === null ? null : metrics.evidenceIncidence(db, { ...options, entityId: brand.id }),
+    recommendationRate,
+    shareOfVoice: metrics.shareOfVoice(db, options),
+    providers: metrics.providerBreakdown(db, options),
+  };
+}
+
+/** @param {import('node:sqlite').DatabaseSync} db @param {URL} url
+ * @param {'intentTable'|'promptTable'|'citationGap'} name @param {Record<string,unknown>} [extra] */
+function metricResult(db, url, name, extra = {}) {
+  const now = isoNow();
+  const days = intQuery(url, 'days', DEFAULT_DAYS, 1, 3650);
+  const seriesId = url.searchParams.get('series_id');
+  if (!seriesId && (url.searchParams.has('start') || url.searchParams.has('end'))) {
+    throw new ApiError(400, 'bad_request', 'start and end require series_id');
+  }
+  if (!seriesId) return strict(/** @type {*} */ (metrics), name, {
+    db, now, days, surface: surfaceQuery(url), ...extra,
+  });
+  const { series } = selectedSeries(db, url, now);
+  if (!series) throw new ApiError(404, 'series_not_found', 'No series in this window');
+  const results = strict(/** @type {*} */ (metrics), name, {
+    db, now, start: series.start, end: series.end, series, ...extra,
+  });
+  return { selectedSeriesId: series.id, series, results };
+}
+
 /* ------------------------------------------------------------------ *
  * Registration
  * ------------------------------------------------------------------ */
@@ -1456,6 +1530,33 @@ export function registerApiRoutes(router, deps) {
     '/api/summary',
     json((ctx) => summary(deps, intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365), surfaceQuery(ctx.url))),
   );
+  router.add('GET', '/api/series', json((ctx) => {
+    const now = isoNow();
+    const { days, series, range } = selectedSeries(db, ctx.url, now);
+    return { windowDays: days, selectedSeriesId: series?.id ?? null,
+      window: series ? { start: series.start, end: series.end, exclusiveEnd: true } : null,
+      series: listMeasurementSeries(db, { now, days, ...range }) };
+  }));
+  router.add('GET', '/api/series/summary', json((ctx) => exactSeriesSummary(db, ctx.url)));
+  router.add('GET', '/api/series/export', json((ctx) => {
+    const now = isoNow();
+    const { days, series } = selectedSeries(db, ctx.url, now);
+    if (!series) return { exportFormatVersion: 1, selectedSeriesId: null, series: null, answers: [] };
+    /** @type {ReturnType<typeof queryAnswers>['items']} */
+    const answers = [];
+    let page = 1;
+    let pages;
+    do {
+      const result = queryAnswers(db, { series, start: series.start, end: series.end,
+        days, now: new Date(now), page, per: 100,
+        eligibleOnly: ctx.url.searchParams.get('eligible') === '1' });
+      answers.push(...result.items);
+      pages = result.pages;
+      page += 1;
+    } while (page <= pages);
+    return { exportFormatVersion: 1, selectedSeriesId: series.id, series,
+      eligibleOnly: ctx.url.searchParams.get('eligible') === '1', answers };
+  }));
 
   router.add(
     'GET',
@@ -1525,26 +1626,12 @@ export function registerApiRoutes(router, deps) {
   router.add(
     'GET',
     '/api/intents/results',
-    json((ctx) =>
-      strict(/** @type {*} */ (metrics), 'intentTable', {
-        db,
-        now: isoNow(),
-        days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
-        surface: surfaceQuery(ctx.url),
-      }),
-    ),
+    json((ctx) => metricResult(db, ctx.url, 'intentTable')),
   );
   router.add(
     'GET',
     '/api/prompts/results',
-    json((ctx) =>
-      strict(/** @type {*} */ (metrics), 'promptTable', {
-        db,
-        now: isoNow(),
-        days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
-        surface: surfaceQuery(ctx.url),
-      }),
-    ),
+    json((ctx) => metricResult(db, ctx.url, 'promptTable')),
   );
   router.add(
     'PATCH',
@@ -1561,15 +1648,9 @@ export function registerApiRoutes(router, deps) {
   router.add(
     'GET',
     '/api/gap',
-    json((ctx) =>
-      strict(/** @type {*} */ (metrics), 'citationGap', {
-        db,
-        now: isoNow(),
-        days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 365),
-        limit: intQuery(ctx.url, 'limit', 20, 1, 100),
-        surface: surfaceQuery(ctx.url),
-      }),
-    ),
+    json((ctx) => metricResult(db, ctx.url, 'citationGap', {
+      limit: intQuery(ctx.url, 'limit', 20, 1, 100),
+    })),
   );
 
   router.add(
@@ -1639,18 +1720,39 @@ export function registerApiRoutes(router, deps) {
       if (providerParam !== null && providerParam !== '' && !PROVIDERS.includes(providerParam)) {
         throw new ApiError(400, 'bad_request', `provider must be one of: ${PROVIDERS.join(', ')}`);
       }
+      const now = isoNow();
+      const requestedSeriesId = ctx.url.searchParams.get('series_id');
+      if (!requestedSeriesId && (ctx.url.searchParams.has('start') || ctx.url.searchParams.has('end'))) {
+        throw new ApiError(400, 'bad_request', 'start and end require series_id');
+      }
+      const selection = requestedSeriesId ? selectedSeries(db, ctx.url, now) : null;
+      if (selection && !selection.series) throw new ApiError(404, 'series_not_found', 'No series in this window');
+      const days = intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 3650);
       const result = queryAnswers(db, {
         provider: providerParam === '' ? null : providerParam,
         surface: surfaceQuery(ctx.url) ?? null,
         promptId: intQuery(ctx.url, 'prompt_id', 0, 1, Number.MAX_SAFE_INTEGER) || null,
         entityId: intQuery(ctx.url, 'entity_id', 0, 1, Number.MAX_SAFE_INTEGER) || null,
-        days: intQuery(ctx.url, 'days', DEFAULT_DAYS, 1, 3650),
+        days,
+        now: new Date(now),
+        series: selection?.series ?? undefined,
+        start: selection?.series?.start,
+        end: selection?.series?.end,
+        eligibleOnly: ctx.url.searchParams.get('eligible') === '1',
         page: intQuery(ctx.url, 'page', 1, 1, 100000),
         per: intQuery(ctx.url, 'per', 20, 1, 100),
       });
       return {
         total: result.total,
         page: result.page,
+        selectedSeriesId: selection?.series?.id ?? null,
+        coverage: selection?.series ? {
+          attemptedTargets: selection.series.attemptedTargets,
+          completeAnswers: selection.series.completeAnswers,
+          comparableAnswers: selection.series.comparableAnswers,
+          verifiedSearchAnswers: selection.series.verifiedSearchAnswers,
+          queryMetadataAnswers: selection.series.queryMetadataAnswers,
+        } : null,
         items: result.items.map((item) => ({
           id: item.id,
           provider: item.provider,
@@ -1670,6 +1772,10 @@ export function registerApiRoutes(router, deps) {
           cli_executable: item.cli_executable,
           artifact_ref: item.artifact_ref,
           analysis_revision: item.analysis_revision,
+          execution_profile_id: item.execution_profile_id,
+          benchmark_revision_id: item.benchmark_revision_id,
+          comparison_key: item.comparison_key,
+          search_policy: item.search_policy,
           correction_cutoff: item.correction_cutoff,
           mentions: item.mentions.map((mention) => ({
             id: mention.id,

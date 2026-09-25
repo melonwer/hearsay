@@ -97,7 +97,9 @@ Hearsay's tools appear only after the assistant reconnects. Quit Claude Code and
 it again, then say "carry on setting up Hearsay". If they still do not show up, work
 over the JSON API instead, which needs no setup: `GET /api/status`,
 `POST /api/setup`, `GET /api/cost/estimate`, `POST /api/run`, `GET /api/runs/latest`,
-`GET /api/summary?days=30`, `GET /api/alerts`. There is no index page at `/api`.
+`GET /api/series`, `GET /api/series/summary`, `GET /api/answers?series_id=...`,
+`GET /api/alerts`. `GET /api/summary?days=30` remains the legacy API view. There
+is no index page at `/api`.
 
 MCP access and inference enablement are separate. Registering the Hearsay MCP server
 lets a client operate Hearsay; setting `HEARSAY_CODEX_ENABLED=1` or

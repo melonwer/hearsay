@@ -44,6 +44,14 @@ INSERT INTO responses(id, run_id, prompt_id, provider, model, sample_idx, text,
       NULL, NULL, NULL, NULL, 'timeout: no answer within 45000 ms',
       strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 days', '+3 minutes'));
 
+UPDATE responses SET
+  surface = provider || '-api', lane = 'tracking',
+  target_status = CASE WHEN error IS NULL THEN 'completed' ELSE 'failed' END,
+  comparability_status = 'comparable', web_status = 'not_applicable',
+  comparison_key = 'fixture:' || provider, search_policy = 'legacy',
+  analysis_revision = 'legacy-heuristic-v1',
+  answer_status = CASE WHEN error IS NULL THEN 'complete' ELSE 'failed' END;
+
 INSERT INTO mentions(response_id, entity_id, first_index, occurrences, rank, recommended, snippet) VALUES
   (1, 1, 24, 1, 1, 0,
       'For a small sales team, Notewell is the one most reviewers land on, with Larkspur a close second if you also need call scoring.'),
@@ -63,7 +71,7 @@ INSERT INTO citations(response_id, url, domain, rank, entity_id) VALUES
   (2, 'https://tessellate.example/compare',      'tessellate.example', 2, 3),
   (3, 'https://roundup.example/ai-note-takers',  'roundup.example',    1, NULL);
 
-INSERT INTO alerts(created_at, run_id, severity, type, entity_id, prompt_id, provider, title, detail, acknowledged) VALUES
-  (strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 days', '+5 minutes'), 1, 'warning', 'MENTION_DROP', 1, 1, 'openai',
+INSERT INTO alerts(created_at, run_id, severity, type, entity_id, prompt_id, provider, surface, title, detail, acknowledged) VALUES
+  (strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 days', '+5 minutes'), 1, 'warning', 'MENTION_DROP', 1, 1, 'openai', 'openai-api',
    'Notewell mention rate fell on ChatGPT',
    'Notewell was mentioned in 1 of 3 ChatGPT answers for this prompt, down from 3 of 3 in the previous run.', 0);

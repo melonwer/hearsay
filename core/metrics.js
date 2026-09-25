@@ -21,6 +21,7 @@
 
 import { all, get } from './db.js';
 import { summarizeComputedCosts } from './cost.js';
+import { stableIdentity } from './measurement-contract.js';
 import { eligibilitySql } from './subscription-model.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
@@ -130,6 +131,18 @@ export function windowStart(now, days) {
  * @property {boolean} [includeBranded]
  * @property {string} [analysisRevision] exact capture-time classifier revision
  * @property {number} [correctionCutoff] correction event ID, for stance rates
+ * @property {string|Date} [start] inclusive UTC range start
+ * @property {string|Date} [end] exclusive UTC range end
+ * @property {MeasurementSeries} [series] exact measurement series
+ * @property {string} [seriesId] series ID for resolver
+ */
+
+/**
+ * @typedef {{id:string, surface:string, executionProfileId:string|null,
+ *   benchmarkRevisionId:string|null, analysisRevision:string|null,
+ *   comparisonKey:string|null, searchPolicy:string|null, start:string, end:string,
+ *   attemptedTargets:number, completeAnswers:number, comparableAnswers:number,
+ *   verifiedSearchAnswers:number, queryMetadataAnswers:number, lastAt:string}} MeasurementSeries
  */
 
 /**
@@ -161,22 +174,130 @@ function args(a, b) {
  * @param {MetricsOpts} opts
  * @param {string} fn
  * @returns {{start:string, end:string, days:number, provider:ProviderId|null, surface:string|null,
- *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean}}
+ *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean, halfOpen:boolean,
+ *   series:MeasurementSeries|null}}
  */
 function resolveWindow(opts, fn) {
-  const end = requireNow(opts.now, fn);
+  const series = opts.series ?? null;
+  const end = requireNow(opts.end ?? series?.end ?? opts.now, fn);
   const days = Number.isFinite(opts.days) ? Number(opts.days) : DEFAULT_DAYS;
-  const surface = opts.surface ? String(opts.surface) : null;
+  const start = opts.start ? requireNow(opts.start, fn)
+    : opts.days !== undefined ? windowStart(end, days)
+    : series?.start ?? windowStart(end, days);
+  if (start >= end) throw new RangeError(`metrics.${fn}: expected an ordered half-open UTC window`);
+  const surface = series ? series.surface : opts.surface ? String(opts.surface) : null;
   return {
-    start: windowStart(end, days),
+    start,
     end,
     days,
     provider: opts.provider ? String(opts.provider) : null,
     surface,
-    comparisonKey: opts.comparisonKey ? String(opts.comparisonKey) : null,
+    comparisonKey: series ? series.comparisonKey : opts.comparisonKey ? String(opts.comparisonKey) : null,
     subscription: opts.subscription === true || SUBSCRIPTION_SURFACES.includes(surface ?? ''),
     includeBranded: opts.includeBranded === true,
+    halfOpen: Boolean(series || opts.start || opts.end),
+    series,
   };
+}
+
+/** @param {string} alias @param {MeasurementSeries} series */
+function seriesSql(alias, series) {
+  return {
+    sql: `${alias}.surface IS ? AND ${alias}.execution_profile_id IS ?
+      AND ${alias}.benchmark_revision_id IS ? AND ${alias}.analysis_revision IS ?
+      AND ${alias}.comparison_key IS ? AND ${alias}.search_policy IS ?`,
+    params: [series.surface, series.executionProfileId, series.benchmarkRevisionId,
+      series.analysisRevision, series.comparisonKey, series.searchPolicy],
+  };
+}
+
+/**
+ * List distinct response series inside a half-open window. Coverage counts start from
+ * attempted tracking targets, before answer and comparison exclusions are applied.
+ * @param {Db|MetricsOpts} dbOrOpts
+ * @param {WindowOpts} [maybeOpts]
+ * @returns {MeasurementSeries[]}
+ */
+export function listMeasurementSeries(dbOrOpts, maybeOpts) {
+  const [db, opts] = args(dbOrOpts, maybeOpts);
+  const inferredEnd = opts.end ?? opts.series?.end ?? new Date(
+    new Date(requireNow(opts.now, 'listMeasurementSeries')).getTime() + 1000);
+  const inferredStart = opts.start ?? (opts.end || opts.series ? undefined
+    : windowStart(requireNow(opts.now, 'listMeasurementSeries'),
+      Number.isFinite(opts.days) ? Number(opts.days) : DEFAULT_DAYS));
+  const w = resolveWindow({ ...opts, start: inferredStart, end: inferredEnd }, 'listMeasurementSeries');
+  const rows = all(db, `SELECT r.surface, r.execution_profile_id, r.benchmark_revision_id,
+      r.analysis_revision, r.comparison_key, r.search_policy,
+      COUNT(*) AS attempted_targets,
+      SUM(CASE WHEN r.error IS NULL AND r.target_status = 'completed'
+        AND r.text IS NOT NULL AND trim(r.text) <> ''
+        AND (r.answer_status = 'complete' OR r.answer_status IS NULL)
+        THEN 1 ELSE 0 END) AS complete_answers,
+      SUM(CASE WHEN r.error IS NULL AND r.target_status = 'completed'
+        AND r.comparability_status = 'comparable'
+        AND r.text IS NOT NULL AND trim(r.text) <> ''
+        AND (r.answer_status = 'complete' OR r.answer_status IS NULL)
+        AND (COALESCE(r.search_policy, 'legacy') <> 'required' OR r.web_status = 'verified')
+        AND (r.surface NOT IN ('codex-agent','claude-code-agent') OR r.web_status = 'verified')
+        THEN 1 ELSE 0 END) AS comparable_answers,
+      SUM(CASE WHEN r.error IS NULL AND r.target_status = 'completed'
+        AND r.text IS NOT NULL AND trim(r.text) <> ''
+        AND (r.answer_status = 'complete' OR r.answer_status IS NULL)
+        AND r.web_status = 'verified' THEN 1 ELSE 0 END) AS verified_search_answers,
+      SUM(CASE WHEN r.error IS NULL AND r.target_status = 'completed'
+        AND r.comparability_status = 'comparable'
+        AND r.text IS NOT NULL AND trim(r.text) <> ''
+        AND (r.answer_status = 'complete' OR r.answer_status IS NULL)
+        AND (COALESCE(r.search_policy, 'legacy') <> 'required' OR r.web_status = 'verified')
+        AND (r.surface NOT IN ('codex-agent','claude-code-agent') OR r.web_status = 'verified')
+        AND r.query_metadata_status = 'available'
+        THEN 1 ELSE 0 END) AS query_metadata_answers,
+      MAX(r.created_at) AS last_at
+    FROM responses r
+    WHERE r.lane = 'tracking' AND r.surface IS NOT NULL
+      AND r.created_at >= ? AND r.created_at < ?
+    GROUP BY r.surface, r.execution_profile_id, r.benchmark_revision_id,
+      r.analysis_revision, r.comparison_key, r.search_policy`, [w.start, w.end]);
+  return rows.map((row) => {
+    const surface = String(row.surface);
+    const executionProfileId = row.execution_profile_id === null ? null : String(row.execution_profile_id);
+    const benchmarkRevisionId = row.benchmark_revision_id === null ? null : String(row.benchmark_revision_id);
+    const analysisRevision = row.analysis_revision === null ? null : String(row.analysis_revision);
+    const comparisonKey = row.comparison_key === null ? null : String(row.comparison_key);
+    const searchPolicy = row.search_policy === null ? null : String(row.search_policy);
+    return {
+      id: stableIdentity([surface, executionProfileId, benchmarkRevisionId,
+        analysisRevision, comparisonKey, searchPolicy]),
+      surface, executionProfileId, benchmarkRevisionId, analysisRevision,
+      comparisonKey, searchPolicy, start: w.start, end: w.end,
+      attemptedTargets: Number(row.attempted_targets),
+      completeAnswers: Number(row.complete_answers),
+      comparableAnswers: Number(row.comparable_answers),
+      verifiedSearchAnswers: Number(row.verified_search_answers),
+      queryMetadataAnswers: Number(row.query_metadata_answers),
+      lastAt: String(row.last_at),
+    };
+  }).sort((a, b) => Number(b.comparableAnswers > 0) - Number(a.comparableAnswers > 0)
+    || b.lastAt.localeCompare(a.lastAt)
+    || b.comparableAnswers - a.comparableAnswers || a.id.localeCompare(b.id));
+}
+
+/**
+ * Resolve an explicit series ID or choose the latest in-window series with comparable
+ * answers. An empty account has no selected series.
+ * @param {Db|MetricsOpts} dbOrOpts
+ * @param {WindowOpts & {seriesId?:string}} [maybeOpts]
+ * @returns {MeasurementSeries|null}
+ */
+export function resolveMeasurementSeries(dbOrOpts, maybeOpts) {
+  const [db, opts] = args(dbOrOpts, maybeOpts);
+  const series = listMeasurementSeries(db, opts);
+  if (opts.seriesId) {
+    const selected = series.find((item) => item.id === opts.seriesId);
+    if (!selected) throw new RangeError('Measurement series does not exist in the selected window');
+    return selected;
+  }
+  return series[0] ?? null;
 }
 
 /**
@@ -184,7 +305,8 @@ function resolveWindow(opts, fn) {
  * `FROM responses r JOIN prompts p ON p.id = r.prompt_id`.
  *
  * @param {{start:string, end:string, provider:ProviderId|null, surface:string|null,
- *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean}} w
+ *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean,
+ *   halfOpen:boolean, series:MeasurementSeries|null}} w
  * @returns {{sql:string, params:SqlValue[]}}
  */
 function validResponses(w) {
@@ -196,7 +318,14 @@ function validResponses(w) {
   const clauses = [eligibility.sql, 'r.error IS NULL'];
   /** @type {SqlValue[]} */
   const params = [...eligibility.params];
-  if (w.surface === null && !w.subscription) {
+  clauses.push("r.text IS NOT NULL AND trim(r.text) <> ''");
+  clauses.push("(r.answer_status = 'complete' OR r.answer_status IS NULL)");
+  if (w.series) {
+    const exact = seriesSql('r', w.series);
+    clauses.push(exact.sql);
+    params.push(...exact.params);
+    if (w.series.searchPolicy === 'required') clauses.push("r.web_status = 'verified'");
+  } else if (w.surface === null && !w.subscription) {
     clauses[0] = `(((${eligibility.sql}) AND (r.surface IS NULL OR r.surface IN (${API_SURFACES.map(() => '?').join(', ')})))
       OR (r.surface IS NULL AND r.lane IS NULL AND r.target_status IS NULL AND r.comparability_status IS NULL AND r.error IS NULL))`;
     params.push(...API_SURFACES);
@@ -207,7 +336,7 @@ function validResponses(w) {
   // A surface can legitimately have adjacent series after a model/profile/envelope change.
   // Without an explicit key, report only the newest comparable series for that surface so
   // a dashboard window never joins incompatible observations into one trend.
-  if (w.surface !== null && w.comparisonKey === null) {
+  if (!w.series && w.surface !== null && w.comparisonKey === null) {
     clauses.push(`r.comparison_key = (
       SELECT latest.comparison_key
         FROM responses latest
@@ -216,13 +345,18 @@ function validResponses(w) {
          AND latest.lane = 'tracking'
          AND latest.target_status = 'completed'
          AND latest.comparability_status = 'comparable'
+         AND latest.error IS NULL
+         AND latest.text IS NOT NULL AND trim(latest.text) <> ''
+         AND (latest.answer_status = 'complete' OR latest.answer_status IS NULL)
+         AND latest.created_at >= ?
+         AND latest.created_at ${w.halfOpen ? '<' : '<='} ?
          ${w.subscription ? "AND latest.web_status = 'verified'" : ''}
        ORDER BY latest.created_at DESC, latest.id DESC
        LIMIT 1
     )`);
-    params.push(w.surface);
+    params.push(w.surface, w.start, w.end);
   }
-  clauses.push('r.created_at >= ?', 'r.created_at <= ?');
+  clauses.push('r.created_at >= ?', `r.created_at ${w.halfOpen ? '<' : '<='} ?`);
   params.push(w.start, w.end);
   if (w.provider) {
     clauses.push('r.provider = ?');
@@ -276,7 +410,8 @@ export function mentionRate(dbOrOpts, maybeOpts) {
  *
  * @param {Db|MetricsOpts} dbOrOpts open database, or an options object carrying `db`
  * @param {WindowOpts & {entityId:number}} [maybeOpts]
- * @returns {{n:number, recommended:number, p:number|null, lowSample:boolean,method?:string}}
+ * @returns {{n:number, recommended:number, p:number|null, lo:number|null, hi:number|null,
+ *   lowSample:boolean,method?:string}}
  */
 export function recommendationRate(dbOrOpts, maybeOpts) {
   const [db, opts] = args(dbOrOpts, maybeOpts);
@@ -295,7 +430,9 @@ export function recommendationRate(dbOrOpts, maybeOpts) {
   );
   const n = Number(row?.n ?? 0);
   const recommended = Number(row?.recommended ?? 0);
-  return { n, recommended, p: n > 0 ? recommended / n : null, lowSample: n < LOW_SAMPLE_N,
+  const interval = wilson(recommended, n);
+  return { n, recommended, p: interval.p, lo: interval.lo, hi: interval.hi,
+    lowSample: interval.lowSample,
     method: 'legacy_heuristic' };
 }
 
@@ -307,8 +444,12 @@ export function recommendationRate(dbOrOpts, maybeOpts) {
  */
 export function stanceRecommendationRate(dbOrOpts, maybeOpts) {
   const [db, opts] = args(dbOrOpts, maybeOpts);
-  if (!opts.analysisRevision || opts.analysisRevision === 'legacy-heuristic-v1') {
+  const analysisRevision = opts.analysisRevision ?? opts.series?.analysisRevision;
+  if (!analysisRevision || analysisRevision === 'legacy-heuristic-v1') {
     throw new TypeError('stanceRecommendationRate requires an exact stance analysis revision');
+  }
+  if (opts.series && opts.series.analysisRevision !== analysisRevision) {
+    throw new RangeError('Stance revision differs from the selected measurement series');
   }
   const w = resolveWindow(opts, 'stanceRecommendationRate');
   const filter = validResponses(w);
@@ -319,7 +460,7 @@ export function stanceRecommendationRate(dbOrOpts, maybeOpts) {
     JOIN mentions m ON m.response_id = r.id AND m.entity_id = ?
     LEFT JOIN mention_interpretations i ON i.mention_id = m.id AND i.analysis_revision = ?
     WHERE ${filter.sql} AND r.analysis_revision = ? AND i.id IS NULL`, [
-    Number(opts.entityId), opts.analysisRevision, ...filter.params, opts.analysisRevision,
+    Number(opts.entityId), analysisRevision, ...filter.params, analysisRevision,
   ]);
   if (Number(missing?.n ?? 0) > 0) throw new RangeError('A stance interpretation is missing for an eligible answer');
   const row = get(db, `WITH eligible AS (
@@ -341,16 +482,17 @@ export function stanceRecommendationRate(dbOrOpts, maybeOpts) {
     SUM(CASE WHEN stance = 'uncertain' THEN 1 ELSE 0 END) AS uncertain,
     SUM(CASE WHEN present = 0 THEN 1 ELSE 0 END) AS absent
     FROM decisions`, [
-    ...filter.params, opts.analysisRevision, cutoff, Number(opts.entityId),
-    opts.analysisRevision, Number(opts.entityId),
+    ...filter.params, analysisRevision, cutoff, Number(opts.entityId),
+    analysisRevision, Number(opts.entityId),
   ]);
   const n = Number(row?.n ?? 0);
   const positive = Number(row?.positive ?? 0);
-  return { method: 'positive_stance', analysisRevision: opts.analysisRevision,
+  const interval = wilson(positive, n);
+  return { method: 'positive_stance', analysisRevision,
     correctionCutoff: cutoff, n, positive, recommended: positive,
     negative: Number(row?.negative ?? 0), neutral: Number(row?.neutral ?? 0),
     uncertain: Number(row?.uncertain ?? 0), absent: Number(row?.absent ?? 0),
-    p: n > 0 ? positive / n : null, lowSample: n < LOW_SAMPLE_N };
+    p: interval.p, lo: interval.lo, hi: interval.hi, lowSample: interval.lowSample };
 }
 
 /**
@@ -384,7 +526,8 @@ export function avgRank(dbOrOpts, maybeOpts) {
  *
  * @param {Db} db
  * @param {{start:string, end:string, provider:ProviderId|null, surface:string|null,
- *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean}} w
+ *   comparisonKey:string|null, subscription:boolean, includeBranded:boolean,
+ *   halfOpen:boolean, series:MeasurementSeries|null}} w
  * @returns {{entityId:number, name:string, isSelf:boolean, mentions:number, sov:number}[]}
  */
 function sovRows(db, w) {
@@ -534,6 +677,39 @@ export function citationShare(dbOrOpts, maybeOpts) {
 }
 
 /**
+ * Answer-level incidence of three distinct evidence layers within one eligible cohort.
+ * Source observations are returned provider sources or fetches; answer citations are
+ * explicit references on the final answer; mentions are analyzer detections. Repeated
+ * rows in any child table count the containing answer once.
+ * @param {Db|MetricsOpts} dbOrOpts
+ * @param {WindowOpts & {entityId:number}} [maybeOpts]
+ */
+export function evidenceIncidence(dbOrOpts, maybeOpts) {
+  const [db, opts] = args(dbOrOpts, maybeOpts);
+  const w = resolveWindow(opts, 'evidenceIncidence');
+  const filter = validResponses(w);
+  const row = get(db, `SELECT COUNT(*) AS n,
+    SUM(CASE WHEN EXISTS (SELECT 1 FROM source_observations s WHERE s.response_id = r.id)
+      THEN 1 ELSE 0 END) AS sources,
+    SUM(CASE WHEN EXISTS (SELECT 1 FROM answer_citations c WHERE c.response_id = r.id)
+      THEN 1 ELSE 0 END) AS citations,
+    SUM(CASE WHEN EXISTS (SELECT 1 FROM mentions m
+      WHERE m.response_id = r.id AND m.entity_id = ?) THEN 1 ELSE 0 END) AS mentions
+    FROM responses r JOIN prompts p ON p.id = r.prompt_id
+    WHERE ${filter.sql}`, [Number(opts.entityId), ...filter.params]);
+  const n = Number(row?.n ?? 0);
+  const responsesWithSourceObservations = Number(row?.sources ?? 0);
+  const responsesWithAnswerCitations = Number(row?.citations ?? 0);
+  const responsesWithMentions = Number(row?.mentions ?? 0);
+  return {
+    n, responsesWithSourceObservations, responsesWithAnswerCitations, responsesWithMentions,
+    sourceRate: wilson(responsesWithSourceObservations, n),
+    citationRate: wilson(responsesWithAnswerCitations, n),
+    mentionRate: wilson(responsesWithMentions, n),
+  };
+}
+
+/**
  * Order providers for display: §4.1 order first, then anything unexpected, alphabetically.
  * @param {string} a
  * @param {string} b
@@ -563,14 +739,16 @@ export function providerBreakdown(dbOrOpts, maybeOpts) {
   const brand = brandEntity(db);
   const surfaceClause = w.surface === null ? `(r.surface IS NULL OR r.surface IN (${API_SURFACES.map(() => '?').join(', ')}))` : 'r.surface = ?';
   const surfaceParams = w.surface === null ? API_SURFACES : [w.surface];
+  const exact = w.series ? seriesSql('r', w.series) : null;
+  const endOperator = w.halfOpen ? '<' : '<=';
 
   const providerRows = all(
     db,
     `SELECT DISTINCT r.provider AS provider
        FROM responses r
-      WHERE r.created_at >= ? AND r.created_at <= ?
-        AND ${surfaceClause}`,
-    [w.start, w.end, ...surfaceParams],
+      WHERE r.created_at >= ? AND r.created_at ${endOperator} ?
+        AND ${surfaceClause}${exact ? ` AND ${exact.sql}` : ''}`,
+    [w.start, w.end, ...surfaceParams, ...(exact?.params ?? [])],
   ).map((row) => String(row.provider));
   providerRows.sort(byProviderOrder);
 
@@ -578,11 +756,11 @@ export function providerBreakdown(dbOrOpts, maybeOpts) {
     const scoped = { ...opts, provider, now: w.end };
     const errorRow = get(
       db,
-      `SELECT error FROM responses
-        WHERE provider = ? AND error IS NOT NULL AND created_at >= ? AND created_at <= ?
-          AND ${w.surface === null ? `(surface IS NULL OR surface IN (${API_SURFACES.map(() => '?').join(', ')}))` : 'surface = ?'}
-        ORDER BY created_at DESC, id DESC LIMIT 1`,
-      [provider, w.start, w.end, ...surfaceParams],
+      `SELECT r.error FROM responses r
+        WHERE r.provider = ? AND r.error IS NOT NULL AND r.created_at >= ? AND r.created_at ${endOperator} ?
+          AND ${surfaceClause}${exact ? ` AND ${exact.sql}` : ''}
+        ORDER BY r.created_at DESC, r.id DESC LIMIT 1`,
+      [provider, w.start, w.end, ...surfaceParams, ...(exact?.params ?? [])],
     );
     const rate = brand ? mentionRate(db, { ...scoped, entityId: brand.id }) : wilson(0, 0);
     const citations = brand ? citationShare(db, { ...scoped, entityId: brand.id }) : null;
@@ -615,6 +793,22 @@ export function promptTable(dbOrOpts, maybeOpts) {
   const filter = validResponses(w);
   const brand = brandEntity(db);
   const brandId = brand ? brand.id : -1;
+  const revision = w.series?.analysisRevision;
+  const stanceMode = Boolean(revision && revision !== 'legacy-heuristic-v1');
+  const review = stanceMode ? stanceRecommendationRate(db, {
+    ...opts, now: w.end, start: w.start, end: w.end, includeBranded: true,
+    entityId: brandId, analysisRevision: /** @type {string} */ (revision),
+  }) : null;
+  const recommendationSql = stanceMode
+    ? `SUM(CASE WHEN EXISTS (SELECT 1 FROM mentions m
+         JOIN mention_interpretations i ON i.mention_id = m.id
+         WHERE m.response_id = r.id AND m.entity_id = ? AND i.analysis_revision = ?
+           AND COALESCE((SELECT c.replacement FROM mention_corrections c
+             WHERE c.interpretation_id = i.id AND c.id <= ? ORDER BY c.id DESC LIMIT 1),
+             i.stance) = 'positive') THEN 1 ELSE 0 END)`
+    : `SUM(CASE WHEN EXISTS (SELECT 1 FROM mentions m
+         WHERE m.response_id = r.id AND m.entity_id = ? AND m.recommended = 1)
+         THEN 1 ELSE 0 END)`;
 
   const prompts = all(db, 'SELECT id, intent_id, text, category, active FROM prompts ORDER BY id');
 
@@ -623,13 +817,12 @@ export function promptTable(dbOrOpts, maybeOpts) {
     `SELECT r.prompt_id AS prompt_id, r.provider AS provider, COUNT(*) AS n,
             SUM(CASE WHEN EXISTS (SELECT 1 FROM mentions m WHERE m.response_id = r.id AND m.entity_id = ?)
                      THEN 1 ELSE 0 END) AS mentioned,
-            SUM(CASE WHEN EXISTS (SELECT 1 FROM mentions m
-                                   WHERE m.response_id = r.id AND m.entity_id = ? AND m.recommended = 1)
-                     THEN 1 ELSE 0 END) AS recommended
+            ${recommendationSql} AS recommended
        FROM responses r JOIN prompts p ON p.id = r.prompt_id
       WHERE ${filter.sql}
       GROUP BY r.prompt_id, r.provider`,
-    [brandId, brandId, ...filter.params],
+    [brandId, brandId, ...(stanceMode ? [/** @type {string} */ (revision),
+      /** @type {number} */ (review?.correctionCutoff)] : []), ...filter.params],
   );
 
   const tops = all(
@@ -663,6 +856,7 @@ export function promptTable(dbOrOpts, maybeOpts) {
       provider,
       brandMentionRate: wilson(Number(row.mentioned ?? 0), n),
       brandRecommended: { n, recommended, p: n > 0 ? recommended / n : null },
+      recommendationMethod: stanceMode ? 'positive_stance' : w.series ? 'legacy_heuristic' : 'capture_bit',
       topEntityName: topByKey.get(`${promptId}|${provider}`) ?? null,
     };
     const list = byPrompt.get(promptId);
@@ -851,13 +1045,18 @@ export function actualSpend(dbOrOpts, maybeOpts) {
     `(r.target_status IS NULL OR r.target_status IN ('completed','failed','cancelled'))`,
     `COALESCE(r.safe_error_code, '') <> 'skipped_circuit'`,
     `COALESCE(r.error, '') <> 'skipped:circuit'`,
-    'r.created_at >= ?', 'r.created_at <= ?',
+    'r.created_at >= ?', `r.created_at ${w.halfOpen ? '<' : '<='} ?`,
   ];
   /** @type {SqlValue[]} */
   const params = [...API_SURFACES, w.start, w.end];
   if (w.surface !== null) { clauses.push('r.surface = ?'); params.push(w.surface); }
   if (w.provider !== null) { clauses.push('r.provider = ?'); params.push(w.provider); }
   if (w.comparisonKey !== null) { clauses.push('r.comparison_key = ?'); params.push(w.comparisonKey); }
+  if (w.series) {
+    const exact = seriesSql('r', w.series);
+    clauses.push(exact.sql);
+    params.push(...exact.params);
+  }
   const rows = all(
     db,
     `SELECT provider,
@@ -958,7 +1157,8 @@ export function summary(dbOrOpts, maybeOpts) {
     mentionRate: brand ? mentionRate(db, { ...opts, now: w.end, entityId: brand.id }) : wilson(0, 0),
     recommendationRate: brand
       ? recommendationRate(db, { ...opts, now: w.end, entityId: brand.id })
-      : { n: 0, recommended: 0, p: null, lowSample: true },
+      : { n: 0, recommended: 0, p: null, lo: null, hi: null, lowSample: true,
+        method: 'legacy_heuristic' },
     providers: providerBreakdown(db, { ...opts, now: w.end }),
     openAlerts: Number(alertRow?.n ?? 0),
     lastRun: runRow

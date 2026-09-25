@@ -81,6 +81,92 @@ test('answer review, correction, stance rate, and page share one versioned decis
   }
 });
 
+test('exact series summary, dashboard, answer drilldown, and export stay on one subscription series', async () => {
+  const app = await boot();
+  try {
+    const entity = (await api(app.base, 'POST', '/api/entities', { name: 'Notewell', is_self: true })).body;
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'Which tool?' })).body;
+    const legacyId = seedResponse(app.db, prompt.id, 'Notewell is available.');
+    dbRun(app.db, `INSERT INTO mentions(response_id,entity_id,first_index,occurrences,rank,recommended,snippet)
+      VALUES(?,?,0,1,1,0,'Notewell is available.')`, [legacyId, entity.id]);
+
+    const now = new Date().toISOString().slice(0, 19) + 'Z';
+    const runId = dbRun(app.db, "INSERT INTO runs(started_at,trigger,status) VALUES(?,'manual','done')", [now]).lastInsertRowid;
+    const text = 'I recommend Notewell.';
+    const responseId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,created_at,
+      surface,lane,target_status,comparability_status,comparison_key,analysis_revision,search_policy,
+      answer_status,web_status,query_metadata_status)
+      VALUES(?,?,'codex','fixture',0,?,?,'codex-agent','tracking','completed','comparable',
+      'agent-series',?,'required','complete','verified','available')`,
+    [runId, prompt.id, text, now, STANCE_REVISION]).lastInsertRowid;
+    const mention = analyzeResponse(text, [{ id: entity.id, name: 'Notewell' }]).mentions[0];
+    const mentionId = dbRun(app.db, `INSERT INTO mentions(response_id,entity_id,first_index,
+      occurrences,rank,recommended,snippet) VALUES(?,?,?,?,?,?,?)`, [
+      responseId, mention.entity_id, mention.first_index, mention.occurrences,
+      mention.rank, mention.recommended, mention.snippet,
+    ]).lastInsertRowid;
+    storeInterpretation(app.db, mentionId, STANCE_REVISION, mention, now);
+
+    const listed = await api(app.base, 'GET', '/api/series?days=365');
+    assert.equal(listed.status, 200);
+    const selected = listed.body.series.find((item) => item.id === listed.body.selectedSeriesId);
+    assert.equal(selected.surface, 'codex-agent');
+    assert.deepEqual([selected.attemptedTargets, selected.completeAnswers, selected.comparableAnswers,
+      selected.verifiedSearchAnswers, selected.queryMetadataAnswers], [1, 1, 1, 1, 1]);
+
+    const historical = await api(app.base, 'GET',
+      '/api/series?start=2026-07-01T00%3A00%3A00Z&end=2026-07-02T00%3A00%3A00Z');
+    assert.equal(historical.status, 200);
+    assert.equal(historical.body.series.length, 1);
+    assert.equal(historical.body.series[0].surface, 'openai-api');
+    assert.equal(historical.body.selectedSeriesId, historical.body.series[0].id);
+    const historicalSummary = await api(app.base, 'GET',
+      '/api/series/summary?start=2026-07-01T00%3A00%3A00Z&end=2026-07-02T00%3A00%3A00Z');
+    assert.equal(historicalSummary.body.selectedSeriesId, historical.body.selectedSeriesId);
+    assert.equal(historicalSummary.body.mentionRate.n, 1);
+
+    const url = `?days=365&series_id=${selected.id}`;
+    const summary = await api(app.base, 'GET', `/api/series/summary${url}`);
+    assert.equal(summary.status, 200);
+    assert.equal(summary.body.selectedSeriesId, selected.id);
+    assert.deepEqual([summary.body.mentionRate.n, summary.body.mentionRate.mentioned,
+      summary.body.recommendationRate.n, summary.body.recommendationRate.positive,
+      summary.body.evidenceIncidence.n], [1, 1, 1, 1, 1]);
+    const defaultDashboard = await fetch(`${app.base}/?days=365`).then((result) => result.text());
+    assert.match(defaultDashboard, /Codex agent/);
+    assert.match(defaultDashboard, new RegExp(`value="${selected.id}" selected`));
+    const answers = await api(app.base, 'GET', `/api/answers${url}&eligible=1`);
+    assert.equal(answers.body.total, summary.body.mentionRate.n);
+    assert.deepEqual(answers.body.items.map((item) => item.id), [responseId]);
+    const exported = await api(app.base, 'GET', `/api/series/export${url}&eligible=1`);
+    assert.deepEqual(exported.body.answers.map((item) => item.id), [responseId]);
+    const dashboard = await fetch(`${app.base}/?days=365&series_id=${selected.id}`).then((result) => result.text());
+    assert.match(dashboard, /Codex agent/);
+    assert.match(dashboard, new RegExp(`series_id=${selected.id}`));
+    const page = await fetch(`${app.base}/answers${url}&eligible=1`).then((result) => result.text());
+    assert.match(page, /1 answers/);
+    assert.match(page, /I recommend/);
+    assert.match(page, /Notewell/);
+    assert.doesNotMatch(page, /Notewell is available/);
+
+    const review = await api(app.base, 'GET', `/api/answers/${responseId}/review`);
+    const correction = await api(app.base, 'POST', `/api/answers/${responseId}/corrections`, {
+      interpretation_id: review.body.mentions[0].interpretationId,
+      replacement: 'negative', reason: 'Reviewed the full answer', request_id: 'c09-correction',
+    });
+    assert.equal(correction.status, 200);
+    const correctedSummary = await api(app.base, 'GET', `/api/series/summary${url}`);
+    assert.deepEqual([correctedSummary.body.recommendationRate.positive,
+      correctedSummary.body.recommendationRate.negative], [0, 1]);
+    const prompts = await api(app.base, 'GET', `/api/prompts/results${url}`);
+    assert.equal(prompts.body.selectedSeriesId, selected.id);
+    assert.equal(prompts.body.results[0].perProvider[0].brandRecommended.recommended, 0);
+    assert.equal(prompts.body.results[0].perProvider[0].recommendationMethod, 'positive_stance');
+  } finally {
+    await app.close();
+  }
+});
+
 /**
  * Boot a server on an ephemeral port with a throwaway DB.
  * @param {Record<string, string>} [env]
@@ -619,7 +705,10 @@ function seedResponse(db, promptId, text = 'an answer') {
   ).lastInsertRowid;
   return dbRun(
     db,
-    "INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, created_at) VALUES(?, ?, 'openai', 'test-model', 0, ?, '2026-07-01T00:00:30Z')",
+    `INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, created_at,
+      surface, lane, target_status, comparability_status, comparison_key, search_policy, answer_status)
+      VALUES(?, ?, 'openai', 'test-model', 0, ?, '2026-07-01T00:00:30Z',
+      'openai-api', 'tracking', 'completed', 'comparable', 'test-legacy-series', 'legacy', 'complete')`,
     [runId, promptId, text],
   ).lastInsertRowid;
 }

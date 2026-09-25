@@ -24,6 +24,7 @@ const VERSION = (() => {
 })();
 
 const DAYS = { type: 'integer', minimum: 1, maximum: 365, description: 'Reporting window in days (default 30)' };
+const UTC_BOUNDARY = { type: 'string', description: 'UTC timestamp YYYY-MM-DDTHH:mm:ssZ; pass start and end together, with end exclusive' };
 const SURFACE = {
   type: 'string',
   enum: ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api', 'codex-agent', 'claude-code-agent'],
@@ -82,36 +83,67 @@ const TOOLS = [
     call: (a) => ({ method: 'GET', path: `/api/summary${query(a, ['days', 'surface'])}` }),
   },
   {
+    name: 'hearsay_series_list',
+    readOnly: true,
+    description: 'List exact measurement series observed in a window, including surface, execution profile, benchmark, analysis revision, search policy, and attempted/comparable/query coverage. Returns the selected default series ID.',
+    inputSchema: obj({ days: DAYS, start: UTC_BOUNDARY, end: UTC_BOUNDARY }),
+    call: (a) => ({ method: 'GET', path: `/api/series${query(a, ['days', 'start', 'end'])}` }),
+  },
+  {
+    name: 'hearsay_series_summary',
+    readOnly: true,
+    description: 'Read headline rates for one exact measurement series. Returns the selected series ID, coverage, positive stance or disclosed legacy method, mention, source, and citation incidence with their denominators.',
+    inputSchema: obj({ days: DAYS, start: UTC_BOUNDARY, end: UTC_BOUNDARY, series_id: { type: 'string' } }),
+    call: (a) => ({ method: 'GET', path: `/api/series/summary${query(a, ['days', 'start', 'end', 'series_id'])}` }),
+  },
+  {
+    name: 'hearsay_series_export',
+    readOnly: true,
+    description: 'Export answer receipts, stance reviews, and evidence for one exact series and window. Comparable-only mode matches headline answer denominators.',
+    inputSchema: obj({ days: DAYS, start: UTC_BOUNDARY, end: UTC_BOUNDARY,
+      series_id: { type: 'string' }, comparable_only: { type: 'boolean' } }),
+    call: (a) => ({ method: 'GET', path: `/api/series/export${query({ ...a,
+      eligible: a.comparable_only ? 1 : undefined }, ['days', 'start', 'end', 'series_id', 'eligible'])}` }),
+  },
+  {
     name: 'hearsay_intent_results',
     readOnly: true,
     description:
-      'Phrasing-robust results per tracked intent (question), pooled across its paraphrases: mention rate with Wilson CI, rerun spread vs phrasing spread (variance decomposition). The most honest per-question number Hearsay has — prefer it over per-prompt results when both exist.',
-    inputSchema: obj({ days: DAYS, surface: SURFACE }),
-    call: (a) => ({ method: 'GET', path: `/api/intents/results${query(a, ['days', 'surface'])}` }),
+      'Per-intent mention rates and phrasing spread. Pass series_id for an exact measurement scope; the no-argument response is the older API compatibility view.',
+    inputSchema: obj({ days: DAYS, surface: SURFACE, series_id: { type: 'string' },
+      start: UTC_BOUNDARY, end: UTC_BOUNDARY }),
+    call: (a) => ({ method: 'GET', path: `/api/intents/results${query(a, ['days', 'surface', 'series_id', 'start', 'end'])}` }),
   },
   {
     name: 'hearsay_prompt_results',
     readOnly: true,
     description:
-      'Per-prompt (single paraphrase) results, broken down per provider: brand mention rate, whether the brand is recommended, and which entity leads each prompt. Use for drill-down after hearsay_intent_results, or to inspect competitor prompt-space.',
-    inputSchema: obj({ days: DAYS, surface: SURFACE }),
-    call: (a) => ({ method: 'GET', path: `/api/prompts/results${query(a, ['days', 'surface'])}` }),
+      'Per-prompt mention rates and captured recommendation values. Pass series_id for exact scope. For current corrected stance, use hearsay_series_summary and answer reviews.',
+    inputSchema: obj({ days: DAYS, surface: SURFACE, series_id: { type: 'string' },
+      start: UTC_BOUNDARY, end: UTC_BOUNDARY }),
+    call: (a) => ({ method: 'GET', path: `/api/prompts/results${query(a, ['days', 'surface', 'series_id', 'start', 'end'])}` }),
   },
   {
     name: 'hearsay_answers_search',
     readOnly: true,
     description:
-      'Fetch stored AI answer receipts with mention IDs, current effective stance, captured recommendation bit, analysis revision, rule and span, and cited URLs. Filter by provider, entity, prompt, surface and days. Paged; limit ≤ 50.',
+      'Fetch stored AI answer receipts with mention IDs, current effective stance, captured recommendation bit, analysis revision, rule and span, and cited URLs. Pass series_id from hearsay_series_list for an exact measurement scope; comparable_only reconciles with headline answer counts. Paged; limit ≤ 50.',
     inputSchema: obj({
       provider: { type: 'string', enum: ['openai', 'anthropic', 'gemini', 'perplexity'] },
       surface: SURFACE,
+      series_id: { type: 'string' },
+      comparable_only: { type: 'boolean' },
       entity_id: { type: 'integer', minimum: 1 },
       prompt_id: { type: 'integer', minimum: 1 },
       days: DAYS,
+      start: UTC_BOUNDARY,
+      end: UTC_BOUNDARY,
       page: { type: 'integer', minimum: 1 },
       limit: { type: 'integer', minimum: 1, maximum: 50 },
     }),
-    call: (a) => ({ method: 'GET', path: `/api/answers${query(a, ['provider', 'surface', 'entity_id', 'prompt_id', 'days', 'page', 'limit'], { limit: 'per' })}` }),
+    call: (a) => ({ method: 'GET', path: `/api/answers${query({ ...a,
+      eligible: a.comparable_only ? 1 : undefined },
+    ['provider', 'surface', 'series_id', 'eligible', 'entity_id', 'prompt_id', 'days', 'start', 'end', 'page', 'limit'], { limit: 'per' })}` }),
   },
   {
     name: 'hearsay_answer_review',
@@ -148,9 +180,10 @@ const TOOLS = [
     name: 'hearsay_citation_gap',
     readOnly: true,
     description:
-      'The action list: domains that AI answers cite in answers where the tracked brand is NOT mentioned — who gets cited instead of you, ranked by frequency. The shortlist of places to earn citations for GEO / AI SEO work.',
-    inputSchema: obj({ days: DAYS, surface: SURFACE }),
-    call: (a) => ({ method: 'GET', path: `/api/gap${query(a, ['days', 'surface'])}` }),
+      'Domains in legacy citation rows for comparable answers without the tracked brand. Pass series_id to limit results to an exact measurement series; source observations and final-answer citations are separate layers in hearsay_series_summary.',
+    inputSchema: obj({ days: DAYS, surface: SURFACE, series_id: { type: 'string' },
+      start: UTC_BOUNDARY, end: UTC_BOUNDARY }),
+    call: (a) => ({ method: 'GET', path: `/api/gap${query(a, ['days', 'surface', 'series_id', 'start', 'end'])}` }),
   },
   {
     name: 'hearsay_alerts',

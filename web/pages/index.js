@@ -63,7 +63,12 @@ export function registerPageRoutes(router, deps) {
       ctx.res.end();
       return;
     }
-    sendHtml(ctx.res, 200, dashboardPage.render(shellCtx(deps), dashboardPage.buildView(deps)));
+    const days = Number(ctx.url.searchParams.get('days'));
+    const seriesId = ctx.url.searchParams.get('series_id') ?? undefined;
+    sendHtml(ctx.res, 200, dashboardPage.render(shellCtx(deps), dashboardPage.buildView(deps, {
+      days: Number.isInteger(days) && days >= 1 && days <= 3650 ? days : undefined,
+      seriesId,
+    })));
   });
 
   router.add('GET', '/answers', (ctx) => {
@@ -71,7 +76,11 @@ export function registerPageRoutes(router, deps) {
   });
 
   router.add('GET', '/prompts', (ctx) => {
-    sendHtml(ctx.res, 200, promptsPage.render(shellCtx(deps), promptsPage.buildView(deps)));
+    const days = Number(ctx.url.searchParams.get('days'));
+    sendHtml(ctx.res, 200, promptsPage.render(shellCtx(deps), promptsPage.buildView(deps, {
+      days: Number.isInteger(days) && days >= 1 && days <= 3650 ? days : undefined,
+      seriesId: ctx.url.searchParams.get('series_id') ?? undefined,
+    })));
   });
 
   router.add('GET', '/entities', (ctx) => {

@@ -13,6 +13,8 @@ import { emptyState, html, layout, raw, rateWithCI } from '../layout.js';
 import { meter } from '../svg.js';
 import { metrics, soft } from '../data.js';
 import { CATEGORIES, listIntents } from '../queries.js';
+import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metrics.js';
+import { surfaceLabel } from '../../core/subscription-model.js';
 
 /** Window used for the per-prompt mini-meter (§11.5). */
 export const WINDOW_DAYS = 30;
@@ -50,11 +52,13 @@ export function poolRate(perProvider) {
  * @property {Map<number, {p: number|null, n: number}>} rates prompt id → pooled brand mention rate
  * @property {number} promptCount paraphrases across every intent
  * @property {readonly string[]} categories categories offered in the selects (§11.5)
+ * @property {ReturnType<typeof resolveMeasurementSeries>} series
+ * @property {ReturnType<typeof listMeasurementSeries>} seriesOptions
  */
 
 /**
  * @param {import('./dashboard.js').PageDeps} deps
- * @param {{days?: number, now?: Date}} [opts]
+ * @param {{days?: number, now?: Date, seriesId?:string}} [opts]
  * @returns {PromptsView}
  */
 export function buildView({ db }, opts = {}) {
@@ -62,8 +66,12 @@ export function buildView({ db }, opts = {}) {
   // §7 takes the clock from its caller and refuses to default it (§19.6 #6).
   const now = opts.now ?? new Date();
   const intents = listIntents(db);
+  const seriesOptions = listMeasurementSeries(db, { now, days });
+  const series = opts.seriesId
+    ? seriesOptions.find((item) => item.id === opts.seriesId) ?? null
+    : resolveMeasurementSeries(db, { now, days });
   /** @type {{promptId:number, text:string, category:string, perProvider:{provider:string, brandMentionRate?:{p?:number|null,n?:number}|null}[]}[]} */
-  const table = soft(/** @type {*} */ (metrics), 'promptTable', { db, now, days }, []);
+  const table = series ? soft(/** @type {*} */ (metrics), 'promptTable', { db, now, days, series }, []) : [];
   /** @type {Map<number, {p: number|null, n: number}>} */
   const rates = new Map(table.map((row) => [row.promptId, poolRate(row.perProvider)]));
 
@@ -73,6 +81,8 @@ export function buildView({ db }, opts = {}) {
     rates,
     promptCount: intents.reduce((sum, intent) => sum + intent.paraphrases.length, 0),
     categories: CATEGORIES,
+    series,
+    seriesOptions,
   };
 }
 
@@ -187,15 +197,23 @@ function intentBlock(view, intent) {
  * @returns {string}
  */
 export function render(ctx, view) {
+  const seriesPicker = view.seriesOptions.length ? html`<form method="get" action="/prompts" class="card filter-row">
+    <label>Measurement series <select name="series_id">${view.seriesOptions.map((item) => html`<option
+      value="${item.id}"${item.id === view.series?.id ? raw(' selected') : ''}>${surfaceLabel(item.surface)} ·
+      ${item.searchPolicy ?? 'legacy'} · ${item.analysisRevision ?? 'legacy'} ·
+      ${item.comparableAnswers}/${item.attemptedTargets} comparable</option>`)}</select></label>
+    <input type="hidden" name="days" value="${view.days}" />
+    <button type="submit" class="btn">Show series</button>
+  </form>` : '';
   const body =
     view.promptCount === 0
-      ? html`${addForm(view)}${emptyState({
+      ? html`${seriesPicker}${addForm(view)}${emptyState({
           title: 'No prompts yet',
           line: 'Prompts are the questions Hearsay asks each engine, grouped into intents.',
           hint: 'Three paraphrases per intent gives you a phrasing-robust number instead of one lucky wording.',
           action: { href: '/setup', label: 'Suggest prompts' },
         })}`
-      : html`${addForm(view)}${view.intents
+      : html`${seriesPicker}${addForm(view)}${view.intents
           .filter((intent) => intent.paraphrases.length > 0)
           .map((intent) => intentBlock(view, intent))}`;
 
