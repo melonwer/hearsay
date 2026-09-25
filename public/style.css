@@ -304,6 +304,74 @@ p {
   margin-bottom: 16px;
 }
 
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.form-grid label,
+#suggest-list label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.form-grid input,
+.form-grid textarea,
+#suggest-list input[type='text'],
+#suggest-list select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+#suggest-list {
+  margin-top: 16px;
+}
+
+#suggest-list fieldset {
+  min-width: 0;
+}
+
+#suggest-list legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+#suggest-list [data-suggest-phrasing] {
+  display: grid;
+  grid-template-columns: 125px minmax(0, 2fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+#suggest-list [data-suggest-phrasing] label:first-child {
+  flex-direction: row;
+  align-items: center;
+}
+
+#suggest-list [data-suggest-intent] > button {
+  margin: 12px 8px 0 0;
+}
+
+#suggest-review-panel {
+  margin-top: 16px;
+}
+
+#suggest-review-details ol {
+  overflow-wrap: anywhere;
+}
+
 .empty-state p:last-child {
   margin-bottom: 0;
 }
@@ -404,6 +472,11 @@ p {
 /* ---------- narrow screens ---------- */
 
 @media (max-width: 720px) {
+  .form-grid,
+  #suggest-list [data-suggest-phrasing] {
+    grid-template-columns: 1fr;
+  }
+
   .app {
     flex-direction: column;
     gap: 16px;

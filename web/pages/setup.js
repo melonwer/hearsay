@@ -1,70 +1,9 @@
-/**
- * GET /setup — the first-run wizard (§11.8).
- *
- * Three steps, each skippable, no SPA state: server-rendered forms that post to the
- * §10.3 API. "Skip setup" is on every step, and none of the normal CRUD pages are
- * blocked while the wizard is open.
- *
- * Step 2 asks `core/suggest.js` for a draft. With no provider key configured it falls
- * back to the static starter pack (§20.3) with the user's own entity names filled in —
- * the flow never dead-ends just because nothing is wired up yet.
- */
+/** GET /setup — the first-run wizard (§11.8). */
 
 import { html, layout, SURFACE_LABEL, usd } from '../layout.js';
 import { estimateRunCost } from '../../core/cost.js';
 import { apiExecutionBudget } from '../../core/execution-budget.js';
 import { activePromptCount, brandEntity, listEntities } from '../queries.js';
-
-/**
- * Starter prompt pack (§20.3) — generic placeholders the user edits. The first eight
- * are fixed; the last four are the category-specific slots the wizard fills from the
- * entities that already exist.
- */
-export const STARTER_TEMPLATES = /** @type {readonly string[]} */ ([
-  "What's the best {category} for {audience}?",
-  'Top 5 {category} in {year}',
-  '{Brand} vs {Competitor} — which is better?',
-  'Is {Brand} worth it?',
-  'Cheapest way to {job-to-be-done}',
-  'Best free alternative to {Competitor}',
-  '{category} with the best {key feature}',
-  'What do people say about {Brand}?',
-  'Who are the main alternatives to {Brand}?',
-  'Which {category} do {audience} actually recommend?',
-  '{Competitor} vs {Competitor2} — what do people pick?',
-  'What should {audience} know before buying a {category}?',
-]);
-
-/**
- * Fill the starter pack from whatever entities exist. Placeholders with no source are
- * left in place: the user edits them, and an unedited placeholder is obvious.
- *
- * @param {{brand: string|null, competitors: string[]}} names
- * @param {number} [year]
- * @returns {{text: string, category: string}[]}
- */
-export function starterPack({ brand, competitors }, year = new Date().getUTCFullYear()) {
-  /** @type {Record<string, string|undefined>} */
-  const fills = {
-    '{Brand}': brand ?? undefined,
-    '{Competitor}': competitors[0],
-    '{Competitor2}': competitors[1] ?? competitors[0],
-    '{year}': String(year),
-  };
-  /** @type {{text: string, category: string}[]} */
-  const out = [];
-  for (const template of STARTER_TEMPLATES) {
-    let text = template;
-    for (const [token, value] of Object.entries(fills)) {
-      if (value !== undefined) text = text.split(token).join(value);
-    }
-    if (text.includes('{Competitor')) continue; // no competitor named yet — drop, do not ship a placeholder pair
-    // A prompt that names the brand measures recall, not discovery (§6.7).
-    const branded = brand !== null && text.includes(brand);
-    out.push({ text, category: branded ? 'branded' : 'general' });
-  }
-  return out;
-}
 
 /**
  * @typedef {Object} SetupProviderRow
@@ -89,10 +28,10 @@ export function starterPack({ brand, competitors }, year = new Date().getUTCFull
  * @property {('codex-agent'|'claude-code-agent')[]} subscriptionSurfaces configured subscription measurement surfaces
  * @property {number} subscriptionSamples allowance-safe subscription samples per prompt
  * @property {number} calls calls the first run would make (§4.2)
+ * @property {number} subscriptionCalls subscription targets in the first run
  * @property {number|null} estUsd null when the price table has no entry — never a guess (§4.3)
  * @property {boolean} hasUnboundedSearch
  * @property {boolean} hasSearch
- * @property {{text: string, category: string}[]} starter starter pack, entity names filled in (§20.3)
  */
 
 /**
@@ -136,10 +75,10 @@ export function buildView({ db, config }, query) {
     subscriptionSurfaces: config.subscriptionSurfaces,
     subscriptionSamples: config.subscriptionSamples,
     calls: estimate.calls,
+    subscriptionCalls: prompts * config.subscriptionSamples * config.subscriptionSurfaces.length,
     estUsd: estimate.estUsd,
     hasUnboundedSearch: estimate.hasUnboundedSearch,
     hasSearch: estimate.hasSearch,
-    starter: starterPack({ brand: brand?.name ?? null, competitors: competitors.map((entity) => entity.name) }),
   };
 }
 
@@ -216,49 +155,36 @@ function stepBrand(view) {
  * @returns {import('../layout.js').RawHtml}
  */
 function stepPrompts(view) {
-  const checklist = view.starter.map(
-    (prompt, i) => html`<li>
-      <label class="check">
-        <input type="checkbox" data-suggest-check checked />
-        <input type="text" data-suggest-text value="${prompt.text}" size="60" />
-        <input type="hidden" data-suggest-category value="${prompt.category}" />
-      </label>
-      ${prompt.category === 'branded' ? html`<span class="tag">branded</span>` : ''}
-      <span class="visually-hidden">suggestion ${i + 1}</span>
-    </li>`,
-  );
-
   return html`<section class="card">
-    <h2>2 · Prompts</h2>
-    <p>
-      Describe what you sell and Hearsay drafts intents with three paraphrases each. Nothing saves until you review
-      the list.
-    </p>
-    <p class="muted small">
-      Prompts containing your brand name are tagged <code>branded</code>: they measure recall, not discovery, so they
-      stay out of share-of-voice by default.
-    </p>
-    ${view.hasKey
-      ? html`<form class="inline-form" id="suggest-form">
-          <label class="grow">
-            <span>What does your product do, and what would a buyer ask?</span>
-            <input type="text" name="keywords" placeholder="AI meeting notes for small sales teams" />
-          </label>
-          <button type="submit" class="btn">Draft prompts</button>
-        </form>`
-      : html`<p class="muted">
-          No provider key is configured, so this is the starter pack instead of a model-drafted list. Edit the
-          placeholders and save the ones you want.
-        </p>`}
-    <ul class="plain suggest-list" id="suggest-list">
-      ${checklist}
-    </ul>
-    <p>
-      <button type="button" class="btn" id="suggest-save">Save selected prompts</button>
-      <a href="/setup?step=3">Skip to run →</a>
-    </p>
-    <p class="form-error" data-form-error hidden></p>
-    <p class="muted small">${view.promptCount} active prompts so far.</p>
+    <h2>2 · Your buyer questions</h2>
+    <p>Describe the buying decision, then edit a five-intent starter or add your own questions. Three phrasings per intent are a starting suggestion. You can approve fewer.</p>
+    <form id="suggest-form">
+      <div class="form-grid">
+        <label><span>Audience</span><input name="audience" type="text" placeholder="Small sales teams" required /></label>
+        <label><span>Product or job</span><input name="productJob" type="text" placeholder="Record and summarize sales calls" required /></label>
+        <label><span>Desired conversion</span><input name="desiredConversion" type="text" placeholder="Start a trial" required /></label>
+        <label><span>Preferred language</span><input name="languagePreference" type="text" placeholder="English" /></label>
+        <label><span>Market</span><input name="marketContext" type="text" placeholder="United States" /></label>
+        <label><span>Context notes</span><textarea name="contextNotes" rows="2" placeholder="What sales or support conversations informed these questions?"></textarea></label>
+      </div>
+      <p class="muted small">Language and market are planning preferences. They do not enforce a provider locale. Context and source notes stay local and are never added to the provider question.</p>
+      <button type="submit" class="btn">Draft five intents</button>
+    </form>
+    <div id="suggest-list" data-entities="${JSON.stringify(view.entities.map((entity) => ({
+      name: entity.name, aliases: entity.aliases, domains: entity.domains, isSelf: entity.is_self === 1,
+    })))}"></div>
+    <p><button type="button" class="btn" id="suggest-add-intent">Add my own intent</button></p>
+    <p class="muted small">Discovery asks about the buyer's need, comparison asks about alternatives, and branded asks about your brand. Questions that name your brand measure recall and stay out of share of voice by default.</p>
+    <p><button type="button" class="btn" id="suggest-review">Save and review questions</button></p>
+    <section id="suggest-review-panel" class="card" aria-live="polite" hidden>
+      <h3>Review tracking questions</h3>
+      <div id="suggest-review-details"></div>
+      <button type="button" class="btn" id="suggest-approve">Approve these questions for tracking</button>
+    </section>
+    <p id="suggest-status" aria-live="polite" hidden></p>
+    <p class="form-error" data-form-error role="alert" hidden></p>
+    <p class="muted small">${view.promptCount} active questions so far. You can draft and edit without an API key or subscription route. A valid route is required before a run.</p>
+    <p><a href="/setup?step=3">Next: run options →</a></p>
   </section>`;
 }
 
@@ -301,6 +227,7 @@ function stepGo(view) {
             </thead>
             <tbody>${subscriptionRows}</tbody>
           </table>
+          <p>${view.subscriptionCalls} subscription calls in the first run (${view.promptCount} questions × ${view.subscriptionSamples} samples × ${view.subscriptionSurfaces.length} surfaces).</p>
           ${view.demo
             ? html`<p class="muted">Demo mode is on, so live subscription runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`
             : html`<form class="inline-form" data-api-form="/api/subscription/run" data-subscription-run>
@@ -327,6 +254,8 @@ function stepGo(view) {
 
   return html`<section class="card">
     <h2>3 · Go</h2>
+    <p>Reviewing a draft makes no provider calls. Running needs at least one configured API or subscription route.</p>
+    <p><strong>First-run target count:</strong> ${view.calls + view.subscriptionCalls} total (${view.calls} API, ${view.subscriptionCalls} subscription) for ${view.promptCount} active questions.</p>
     ${subscriptionSection}
     <section>
       <h3>Optional API providers</h3>

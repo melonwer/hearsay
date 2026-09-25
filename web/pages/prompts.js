@@ -125,6 +125,14 @@ function addForm(view) {
           ${intentOptions}
         </select>
       </label>
+      <label class="grow">
+        <span>Source note (local only)</span>
+        <input type="text" name="source_note" placeholder="Sales call or support ticket" />
+      </label>
+      <label class="check">
+        <input type="checkbox" name="reviewed" required />
+        <span>I reviewed this exact question for tracking</span>
+      </label>
       <button type="submit" class="btn">Add prompt</button>
     </form>
     <p class="muted small">
@@ -145,14 +153,16 @@ function intentBlock(view, intent) {
     const rate = view.rates.get(prompt.id) ?? { p: null, n: 0 };
     return html`<tr data-prompt-id="${prompt.id}">
       <td>
-        ${prompt.text}
+        <span data-prompt-question>${prompt.text}</span>
         ${prompt.category === 'branded'
           ? html`<span class="tag" title="Branded prompts measure recall, not discovery — excluded from share of voice"
               >branded</span
             >`
           : ''}
+        ${prompt.reviewed ? html`<span class="tag">reviewed</span>` : html`<span class="tag">review needed</span>`}
+        ${prompt.source_note ? html`<span class="muted small">Source note: ${prompt.source_note}</span>` : ''}
       </td>
-      <td>${categorySelect(view.categories, prompt.category, `category-${prompt.id}`)}</td>
+      <td><span data-current-category="${prompt.category}">${categorySelect(view.categories, prompt.category, `category-${prompt.id}`)}</span></td>
       <td>
         <label class="switch">
           <input type="checkbox" data-prompt-active="${prompt.id}"${prompt.active === 1 ? raw(' checked') : ''} />
@@ -206,6 +216,12 @@ export function render(ctx, view) {
     <input type="hidden" name="days" value="${view.days}" />
     <button type="submit" class="btn">Show series</button>
   </form>` : '';
+  const reviewPanel = html`<section class="card">
+    <h2>Review active panel</h2>
+    <p>Review every active tracking question after changing a brand, alias, competitor, or question. The next run uses a new benchmark revision. Runs already queued keep their earlier snapshots.</p>
+    <button type="button" class="btn" id="prompt-panel-review">Review active panel</button>
+    <p class="form-error" data-form-error role="alert" hidden></p>
+  </section>`;
   const body =
     view.promptCount === 0
       ? html`${seriesPicker}${addForm(view)}${emptyState({
@@ -214,7 +230,7 @@ export function render(ctx, view) {
           hint: 'Three paraphrases per intent gives you a phrasing-robust number instead of one lucky wording.',
           action: { href: '/setup', label: 'Suggest prompts' },
         })}`
-      : html`${seriesPicker}${addForm(view)}${view.intents
+      : html`${seriesPicker}${reviewPanel}${addForm(view)}${view.intents
           .filter((intent) => intent.paraphrases.length > 0)
           .map((intent) => intentBlock(view, intent))}`;
 

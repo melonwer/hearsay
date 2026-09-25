@@ -1,12 +1,4 @@
-/**
- * Client-script tests for public/app.js — the setup wizard's "Save selected prompts"
- * step. Zero dependencies: a minimal DOM stub is installed on globalThis before the
- * module is imported, and the captured click handler is invoked directly.
- *
- * The regression under test: createPrompt answers 409 for duplicate text and 422 for
- * text over 300 chars — routine outcomes on this page — and the old handler dropped
- * those failures on the floor and redirected to step 3 as if everything saved.
- */
+/** Browser-script test for the setup wizard's atomic review and approval path. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -43,6 +35,12 @@ class StubElement {
     this.attrs.delete(k);
   }
 
+  /** @param {string} k @param {boolean} force */
+  toggleAttribute(k, force) {
+    if (force) this.setAttribute(k, '');
+    else this.removeAttribute(k);
+  }
+
   /** @param {string} k */
   hasAttribute(k) {
     return this.attrs.has(k);
@@ -68,6 +66,8 @@ class StubElement {
   }
 
   append() {}
+
+  replaceChildren() {}
 }
 
 class StubInput extends StubElement {
@@ -98,7 +98,7 @@ function installDom(route) {
   g.SVGElement = class extends StubElement {};
   g.SVGSVGElement = class extends StubElement {};
   g.KeyboardEvent = class {};
-  g.localStorage = { getItem: () => null, setItem: () => {} };
+  g.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
   g.document = {
     documentElement: new StubElement(),
     body: new StubElement(),
@@ -128,85 +128,96 @@ function installDom(route) {
   return { requests, byId, window: g.window };
 }
 
-/** One suggest-list row. @param {{checked: boolean, value: string, category?: string}} spec */
-function makeItem(spec) {
-  const check = new StubInput();
-  check.checked = spec.checked;
-  const text = new StubInput();
-  text.value = spec.value;
-  const category = new StubInput();
-  category.value = spec.category ?? 'general';
-  const item = new StubElement();
-  item.querySelector = (/** @type {string} */ sel) => {
-    if (sel === '[data-suggest-check]') return check;
-    if (sel === '[data-suggest-text]') return text;
-    if (sel === '[data-suggest-category]') return category;
-    return null;
-  };
-  return { item, check, text, category };
-}
-
-test('setup wizard save: failed prompt saves are surfaced, not silently dropped', async () => {
-  /** @type {Map<string, {ok: boolean, status: number, body: unknown}>} */
-  const promptRoutes = new Map();
+test('setup keeps a rejected draft editable and approves all selected questions in one request', async () => {
+  let valid = false;
   const { requests, byId, window } = installDom((url, init) => {
-    if (url === '/api/prompts' && init.method === 'POST') {
-      const { text } = JSON.parse(String(init.body));
-      return (
-        promptRoutes.get(text) ?? { ok: false, status: 422, body: { error: { code: 'unprocessable', message: 'no stub for this text' } } }
-      );
+    if (url === '/api/setup/drafts' && init.method === 'POST') {
+      if (!valid) return { ok: false, status: 422, body: { error: { message: 'Question exceeds 300 characters' } } };
+      return { ok: true, status: 201, body: { id: 7, revision: 1 } };
     }
-    return { ok: false, status: 404, body: { error: { code: 'no_runs', message: 'No panel runs yet' } } };
+    if (url === '/api/setup/drafts/7/review') return { ok: true, status: 200, body: {
+      reviewHash: 'hash-7', selectedQuestionCount: 1, apiCalls: 2,
+      subscriptionCalls: 1, totalCalls: 3, validationErrors: [], hasRunRoute: true,
+    } };
+    if (url === '/api/setup/drafts/7/approve') return { ok: true, status: 200, body: { approved: 1 } };
+    return { ok: false, status: 404, body: { error: { message: 'Not found' } } };
   });
 
-  const good = makeItem({ checked: true, value: 'best meeting notes tool?' });
-  const bad = makeItem({ checked: true, value: 'x'.repeat(320) });
-  const unchecked = makeItem({ checked: false, value: 'never sent' });
-  promptRoutes.set('best meeting notes tool?', { ok: true, status: 201, body: { id: 1 } });
-  promptRoutes.set('x'.repeat(320), {
-    ok: false,
-    status: 422,
-    body: { error: { code: 'unprocessable', message: 'text must be 300 characters or fewer' } },
-  });
-
+  const text = new StubInput();
+  text.value = 'Which tools help sales teams summarize calls?';
+  const note = new StubInput();
+  note.value = 'Sales call 42';
+  const check = new StubInput();
+  check.checked = true;
+  const phrase = new StubElement();
+  phrase.querySelector = (/** @type {string} */ selector) => ({
+    '[data-suggest-text]': text, '[data-suggest-note]': note, '[data-suggest-check]': check,
+  })[selector] ?? null;
+  const label = new StubInput();
+  label.value = 'Find options';
+  const category = new StubInput();
+  category.value = 'general';
+  const intent = new StubElement();
+  intent.querySelector = (/** @type {string} */ selector) => ({
+    '[data-suggest-label]': label, '[data-suggest-category]': category,
+  })[selector] ?? null;
+  intent.querySelectorAll = () => [phrase];
   const list = new StubElement();
-  list.querySelectorAll = () => [good.item, bad.item, unchecked.item];
-  const save = new StubElement();
+  list.querySelectorAll = () => [intent];
+  list.setAttribute('data-entities', JSON.stringify([
+    { name: 'Notewell', aliases: ['NW'], domains: ['notewell.example'], isSelf: true },
+    { name: 'OtherCo', aliases: [], domains: ['other.example'], isSelf: false },
+  ]));
+  const form = new (/** @type {*} */ (globalThis).HTMLFormElement)();
+  const fields = new Map(['audience', 'productJob', 'desiredConversion', 'languagePreference', 'marketContext', 'contextNotes']
+    .map((name) => [name, new StubInput()]));
+  fields.get('audience').value = 'Sales teams';
+  fields.get('productJob').value = 'Summarize calls';
+  form.querySelector = (/** @type {string} */ selector) => fields.get(selector.replace(/^\[name="|"\]$/g, '')) ?? null;
+  const reviewButton = new StubElement();
+  const approveButton = new StubElement();
+  const reviewPanel = new StubElement();
+  reviewPanel.hidden = true;
+  const details = new StubElement();
+  const status = new StubElement();
   const section = new StubElement();
   const formError = new StubElement();
   formError.hidden = true;
-  section.querySelector = (/** @type {string} */ sel) => (sel === '[data-form-error]' ? formError : null);
-  save.parentSection = section;
+  section.querySelector = (/** @type {string} */ selector) => selector === '[data-form-error]' ? formError : null;
+  reviewButton.parentSection = section;
+  approveButton.parentSection = section;
 
   byId.set('suggest-list', list);
-  byId.set('suggest-save', save);
-  byId.set('suggest-form', null);
+  byId.set('suggest-form', form);
+  byId.set('suggest-add-intent', new StubElement());
+  byId.set('suggest-review', reviewButton);
+  byId.set('suggest-approve', approveButton);
+  byId.set('suggest-review-panel', reviewPanel);
+  byId.set('suggest-review-details', details);
+  byId.set('suggest-status', status);
 
   await import('../public/app.js');
-  const click = save.listeners.click;
-  assert.equal(typeof click, 'function', 'save handler registered');
-
-  await click();
-
-  const posts = requests.filter((r) => r.url === '/api/prompts');
-  assert.equal(posts.length, 2, 'checked rows posted, unchecked skipped');
-
-  // The 422 must NOT be swallowed: no redirect, the server's message on screen,
-  // and the button usable again for a retry.
-  assert.notEqual(window.location.href, '/setup?step=3', 'must not advance while saves failed');
-  assert.equal(formError.hidden, false);
+  await reviewButton.listeners.click();
   assert.match(formError.textContent, /300 characters/);
-  assert.equal(save.hasAttribute('disabled'), false, 'save must be re-enabled for a retry');
+  assert.equal(formError.hidden, false);
+  assert.equal(reviewButton.hasAttribute('disabled'), false);
+  assert.equal(reviewPanel.hidden, true);
+  assert.equal(requests.some((request) => request.url === '/api/prompts'), false);
 
-  // The row that DID save is unchecked so a retry cannot re-post it into a 409.
-  assert.equal(good.check.checked, false);
-
-  // Fix the failing prompt and retry: only the failed row is re-sent, then advance.
-  bad.text.value = 'shorter prompt';
-  promptRoutes.set('shorter prompt', { ok: true, status: 201, body: { id: 2 } });
-  await click();
-  const retryPosts = requests.filter((r) => r.url === '/api/prompts').slice(2);
-  assert.equal(retryPosts.length, 1, 'already-saved prompts are not re-posted');
-  assert.equal(/** @type {*} */ (retryPosts[0].body).text, 'shorter prompt');
-  assert.equal(window.location.href, '/setup?step=3', 'all saved → advance to step 3');
+  valid = true;
+  await reviewButton.listeners.click();
+  assert.equal(reviewPanel.hidden, false);
+  assert.equal(approveButton.hasAttribute('disabled'), false);
+  const draftPosts = requests.filter((request) => request.url === '/api/setup/drafts');
+  assert.equal(draftPosts.length, 2);
+  const submitted = /** @type {*} */ (draftPosts[1].body);
+  assert.equal(submitted.payload.intents.length, 1);
+  assert.equal(submitted.payload.intents[0].paraphrases[0].sourceNote, 'Sales call 42');
+  assert.equal(submitted.payload.context.audience, 'Sales teams');
+  assert.deepEqual(submitted.payload.brand.aliases, ['NW']);
+  await approveButton.listeners.click();
+  const approval = requests.find((request) => request.url === '/api/setup/drafts/7/approve');
+  assert.deepEqual(approval?.body, { revision: 1, review_hash: 'hash-7', approve: true });
+  assert.equal(status.hidden, false);
+  assert.equal(window.location.href, '/setup?step=2');
 });

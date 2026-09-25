@@ -502,6 +502,37 @@ test('setup presents subscription and optional API routes in each configuration 
   }
 });
 
+test('setup can draft buyer questions without a configured measurement route', async (t) => {
+  const app = await newApp(t, { env: {} });
+  const setup = await (await fetch(`${app.base}/setup?step=2`)).text();
+  assert.match(setup, /name="audience"/);
+  assert.match(setup, /name="productJob"/);
+  assert.match(setup, /name="desiredConversion"/);
+  assert.match(setup, /name="languagePreference"/);
+  assert.match(setup, /name="marketContext"/);
+  assert.match(setup, /name="contextNotes"/);
+  assert.match(setup, /id="suggest-add-intent"/);
+  assert.match(setup, /id="suggest-review"/);
+  assert.match(setup, /id="suggest-approve"/);
+  assert.match(setup, /data-entities=/);
+  assert.match(setup, /You can draft and edit without an API key or subscription route/);
+  const suggestion = await fetch(`${app.base}/api/prompts/suggest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      context: { audience: 'Sales teams', productJob: 'Summarize calls', desiredConversion: 'Start a trial' },
+      brand: { name: 'Notewell' },
+      competitors: [{ name: 'OtherCo' }],
+    }),
+  });
+  assert.equal(suggestion.status, 200);
+  const draft = await suggestion.json();
+  assert.equal(draft.source, 'starter-pack');
+  assert.equal(draft.intents.length, 5);
+  assert.ok(draft.intents.every((intent) => intent.paraphrases.length === 3));
+  assert.ok(draft.intents.flatMap((intent) => intent.paraphrases).every((question) => !/[{}]/.test(question)));
+});
+
 test('settings puts subscription surfaces before API panels and distinguishes allowance from API spend', async (t) => {
   const app = await newApp(t, { env: { HEARSAY_CODEX_ENABLED: '1', OPENAI_API_KEY: 'test-key' } });
   const res = await fetch(`${app.base}/settings`);
@@ -604,6 +635,8 @@ test('fixture data reaches the dashboard, prompts and alerts pages', async (t) =
   assert.ok(prompts.includes('Best AI meeting-notes tool for a small sales team'), 'the intent label should render');
   assert.ok(prompts.includes('2 paraphrases'), 'a two-paraphrase intent should not get the single-wording nudge');
   assert.ok(prompts.includes('Which AI note taker do small sales teams actually recommend?'), 'both paraphrases');
+  assert.ok(prompts.includes('id="prompt-panel-review"'), 'existing panels have an explicit review action');
+  assert.ok(prompts.includes('review needed'), 'legacy prompts are not presented as newly reviewed');
 
   const alerts = await (await fetch(`${app.base}/alerts`)).text();
   assert.ok(alerts.includes('Notewell mention rate fell on ChatGPT'), 'the alert title should render');

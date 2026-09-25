@@ -465,11 +465,19 @@ function initRowActions() {
 
     const promptActive = target.getAttribute('data-prompt-active');
     if (promptActive !== null && target instanceof HTMLInputElement) {
-      const { ok, data } = await api(`/api/prompts/${promptActive}`, 'PATCH', { active: target.checked });
+      const row = target.closest('tr');
+      const question = row?.querySelector('[data-prompt-question]')?.textContent ?? '';
+      const category = row?.querySelector('select[name^="category-"]');
+      if (target.checked && !window.confirm(`Approve this exact question for tracking?\n\n${question}\nCategory: ${category instanceof HTMLSelectElement ? category.value : 'general'}`)) {
+        target.checked = false;
+        return;
+      }
+      const { ok, data } = await api(`/api/prompts/${promptActive}`, 'PATCH',
+        { active: target.checked, ...(target.checked ? { reviewed: true } : {}) });
       if (!ok) {
         target.checked = !target.checked;
         showError(target, data);
-      }
+      } else window.location.reload();
       return;
     }
 
@@ -505,96 +513,330 @@ function initRowActions() {
     const name = target.getAttribute('name') ?? '';
     if (name.startsWith('category-') && target instanceof HTMLSelectElement) {
       const id = name.slice('category-'.length);
-      const { ok, data } = await api(`/api/prompts/${id}`, 'PATCH', { category: target.value });
-      if (!ok) showError(target, data);
+      const row = target.closest('tr');
+      const question = row?.querySelector('[data-prompt-question]')?.textContent ?? '';
+      const old = row?.querySelector('[data-current-category]')?.getAttribute('data-current-category') ?? 'general';
+      if (!window.confirm(`Approve this exact question for tracking?\n\n${question}\nNew category: ${target.value}`)) {
+        target.value = old;
+        return;
+      }
+      const { ok, data } = await api(`/api/prompts/${id}`, 'PATCH', { category: target.value, reviewed: true });
+      if (!ok) {
+        target.value = old;
+        showError(target, data);
+      } else window.location.reload();
     }
   });
 }
 
+function initPromptPanelReview() {
+  const button = document.getElementById('prompt-panel-review');
+  if (!(button instanceof HTMLElement)) return;
+  button.addEventListener('click', async () => {
+    button.setAttribute('disabled', 'disabled');
+    const preview = await api('/api/prompts/review', 'GET');
+    if (!preview.ok) {
+      button.removeAttribute('disabled');
+      return showError(button, preview.data);
+    }
+    const questions = (preview.data.questions ?? []).map((question) =>
+      `${question.text} [${question.category === 'general' ? 'discovery' : question.category}]`);
+    const entities = (preview.data.entities ?? []).map((entity) => {
+      const aliases = JSON.parse(entity.aliases ?? '[]');
+      const domains = JSON.parse(entity.domains ?? '[]');
+      return `${entity.isSelf ? 'Brand' : 'Competitor'}: ${entity.name}, aliases: ${aliases.join(', ') || 'none'}, domains: ${domains.join(', ') || 'none'}`;
+    });
+    const message = [
+      'Approve these exact questions and entities for tracking?',
+      '',
+      ...questions,
+      '',
+      ...entities,
+      '',
+      `First run: ${preview.data.apiCalls} API calls and ${preview.data.subscriptionCalls} subscription calls, ${preview.data.totalCalls} total.`,
+      'Context and source notes stay local. Runs already queued keep their earlier snapshots.',
+    ].join('\n');
+    if (!window.confirm(message)) {
+      button.removeAttribute('disabled');
+      return;
+    }
+    const saved = await api('/api/prompts/review', 'POST',
+      { review_hash: preview.data.reviewHash, reviewed: true });
+    if (!saved.ok) {
+      button.removeAttribute('disabled');
+      return showError(button, saved.data);
+    }
+    window.location.reload();
+  });
+}
+
 /* ------------------------------------------------------------------ *
- * Setup wizard step 2 (§11.8): draft, review, then save what is ticked.
+ * Setup wizard step 2: one local draft, exact review, atomic approval.
  * ------------------------------------------------------------------ */
+
+const SETUP_DRAFT_KEY = 'hearsay:setup-draft-id';
+
+/** @param {string} text @param {HTMLElement} control */
+function suggestLabel(text, control) {
+  const label = document.createElement('label');
+  const caption = document.createElement('span');
+  caption.textContent = text;
+  label.append(caption, control);
+  return label;
+}
+
+/** @param {string} value @param {string} marker */
+function suggestInput(value, marker) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = value;
+  input.setAttribute(marker, '');
+  return input;
+}
+
+/**
+ * @param {{text:string,sourceNote?:string|null,selected?:boolean}} phrase
+ * @returns {HTMLElement}
+ */
+function suggestPhrase(phrase) {
+  const row = document.createElement('div');
+  row.className = 'inline-form';
+  row.setAttribute('data-suggest-phrasing', '');
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.checked = phrase.selected !== false;
+  check.setAttribute('data-suggest-check', '');
+  row.append(suggestLabel('Track this phrasing', check));
+  const question = suggestInput(phrase.text, 'data-suggest-text');
+  question.maxLength = 300;
+  question.required = true;
+  row.append(suggestLabel('Exact buyer question', question));
+  const note = suggestInput(phrase.sourceNote ?? '', 'data-suggest-note');
+  row.append(suggestLabel('Source note (local only)', note));
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-sm';
+  remove.textContent = 'Remove phrasing';
+  remove.addEventListener('click', () => row.remove());
+  row.append(remove);
+  return row;
+}
+
+/**
+ * @param {{label:string,category:string,paraphrases:(string|{text:string,sourceNote?:string|null,selected?:boolean})[]}} intent
+ * @returns {HTMLElement}
+ */
+function suggestIntent(intent) {
+  const block = document.createElement('fieldset');
+  block.className = 'card';
+  block.setAttribute('data-suggest-intent', '');
+  const title = document.createElement('legend');
+  title.textContent = 'Buyer intent';
+  block.append(title);
+  block.append(suggestLabel('Intent or decision', suggestInput(intent.label, 'data-suggest-label')));
+  const category = document.createElement('select');
+  category.setAttribute('data-suggest-category', '');
+  for (const [value, label] of [['general', 'Discovery'], ['comparison', 'Comparison'], ['branded', 'Branded']]) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    category.append(option);
+  }
+  category.value = ['general', 'comparison', 'branded'].includes(intent.category) ? intent.category : 'general';
+  block.append(suggestLabel('Question type', category));
+  const phrases = document.createElement('div');
+  phrases.setAttribute('data-suggest-phrasings', '');
+  for (const phrase of intent.paraphrases) {
+    phrases.append(suggestPhrase(typeof phrase === 'string' ? { text: phrase } : phrase));
+  }
+  block.append(phrases);
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'btn btn-sm';
+  add.textContent = 'Add phrasing';
+  add.addEventListener('click', () => phrases.append(suggestPhrase({ text: '' })));
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'btn btn-sm';
+  remove.textContent = 'Remove intent';
+  remove.addEventListener('click', () => block.remove());
+  block.append(add, remove);
+  return block;
+}
+
+/** @param {HTMLElement} scope @param {string} selector */
+function suggestValue(scope, selector) {
+  const field = scope.querySelector(selector);
+  return field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement
+    ? field.value.trim() : '';
+}
 
 function initSuggest() {
   const list = document.getElementById('suggest-list');
-  const save = document.getElementById('suggest-save');
   const form = document.getElementById('suggest-form');
+  const addIntent = document.getElementById('suggest-add-intent');
+  const reviewButton = document.getElementById('suggest-review');
+  const approveButton = document.getElementById('suggest-approve');
+  const reviewPanel = document.getElementById('suggest-review-panel');
+  const reviewDetails = document.getElementById('suggest-review-details');
+  const status = document.getElementById('suggest-status');
+  if (!(list instanceof HTMLElement && form instanceof HTMLFormElement && addIntent instanceof HTMLElement &&
+        reviewButton instanceof HTMLElement && approveButton instanceof HTMLElement && reviewPanel instanceof HTMLElement &&
+        reviewDetails instanceof HTMLElement && status instanceof HTMLElement)) return;
 
-  if (form instanceof HTMLFormElement && list instanceof HTMLElement) {
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const keywords = form.querySelector('input[name="keywords"]');
-      const { ok, data } = await api('/api/prompts/suggest', 'POST', {
-        keywords: keywords instanceof HTMLInputElement ? keywords.value : '',
-      });
-      if (!ok) {
-        showError(form, data);
-        return;
-      }
-      list.textContent = '';
-      for (const intent of data.intents ?? []) {
-        for (const text of intent.paraphrases ?? []) {
-          const item = document.createElement('li');
-          const label = document.createElement('label');
-          label.className = 'check';
-          const check = document.createElement('input');
-          check.type = 'checkbox';
-          check.checked = true;
-          check.setAttribute('data-suggest-check', '');
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.size = 60;
-          input.value = text;
-          input.setAttribute('data-suggest-text', '');
-          const category = document.createElement('input');
-          category.type = 'hidden';
-          category.value = intent.category ?? 'general';
-          category.setAttribute('data-suggest-category', '');
-          label.append(check, input, category);
-          item.append(label);
-          list.append(item);
-        }
-      }
-    });
-  }
+  /** @type {number|null} */
+  let draftId = null;
+  /** @type {number|null} */
+  let revision = null;
+  /** @type {string|null} */
+  let reviewHash = null;
+  const clearReview = () => {
+    reviewHash = null;
+    reviewPanel.hidden = true;
+    status.hidden = true;
+  };
+  list.addEventListener('input', clearReview);
+  list.addEventListener('change', clearReview);
+  list.addEventListener('click', clearReview);
+  form.addEventListener('input', clearReview);
 
-  if (save instanceof HTMLElement && list instanceof HTMLElement) {
-    save.addEventListener('click', async () => {
-      save.setAttribute('disabled', 'disabled');
-      // 409 (duplicate text) and 422 (too long after an edit) are routine here — a
-      // failed save must surface, not silently vanish while the wizard advances.
-      /** @type {string[]} */
-      const failed = [];
-      let attempted = 0;
-      for (const item of list.querySelectorAll('li')) {
-        const check = item.querySelector('[data-suggest-check]');
-        const text = item.querySelector('[data-suggest-text]');
-        const category = item.querySelector('[data-suggest-category]');
-        if (!(check instanceof HTMLInputElement) || !check.checked) continue;
-        if (!(text instanceof HTMLInputElement) || text.value.trim() === '') continue;
-        attempted += 1;
-        const { ok, data } = await api('/api/prompts', 'POST', {
-          text: text.value.trim(),
-          category: category instanceof HTMLInputElement ? category.value : 'general',
-        });
-        if (ok) {
-          // Saved: untick it so a retry after a partial failure cannot re-post it
-          // straight into a 409 duplicate.
-          check.checked = false;
-        } else {
-          failed.push(data && data.error && data.error.message ? data.error.message : 'That did not work.');
-        }
-      }
-      if (failed.length === 0) {
-        window.location.href = '/setup?step=3';
-        return;
-      }
-      save.removeAttribute('disabled');
-      showError(save, {
-        error: { message: `${failed.length} of ${attempted} prompts failed to save — ${failed[0]}` },
+  const context = () => ({
+    audience: suggestValue(form, '[name="audience"]'),
+    productJob: suggestValue(form, '[name="productJob"]'),
+    desiredConversion: suggestValue(form, '[name="desiredConversion"]'),
+    languagePreference: suggestValue(form, '[name="languagePreference"]'),
+    marketContext: suggestValue(form, '[name="marketContext"]'),
+    contextNotes: suggestValue(form, '[name="contextNotes"]'),
+  });
+  /** @type {{name:string,aliases:string[],domains:string[],isSelf:boolean}[]} */
+  let entities = [];
+  try { entities = JSON.parse(list.getAttribute('data-entities') ?? '[]'); } catch { /* no saved entities */ }
+  const brand = entities.find((entity) => entity.isSelf);
+  const competitors = entities.filter((entity) => !entity.isSelf);
+  const payload = () => ({
+    version: 1,
+    context: context(),
+    ...(brand ? { brand: { name: brand.name, aliases: brand.aliases, domains: brand.domains } } : {}),
+    competitors: competitors.map(({ name, aliases, domains }) => ({ name, aliases, domains })),
+    intents: [...list.querySelectorAll('[data-suggest-intent]')].map((block) => ({
+      label: suggestValue(block, '[data-suggest-label]'),
+      category: suggestValue(block, '[data-suggest-category]'),
+      paraphrases: [...block.querySelectorAll('[data-suggest-phrasing]')].map((row) => ({
+        text: suggestValue(row, '[data-suggest-text]'),
+        sourceNote: suggestValue(row, '[data-suggest-note]'),
+        selected: row.querySelector('[data-suggest-check]') instanceof HTMLInputElement && row.querySelector('[data-suggest-check]').checked,
+      })),
+    })),
+  });
+
+  /** @param {any} saved */
+  const showDraft = (saved) => {
+    draftId = Number(saved.id);
+    revision = Number(saved.revision);
+    list.replaceChildren(...(saved.payload?.intents ?? []).map(suggestIntent));
+    for (const [name, value] of Object.entries(saved.payload?.context ?? {})) {
+      const field = form.querySelector(`[name="${name}"]`);
+      if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) field.value = String(value ?? '');
+    }
+    try { localStorage.setItem(SETUP_DRAFT_KEY, String(draftId)); } catch { /* storage may be unavailable */ }
+    clearReview();
+  };
+
+  try {
+    const savedId = localStorage.getItem(SETUP_DRAFT_KEY);
+    if (savedId && /^\d+$/.test(savedId)) {
+      void api(`/api/setup/drafts/${savedId}`, 'GET').then(({ ok, data }) => {
+        if (ok) showDraft(data);
+        else localStorage.removeItem(SETUP_DRAFT_KEY);
       });
+    }
+  } catch { /* the editor still works without local storage */ }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (list.querySelector('[data-suggest-intent]') &&
+        !window.confirm('Replace the current draft questions with a new five-intent starter?')) return;
+    const { ok, data } = await api('/api/prompts/suggest', 'POST', {
+      context: context(),
+      ...(brand ? { brand: { name: brand.name, aliases: brand.aliases } } : {}),
+      competitors: competitors.map(({ name }) => ({ name })),
     });
-  }
+    if (!ok) return showError(form, data);
+    list.replaceChildren(...(data.intents ?? []).map(suggestIntent));
+    clearReview();
+  });
+
+  addIntent.addEventListener('click', () => {
+    list.append(suggestIntent({ label: '', category: 'general', paraphrases: [{ text: '' }] }));
+    clearReview();
+  });
+
+  reviewButton.addEventListener('click', async () => {
+    reviewButton.setAttribute('disabled', 'disabled');
+    const current = payload();
+    const endpoint = draftId === null ? '/api/setup/drafts' : `/api/setup/drafts/${draftId}`;
+    const saved = await api(endpoint, draftId === null ? 'POST' : 'PUT',
+      draftId === null ? { payload: current } : { revision, payload: current });
+    reviewButton.removeAttribute('disabled');
+    if (!saved.ok) return showError(reviewButton, saved.data);
+    draftId = Number(saved.data.id);
+    revision = Number(saved.data.revision);
+    try { localStorage.setItem(SETUP_DRAFT_KEY, String(draftId)); } catch { /* local draft remains available */ }
+    const reviewed = await api(`/api/setup/drafts/${draftId}/review`, 'GET');
+    if (!reviewed.ok) return showError(reviewButton, reviewed.data);
+    reviewHash = reviewed.data.reviewHash;
+    reviewDetails.replaceChildren();
+    const summary = document.createElement('p');
+    summary.textContent = `${reviewed.data.selectedQuestionCount} selected question(s). First run: ${reviewed.data.apiCalls} API calls and ${reviewed.data.subscriptionCalls} subscription calls, ${reviewed.data.totalCalls} total.`;
+    reviewDetails.append(summary);
+    const route = document.createElement('p');
+    route.textContent = reviewed.data.hasRunRoute
+      ? 'A measurement route is configured.'
+      : 'No measurement route is configured. You can approve now and configure a route before running.';
+    reviewDetails.append(route);
+    const notes = document.createElement('p');
+    notes.textContent = 'Only the exact selected question text goes to providers. Source and context notes stay local.';
+    reviewDetails.append(notes);
+    const questions = document.createElement('ol');
+    for (const intent of reviewed.data.selectedIntents ?? []) {
+      for (const phrase of intent.paraphrases) {
+        const item = document.createElement('li');
+        item.textContent = `${intent.label} (${phrase.category === 'general' ? 'discovery' : phrase.category}): ${phrase.text}`;
+        questions.append(item);
+      }
+    }
+    reviewDetails.append(questions);
+    const errors = reviewed.data.validationErrors ?? [];
+    if (errors.length > 0) {
+      const problem = document.createElement('p');
+      problem.textContent = errors.map((error) => typeof error === 'string' ? error : error.message ?? String(error)).join(' ');
+      reviewDetails.append(problem);
+    }
+    approveButton.toggleAttribute('disabled', errors.length > 0 || !reviewHash);
+    reviewPanel.hidden = false;
+  });
+
+  approveButton.addEventListener('click', async () => {
+    if (draftId === null || revision === null || reviewHash === null) return;
+    approveButton.setAttribute('disabled', 'disabled');
+    const result = await api(`/api/setup/drafts/${draftId}/approve`, 'POST',
+      { revision, review_hash: reviewHash, approve: true });
+    if (!result.ok) {
+      approveButton.removeAttribute('disabled');
+      return showError(approveButton, result.data);
+    }
+    try { localStorage.removeItem(SETUP_DRAFT_KEY); } catch { /* approval already succeeded */ }
+    draftId = null;
+    revision = null;
+    reviewHash = null;
+    reviewPanel.hidden = true;
+    status.textContent = 'Questions approved for tracking. Edits to questions, competitors, or aliases create a new benchmark revision. Runs already queued keep their original question snapshots.';
+    const next = document.createElement('a');
+    next.href = '/setup?step=3';
+    next.textContent = 'Review run options';
+    status.append(' ', next);
+    status.hidden = false;
+  });
 }
 
 initTheme();
@@ -603,4 +845,5 @@ initSortableTables();
 initRunButton();
 initApiForms();
 initRowActions();
+initPromptPanelReview();
 initSuggest();
