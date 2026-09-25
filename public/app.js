@@ -365,7 +365,7 @@ function formPayload(form) {
       payload[name] = field.checked;
       continue;
     }
-    const value = field.value.trim();
+    const value = field.hasAttribute('data-preserve-whitespace') ? field.value : field.value.trim();
     if (field.hasAttribute('data-list')) {
       payload[name] = value === '' ? [] : value.split(',').map((part) => part.trim()).filter((part) => part !== '');
     } else if (field.hasAttribute('data-bool')) {

@@ -118,6 +118,8 @@ See [review evidence-backed opportunities](docs/opportunities.md).
 The same page records shipped changes and versioned follow-up plans against the saved baseline.
 See [compare a shipped change](docs/intervention-comparison.md) for the report's weighting,
 coverage, and interpretation rules.
+See [record outcomes and request a weekly review](docs/outcomes.md) for reported business results,
+expenses, and time alongside selected measurement evidence.
 
 The setup wizard asks who buys, what job they need done, and the desired conversion.
 It offers five editable intent groups with three phrasings each, then shows the exact

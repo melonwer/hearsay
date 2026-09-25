@@ -15,6 +15,7 @@ import * as entitiesPage from './entities.js';
 import * as evidencePage from './evidence.js';
 import * as methodologyPage from './methodology.js';
 import * as opportunitiesPage from './opportunities.js';
+import * as weeklyReviewPage from './weekly-review.js';
 import * as promptsPage from './prompts.js';
 import * as settingsPage from './settings.js';
 import * as setupPage from './setup.js';
@@ -83,6 +84,10 @@ export function registerPageRoutes(router, deps) {
 
   router.add('GET', '/opportunities', (ctx) => {
     sendHtml(ctx.res, 200, opportunitiesPage.render(shellCtx(deps), opportunitiesPage.buildView(deps, ctx.url.searchParams)));
+  });
+
+  router.add('GET', '/weekly-review', (ctx) => {
+    sendHtml(ctx.res, 200, weeklyReviewPage.render(shellCtx(deps), weeklyReviewPage.buildView(deps, ctx.url.searchParams)));
   });
 
   router.add('GET', '/prompts', (ctx) => {

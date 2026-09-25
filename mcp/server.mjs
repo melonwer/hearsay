@@ -150,6 +150,14 @@ const TOOLS = [
     call: (a) => ({ method: 'GET', path: `/api/opportunities/${a.opportunity_id}/follow-up/${a.plan_id}/reviews/${a.snapshot_id}/comparison${query(a, ['mode'])}` }),
   },
   {
+    name: 'hearsay_weekly_review',
+    readOnly: true,
+    description: 'Read a local seven-day review for one exact historical measurement series and explicit UTC window. Includes collection health, saved evidence and interventions, prioritized work, reported outcomes and costs. Viewing this report does not run providers or claim causation.',
+    inputSchema: obj({ series_id: { type: 'string', minLength: 1 }, start: UTC_BOUNDARY,
+      end: UTC_BOUNDARY }, ['series_id', 'start', 'end']),
+    call: (a) => ({ method: 'GET', path: `/api/weekly-review${query(a, ['series_id', 'start', 'end'])}` }),
+  },
+  {
     name: 'hearsay_opportunity_propose',
     description: 'Save an assistant-authored opportunity proposal from exact scoped answer, query, source, or citation IDs. The server validates every ID and derives observed facts; your hypothesis stays labeled and a human must accept it before it enters the action queue. This never publishes or starts a measurement run.',
     inputSchema: obj({

@@ -22,6 +22,101 @@ after(() => {
   _setFetch(); // restore the real fetch, matching test/providers.test.js
 });
 
+test('weekly review API, page, and local exports share exact scope without starting a run', async () => {
+  const app = await boot();
+  try {
+    const start = '2026-09-01T00:00:00Z';
+    const end = '2026-09-08T00:00:00Z';
+    const prompt = (await api(app.base, 'POST', '/api/prompts', {
+      reviewed: true, text: 'Which tool should I choose?',
+    })).body;
+    dbRun(app.db, "INSERT INTO entities(name,aliases,domains,is_self,created_at) VALUES('Acme','[]','[]',1,?)", [start]);
+    const runId = dbRun(app.db, "INSERT INTO runs(started_at,trigger,status) VALUES(?,'manual','done')", [start]).lastInsertRowid;
+    dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
+      created_at,surface,lane,target_status,comparability_status,comparison_key,
+      analysis_revision,search_policy,answer_status,web_status,query_metadata_status)
+      VALUES(?,?,'codex','fixture',0,'Acme might fit',?,'codex-agent','tracking',
+      'completed','comparable','weekly-fixture','legacy-heuristic-v1','required',
+      'complete','verified','unavailable')`, [runId, prompt.id, '2026-09-03T00:00:00Z']);
+    const series = await api(app.base, 'GET', `/api/series?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+    const seriesId = series.body.series[0].id;
+    const query = `series_id=${encodeURIComponent(seriesId)}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+    assert.equal((await api(app.base, 'GET', `/api/weekly-review?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`)).status, 422);
+    const before = Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n);
+    const report = await api(app.base, 'GET', `/api/weekly-review?${query}`);
+    assert.equal(report.status, 200);
+    assert.equal(report.body.scope.series.id, seriesId);
+    assert.equal(report.body.coverage.attemptedTargets, 1);
+    assert.equal(report.body.outcomesStatus, 'not_recorded');
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n), before);
+    const landing = await fetch(`${app.base}/weekly-review`).then((response) => response.text());
+    assert.match(landing, /Choose a measurement series/);
+    assert.doesNotMatch(landing, /Selected scope/);
+    const invalidPage = await fetch(`${app.base}/weekly-review?series_id=${encodeURIComponent(seriesId)}&end=bad`);
+    assert.equal(invalidPage.status, 200);
+    assert.match(await invalidPage.text(), /Review unavailable/);
+    const page = await fetch(`${app.base}/weekly-review?${query}`).then((response) => response.text());
+    assert.match(page, /Selected scope/);
+    assert.match(page, /Business outcomes not recorded/);
+    const outcome = await api(app.base, 'POST', '/api/outcomes', {
+      source: 'analytics', record_key: 'lead-1', period_start: start, period_end: end,
+      metric_name: 'Qualified leads', value: '2', unit: 'count',
+      attribution_method: 'Unattributed', author: 'user',
+    });
+    assert.equal(outcome.status, 201);
+    const csv = 'record_id,period_start,period_end,landing_page,metric_name,value,unit,currency,attribution_method,notes,supersedes_id\n' +
+      `lead-2,${start},${end},,AI referrals,3,count,,Observed referral,,\n`;
+    const imported = await api(app.base, 'POST', '/api/outcomes/import', {
+      source: 'analytics', import_id: 'week-1', csv_text: csv, author: 'user',
+    });
+    assert.equal(imported.status, 201);
+    assert.equal(imported.body.records.length, 1);
+    assert.equal((await api(app.base, 'POST', '/api/outcomes/import', {
+      source: 'analytics', import_id: 'week-1', csv_text: csv, author: 'user',
+    })).body.replayed, true);
+    assert.equal((await api(app.base, 'POST', '/api/outcomes/import', {
+      source: 'analytics', import_id: 'week-1', csv_text: csv.replace('AI referrals', 'AI visits'), author: 'user',
+    })).status, 409);
+    assert.equal((await api(app.base, 'POST', '/api/outcomes/import', {
+      source: 'analytics', import_id: 'bad', csv_text: 'bad header', author: 'user',
+    })).status, 400);
+    assert.equal((await api(app.base, 'POST', '/api/ledger', {
+      source: '<script>alert(1)</script>', entry_key: 'review-1', kind: 'time', activity: 'review',
+      period_start: start, period_end: end, minutes: '30', author: 'user',
+    })).status, 201);
+    assert.equal((await api(app.base, 'POST', '/api/ledger', {
+      source: 'vendor', entry_key: 'bad-money', kind: 'expense', activity: 'measurement',
+      period_start: start, period_end: end, amount: '4.50', currency: 'BAD', author: 'user',
+    })).status, 400);
+    const updated = await api(app.base, 'GET', `/api/weekly-review?${query}`);
+    assert.equal(updated.body.reportedOutcomes.length, 2);
+    assert.equal(updated.body.reportedLedger.length, 1);
+    assert.equal(updated.body.reportedOutcomes[0].attributionMethod, 'Unattributed');
+    const updatedPage = await fetch(`${app.base}/weekly-review?${query}`).then((response) => response.text());
+    assert.match(updatedPage, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.doesNotMatch(updatedPage, /<script>alert\(1\)<\/script>/);
+    for (const [format, mime] of [['json', 'application/json'], ['markdown', 'text/markdown'], ['html', 'text/html']]) {
+      const exported = await fetch(`${app.base}/api/weekly-review/export?${query}&format=${format}`);
+      assert.equal(exported.status, 200, format);
+      assert.match(exported.headers.get('content-type') ?? '', new RegExp(mime));
+      assert.match(exported.headers.get('content-disposition') ?? '', /attachment/);
+      const body = await exported.text();
+      assert.match(body, /Qualified leads/);
+    }
+    const exportedCsv = await fetch(`${app.base}/api/outcomes/export?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+    assert.equal(exportedCsv.status, 200);
+    assert.match(exportedCsv.headers.get('content-type') ?? '', /text\/csv/);
+    assert.match(await exportedCsv.text(), /Qualified leads/);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n), before);
+    const fullExport = await api(app.base, 'GET', '/api/export');
+    assert.equal(fullExport.body.exportFormatVersion, 9);
+    assert.equal(fullExport.body.tables.outcome_records.length, 2);
+    assert.equal(fullExport.body.tables.ledger_entries.length, 1);
+  } finally {
+    await app.close();
+  }
+});
+
 test('opportunities API and page keep exact evidence scope and ordinary reads do not write', async () => {
   const app = await boot();
   try {
@@ -157,7 +252,7 @@ test('opportunities API and page keep exact evidence scope and ordinary reads do
       .then((response) => response.text());
     assert.match(withPending, /Pending assistant proposals/);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 8);
+    assert.equal(exported.body.exportFormatVersion, 9);
     assert.equal(exported.body.tables.opportunities.length, 2);
     assert.equal(exported.body.tables.opportunity_events.length, 7);
     assert.equal(exported.body.tables.follow_up_plans.length, 1);
@@ -220,7 +315,7 @@ test('evidence API and page expose the same scoped receipts without rendering st
     assert.deepEqual(themed.body.report.themeGroups.map((group) => [group.label, group.responseIncidence]),
       [['Pricing & <review>', 1]]);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 8);
+    assert.equal(exported.body.exportFormatVersion, 9);
     assert.equal(exported.body.tables.query_themes.length, 1);
     assert.equal(exported.body.tables.query_theme_assignments.length, 1);
 
@@ -573,7 +668,7 @@ test('draft review rejects placeholders and duplicates, then approves a keyless 
     assert.deepEqual((await api(app.base, 'GET', '/api/prompts')).body.map((row) => row.source_note),
       ['From buyer email', 'From sales call']);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 8);
+    assert.equal(exported.body.exportFormatVersion, 9);
     assert.equal(exported.body.tables.benchmark_drafts.length, 1);
     assert.ok(JSON.stringify(exported.body.tables.benchmark_drafts).includes('From buyer email'));
     assert.ok(!String(get(app.db, 'SELECT snapshot_json FROM benchmark_revisions ORDER BY created_at DESC LIMIT 1')?.snapshot_json)

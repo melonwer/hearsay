@@ -18,7 +18,7 @@ import { API_SEARCH_SCHEDULE_CONSENT_VERSION, apiScheduleQuoteId,
   apiSearchScheduleApproved, disableApiSearchSchedule, getApiSearchSchedule, hasEnabledApiSearch,
   saveApiSearchSchedule } from '../../core/api-search-schedule.js';
 import { stableIdentity } from '../../core/measurement-contract.js';
-import { sendJson, sendError } from '../router.js';
+import { sendJson, sendError, sendHtml } from '../router.js';
 import { metrics, NotReadyError, runner, soft, strict, suggest } from '../data.js';
 import {
   activePromptCount,
@@ -43,6 +43,10 @@ import { OpportunityError, deriveOpportunityCandidates, generateOpportunityCandi
   combineOpportunities } from '../../core/opportunities.js';
 import { saveFollowUpPlan, captureFollowUpReview } from '../../core/follow-up.js';
 import { compareIntervention, saveInterventionReview } from '../../core/intervention-comparison.js';
+import { buildWeeklyReview, renderWeeklyMarkdown, WeeklyReviewError } from '../../core/weekly-review.js';
+import { OutcomeError, recordOutcome, importOutcomeCsv, recordLedgerEntry,
+  exportOutcomeCsv } from '../../core/outcomes.js';
+import { renderWeeklyReviewExport } from './weekly-review.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
@@ -1690,6 +1694,7 @@ function json(handler, okStatus = 200) {
   return async (ctx) => {
     try {
       const data = await handler(ctx);
+      if (ctx.res.writableEnded) return;
       if (data instanceof WithStatus) {
         sendJson(ctx.res, data.status, data.body);
         return;
@@ -1705,6 +1710,10 @@ function json(handler, okStatus = 200) {
         return;
       }
       if (err instanceof OpportunityError) {
+        sendError(ctx, err.status, err.message, {}, err.code);
+        return;
+      }
+      if (err instanceof WeeklyReviewError || err instanceof OutcomeError) {
         sendError(ctx, err.status, err.message, {}, err.code);
         return;
       }
@@ -1724,6 +1733,71 @@ function json(handler, okStatus = 200) {
  */
 export function registerApiRoutes(router, deps) {
   const { db } = deps;
+
+  /** @param {import('../router.js').Ctx} ctx */
+  const weeklySelection = (ctx) => buildWeeklyReview(db, {
+    seriesId: ctx.url.searchParams.get('series_id') ?? '',
+    start: ctx.url.searchParams.get('start') ?? '',
+    end: ctx.url.searchParams.get('end') ?? '', now: isoNow(),
+  });
+  router.add('GET', '/api/weekly-review', json((ctx) => weeklySelection(ctx)));
+  router.add('GET', '/api/weekly-review/export', json((ctx) => {
+    const report = weeklySelection(ctx);
+    const format = ctx.url.searchParams.get('format');
+    const name = `hearsay-weekly-review-${report.scope.start.slice(0, 10)}`;
+    const headers = { 'Content-Disposition': `attachment; filename="${name}.${format === 'markdown' ? 'md' : format === 'html' ? 'html' : 'json'}"`,
+      'Cache-Control': 'no-store' };
+    if (format === 'json') {
+      sendJson(ctx.res, 200, report, headers);
+    } else if (format === 'markdown') {
+      const body = renderWeeklyMarkdown(report);
+      ctx.res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8',
+        'Content-Length': Buffer.byteLength(body), 'X-Content-Type-Options': 'nosniff', ...headers });
+      ctx.res.end(body);
+    } else if (format === 'html') {
+      sendHtml(ctx.res, 200, renderWeeklyReviewExport(report), headers);
+    } else {
+      throw new ApiError(400, 'bad_request', 'format must be json, markdown, or html');
+    }
+  }));
+  router.add('POST', '/api/outcomes', json((ctx) => {
+    const body = asObject(ctx.body);
+    return recordOutcome(db, { source: body.source, recordKey: body.record_key,
+      periodStart: body.period_start, periodEnd: body.period_end,
+      landingPage: body.landing_page, metricName: body.metric_name, value: body.value,
+      unit: body.unit, currency: body.currency, attributionMethod: body.attribution_method,
+      notes: body.notes, supersedesId: body.supersedes_id, author: body.author });
+  }, 201));
+  router.add('POST', '/api/outcomes/import', json((ctx) => {
+    const body = asObject(ctx.body);
+    const source = str(body.source, 'source', { max: 160, required: true });
+    const importId = str(body.import_id, 'import_id', { max: 200, required: true });
+    const author = str(body.author, 'author', { max: 120, required: true });
+    if (typeof body.csv_text !== 'string') {
+      throw new ApiError(422, 'unprocessable', 'csv_text must be a string');
+    }
+    return importOutcomeCsv(db, { source: /** @type {string} */ (source),
+      importId: /** @type {string} */ (importId), csvText: body.csv_text,
+      author: /** @type {string} */ (author) });
+  }, 201));
+  router.add('POST', '/api/ledger', json((ctx) => {
+    const body = asObject(ctx.body);
+    return recordLedgerEntry(db, { source: body.source, entryKey: body.entry_key,
+      kind: body.kind, activity: body.activity, periodStart: body.period_start,
+      periodEnd: body.period_end, minutes: body.minutes, amount: body.amount,
+      currency: body.currency, notes: body.notes, opportunityId: body.opportunity_id,
+      author: body.author });
+  }, 201));
+  router.add('GET', '/api/outcomes/export', json((ctx) => {
+    const start = ctx.url.searchParams.get('start') ?? undefined;
+    const end = ctx.url.searchParams.get('end') ?? undefined;
+    const body = exportOutcomeCsv(db, { start, end });
+    ctx.res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body), 'X-Content-Type-Options': 'nosniff',
+      'Content-Disposition': 'attachment; filename="hearsay-reported-outcomes.csv"',
+      'Cache-Control': 'no-store' });
+    ctx.res.end(body);
+  }));
 
   router.add(
     'GET',

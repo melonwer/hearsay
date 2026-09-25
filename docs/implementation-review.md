@@ -163,3 +163,28 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Counts and continuity: draft review previews the projected full active panel, with separate API and subscription target counts. It rejects placeholders, equivalent phrasings, and stale edits before any approval writes. Brand, competitor, alias, intent, or question edits record a new benchmark definition and require panel review before the next run. Runs already queued retain their prior question and benchmark snapshots. Language and market are planning preferences, not provider locale controls.
 - Access: the setup wizard, Prompts page, JSON API, MCP tools, and operating skill share the review flow. Older active panels show review needed and can be approved from the Prompts page. Export format v5 includes local benchmark drafts and source notes.
 - Evidence: focused core, API, scheduler, MCP, and UI tests cover keyless, API, subscription, no-competitor, validation, promotion, source-note, duplicate, revision, and call-count behavior. A fresh Playwright journey approves a three-question panel without a route, checks zero target calls, and confirms the narrow layout fits. The full suite, typecheck, and diff check passed at the C11 boundary. No live provider call, push, or deployment was made.
+
+## C12 evidence-linked opportunities
+
+- User result: exact-series answer, query, source, and citation receipts can support an investigation. The observed finding and an assistant or user hypothesis remain separate; a human accepts an assistant proposal before it enters the action queue.
+- Contract: opportunities retain their benchmark, intent, original window, supporting receipt IDs, priority, effort, owner, status, and review history. Page-change actions require reviewed page evidence. Dismissed or combined records retain provenance.
+- Evidence: the C12 core, API, MCP, and browser flows exercise receipt scope, stale IDs, page evidence review, proposals, prioritization, dismissal, and export. Local commit `7d4a86b`; no live provider call or publication.
+
+## C13 intervention records and follow-up plans
+
+- User result: a shipped action records what changed, when, and where, with an immutable baseline and user-chosen review window. Capturing a review snapshot reads saved observations without spending provider credit.
+- Contract: schema v11 adds a record version, action effort/shipment fields, and immutable follow-up plans and review snapshots. Version checks reject stale writes; revised plans retain prior selections. Retrospective baselines and model/profile/benchmark variants remain visible.
+- Evidence: local commit `2e03f91`; 441/441 tests, typecheck, browser opportunity flow, and diff check passed. Export format v7 retained snapshots. No run, schedule edit, publication, or push was triggered by saving the plan.
+
+## C14 descriptive intervention comparisons
+
+- User result: a shipped action can be compared over frozen half-open windows with equal prompt weights. The full benchmark is the default; an explicitly chosen common subset lists dropped cells. A human records `promising`, `not_useful`, or `inconclusive` with a rationale.
+- Contract: schema v12 saves immutable judgments and the exact report/cutoffs. The report separates query, source, citation, and target coverage; incompatible revisions, changed prompt wording, missing samples, profile variants, and overlapping actions remain visible. New-series business-loss alerts are suppressed; collection failures receive operational health alerts. Wilson intervals describe individual prompt rates and do not test an intervention effect.
+- Evidence: local commit `a5d5f1b`; 449/449 tests, typecheck, browser comparison flow at wide/narrow sizes, and diff check passed. Export format v8 includes the saved review. No causal win/loss claim or provider call is generated.
+
+## C15 reported outcomes and weekly review
+
+- User result: manual and CSV outcome records, time, and expenses appear alongside a short exact-series weekly review. A known series can be reviewed in an empty week. The report shows collection health, linked evidence, up to three explicitly prioritized opportunities, due shipped actions, saved descriptive changes, reported outcomes, and costs. JSON, Markdown, HTML, and CSV downloads are local; MCP exposes the same report read-only.
+- Contract: schema v13 stores raw CSV import batches, stable source-row identities across imports, append-only corrections, and separate time/expense entries. Replays are idempotent; changed identities conflict; active overlapping periods are flagged without summing. Monetary values retain decimal text and currency. API computed spend retains `known`, `partial`, or `unavailable` status. Workspace outcome/ledger rows are labeled as reported and not attributed to the selected series or action. Export format v9 retains superseded rows and original input.
+- Evidence: local storage commit `960b039` and its companion weekly-review commit; 467/467 tests, typecheck, diff check, and a real browser flow on wide/narrow layouts and both themes passed. The browser import retained a trailing CSV newline exactly. A populated v12 database migrated with a readable v12 backup. No provider call, schedule edit, outbound message, push, or deployment was made.
+- Remaining gates: C03 usage accounting and C06 Gemini legal review remain open; C16–C17 and the full end-to-end acceptance audit remain to be completed.

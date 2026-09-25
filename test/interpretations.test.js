@@ -94,7 +94,7 @@ test('corrections preserve receipts, old cutoffs, and capture-time revision metr
   assert.equal(answerReview(db, 2, { cutoff: before.correctionCutoff }).mentions[0].effectiveStance, 'negative');
   assert.equal(String(get(db, 'SELECT analysis_revision FROM responses WHERE id = 2')?.analysis_revision), STANCE_REVISION);
   const exported = exportAll(db);
-  assert.equal(exported.exportFormatVersion, 8);
+  assert.equal(exported.exportFormatVersion, 9);
   assert.equal(exported.tables.mention_corrections.length, 2);
   assert.equal(exported.tables.mention_interpretations.length, 3);
 });

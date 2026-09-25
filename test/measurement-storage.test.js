@@ -107,6 +107,41 @@ test('populated v5 costs survive v6 without invented price provenance', (t) => {
   assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
 });
 
+test('populated v12 data survives outcome ledger migration with a recoverable backup', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-outcome-migration-'));
+  const path = join(dir, 'hearsay.db');
+  const oldDb = new DatabaseSync(path);
+  oldDb.exec(V1);
+  advanceFixtureToV4(oldDb);
+  for (const migration of MIGRATIONS.filter((item) => item.version >= 5 && item.version <= 12)) {
+    oldDb.exec('BEGIN');
+    if (typeof migration.apply === 'function') migration.apply(oldDb);
+    else oldDb.exec(migration.sql);
+    oldDb.exec(`PRAGMA user_version = ${migration.version}`);
+    oldDb.exec('COMMIT');
+  }
+  assert.equal(userVersion(oldDb), 12);
+  oldDb.close();
+
+  const db = openDb(path);
+  t.after(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  assert.equal(userVersion(db), SCHEMA_VERSION);
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM responses')?.n), 2);
+  assert.equal(String(get(db, 'SELECT text FROM responses WHERE id = 1')?.text), 'Acme is a good option.');
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM outcome_records')?.n), 0);
+  assert.equal(Number(get(db, 'SELECT COUNT(*) AS n FROM ledger_entries')?.n), 0);
+  assert.deepEqual(all(db, 'PRAGMA foreign_key_check'), []);
+  const backupName = readdirSync(dir).find((name) => /^hearsay\.db\.migration-.*\.v12\.db$/.test(name));
+  assert.ok(backupName);
+  const backup = new DatabaseSync(join(dir, backupName));
+  assert.equal(userVersion(backup), 12);
+  assert.equal(Number(get(backup, 'SELECT COUNT(*) AS n FROM responses')?.n), 2);
+  backup.close();
+});
+
 test('new evidence rows retain distinct queries, sources, citations, and attempt usage', (t) => {
   const db = openDb(':memory:');
   t.after(() => db.close());
@@ -227,7 +262,7 @@ test('queued target keeps its original definitions and stores provider evidence 
 
   const exported = exportAll(db);
   const tables = /** @type {Record<string, Record<string, unknown>[]>} */ (exported.tables);
-  assert.equal(exported.exportFormatVersion, 8);
+  assert.equal(exported.exportFormatVersion, 9);
   assert.equal(exported.databaseSchemaVersion, SCHEMA_VERSION);
   assert.equal(tables.execution_profiles.length, 1);
   assert.equal(tables.benchmark_revisions.length, 1);

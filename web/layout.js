@@ -83,6 +83,7 @@ const NAV = [
   { href: '/answers', label: 'Answers' },
   { href: '/evidence', label: 'Evidence' },
   { href: '/opportunities', label: 'Opportunities' },
+  { href: '/weekly-review', label: 'Weekly review' },
   { href: '/prompts', label: 'Prompts' },
   { href: '/entities', label: 'Entities' },
   { href: '/alerts', label: 'Alerts' },

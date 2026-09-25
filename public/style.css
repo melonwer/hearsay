@@ -79,6 +79,30 @@
   --good-text: #006300;
 }
 
+.weekly-selector, .weekly-entry-form { display: grid; gap: 12px; }
+.weekly-selector { grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(160px, 1fr)) auto; align-items: end; }
+.weekly-selector label, .weekly-entry-form label { display: grid; gap: 4px; min-width: 0; }
+.weekly-selector input, .weekly-selector select, .weekly-entry-form input,
+.weekly-entry-form select, .weekly-entry-form textarea {
+  width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--ink); font: inherit;
+}
+.weekly-entry-form textarea { resize: vertical; }
+.weekly-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.weekly-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.weekly-exports { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.weekly-report { display: grid; gap: 12px; }
+.weekly-report .card { margin: 0; }
+.weekly-report li { margin: 0 0 8px; overflow-wrap: anywhere; }
+.weekly-scope p, .weekly-interpretation { overflow-wrap: anywhere; }
+.weekly-no-action { border-left: 3px solid var(--good); }
+@media (max-width: 900px) {
+  .weekly-selector { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .weekly-selector, .weekly-form-grid, .weekly-columns { grid-template-columns: 1fr; }
+}
+
 /* ---------- base ---------- */
 
 * {
