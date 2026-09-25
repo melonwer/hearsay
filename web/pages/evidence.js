@@ -23,6 +23,7 @@ function positiveInt(value) {
 /** @param {ReturnType<typeof buildView>} view @param {Record<string, string|number|null>} [patch] */
 export function evidenceUrl(view, patch = {}) {
   const values = { days: view.days, series_id: view.series?.id ?? null,
+    start: view.exactRange?.start ?? null, end: view.exactRange?.end ?? null,
     intent_id: view.intentId, layer: view.layer, source_layer: view.sourceLayer,
     receipt_filter: view.receiptFilter, ...patch };
   const params = new URLSearchParams();
@@ -35,16 +36,34 @@ export function evidenceUrl(view, patch = {}) {
   return `/evidence?${params}`;
 }
 
+/** @param {ReturnType<typeof buildView>} view @param {Record<string, string|number|null>} [patch] */
+function opportunityUrl(view, patch = {}) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries({
+    days: view.days, series_id: view.series?.id ?? null, start: view.series?.start ?? null,
+    end: view.series?.end ?? null, intent_id: view.intentId, ...patch,
+  })) {
+    if (value !== null && value !== undefined && value !== '') params.set(key, String(value));
+  }
+  return `/opportunities?${params}`;
+}
+
 /** @param {import('./index.js').PageDeps} deps @param {URLSearchParams} params */
 export function buildView({ db }, params) {
   const now = new Date();
   const requestedDays = positiveInt(params.get('days'));
   const days = requestedDays !== null && requestedDays <= 3650 ? requestedDays : 30;
-  const seriesOptions = listMeasurementSeries(db, { now, days });
+  const start = params.get('start');
+  const end = params.get('end');
+  const exactRange = start && end && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(start)
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(end)
+    && Number.isFinite(Date.parse(start)) && Number.isFinite(Date.parse(end)) && start < end
+    ? { start, end } : null;
+  const seriesOptions = listMeasurementSeries(db, { now, days, ...(exactRange ?? {}) });
   const requestedSeriesId = params.get('series_id');
   const series = requestedSeriesId
     ? seriesOptions.find((item) => item.id === requestedSeriesId) ?? null
-    : resolveMeasurementSeries(db, { now, days });
+    : resolveMeasurementSeries(db, { now, days, ...(exactRange ?? {}) });
   const intents = series ? listEvidenceIntents(db, { series }) : [];
   const requestedIntentId = positiveInt(params.get('intent_id'));
   const requestedReceiptId = positiveInt(params.get('receipt_id'));
@@ -61,7 +80,7 @@ export function buildView({ db }, params) {
   const requestedReceiptFilter = params.get('receipt_filter') ?? 'all';
   const receiptFilter = RECEIPT_FILTERS.includes(requestedReceiptFilter)
     ? requestedReceiptFilter : 'all';
-  return { days, seriesOptions, series, intents, intentId, report, layer,
+  return { days, exactRange, seriesOptions, series, intents, intentId, report, layer,
     sourceLayer, receiptFilter, requestedReceiptId, themes: listQueryThemes(db) };
 }
 
@@ -156,14 +175,16 @@ function queries(view, report) {
         ${query.originalTexts.length > 1 ? html`<small class="muted">Original forms: ${query.originalTexts.join(' · ')}</small>` : ''}</td>
         <td>${themeControls(view, query)}</td>
         <td class="num">${query.responseIncidence} / ${coverage.answersWithObservedQueries}</td>
-        <td class="num">${query.rawOccurrences}</td><td>${supportLinks(view, query.responseIds)}</td></tr>`)}
+        <td class="num">${query.rawOccurrences}</td><td>${supportLinks(view, query.responseIds)}
+          <a href="${opportunityUrl(view, { query_ids: query.queryIds.join(','), response_ids: query.responseIds.join(',') })}">Use as opportunity evidence</a></td></tr>`)}
     </tbody></table></div>` : html`<p>No query wording was exposed in comparable answers for this intent. Missing query metadata is unknown, not evidence of no search.</p>`}
     <h3>Manual themes</h3>
     <p class="muted">These labels are assigned by a person. They group only observed query rows; they are not search-volume or demand estimates.</p>
     ${report.themeGroups.length ? html`<div class="evidence-table-wrap"><table class="table"><thead><tr><th>Theme</th><th>Observed query groups</th><th class="num">Answer incidence</th><th class="num">Raw occurrences</th><th>Receipts</th></tr></thead><tbody>
       ${report.themeGroups.map((theme) => html`<tr><td>${theme.label}</td><td>${theme.normalizedKeys.join(' · ')}</td>
         <td class="num">${theme.responseIncidence} / ${coverage.answersWithObservedQueries}</td>
-        <td class="num">${theme.rawOccurrences}</td><td>${supportLinks(view, theme.responseIds)}</td></tr>`)}
+        <td class="num">${theme.rawOccurrences}</td><td>${supportLinks(view, theme.responseIds)}
+          <a href="${opportunityUrl(view, { query_ids: theme.queryIds.join(','), response_ids: theme.responseIds.join(',') })}">Use as opportunity evidence</a></td></tr>`)}
     </tbody></table></div>` : html`<p>No manual query themes are assigned to this intent's observed queries.</p>`}
     <form class="inline-form" data-api-form="/api/query-themes">
       <label>New manual theme <input name="label" maxlength="80" required /></label><button type="submit" class="btn btn-sm">Create theme</button>
@@ -184,6 +205,7 @@ function groupedEvidence(view, report, kind) {
     ${source ? html`<form class="inline-form" method="get" action="/evidence">
       <input type="hidden" name="days" value="${view.days}" />
       <input type="hidden" name="series_id" value="${view.series?.id}" />
+      ${view.exactRange ? html`<input type="hidden" name="start" value="${view.exactRange.start}" /><input type="hidden" name="end" value="${view.exactRange.end}" />` : ''}
       <input type="hidden" name="intent_id" value="${view.intentId}" />
       <input type="hidden" name="layer" value="sources" />
       <label>Source evidence layer <select name="source_layer">${SOURCE_LAYERS.map(([id, label]) => html`<option value="${id}"${view.sourceLayer === id ? raw(' selected') : ''}>${label}</option>`)}</select></label>
@@ -193,7 +215,8 @@ function groupedEvidence(view, report, kind) {
       ${rows.map((row) => html`<tr><td>${safeLink(row.url, row.url)}</td>
         <td>${row.provenance}</td><td>${row.publisherDomain ?? 'Unknown'}${row.urlHost ? html` <small class="muted">(URL host: ${row.urlHost})</small>` : ''}</td>
         <td class="num">${row.responseIncidence}</td><td class="num">${row.rawOccurrences}</td>
-        <td>${supportLinks(view, row.responseIds)}</td></tr>`)}
+        <td>${supportLinks(view, row.responseIds)}
+          ${source ? html`<a href="${opportunityUrl(view, { source_ids: /** @type {EvidenceReport['sources'][number]} */ (row).observationIds.join(','), response_ids: row.responseIds.join(',') })}">Use as opportunity evidence</a>` : ''}</td></tr>`)}
     </tbody></table></div>` : html`<p>No ${title.toLowerCase()} are stored for comparable answers in this intent.</p>`}
   </section>`;
 }
@@ -202,6 +225,7 @@ function groupedEvidence(view, report, kind) {
 function receiptCard(view, answer) {
   return html`<article class="card evidence-receipt" id="receipt-${answer.id}">
     <h3>Receipt #${answer.id}</h3>
+    <p><a href="${opportunityUrl(view, { response_ids: answer.id })}">Use this answer for an opportunity</a></p>
     <p class="muted">${answer.createdAt} · ${answer.surface} · ${answer.model} · profile ${answer.executionProfileId ?? 'legacy'} · benchmark ${answer.benchmarkRevisionId ?? 'legacy'}</p>
     <h4>Buyer question</h4><p>${answer.question.text} <small class="muted">(${answer.question.source})</small></p>
     <h4>Search actions and queries</h4>
@@ -266,6 +290,7 @@ export function render(ctx, view) {
     const { series, report } = view;
     body = html`${body}
       <p class="muted">Exact series ${series.id} · ${SURFACE_LABEL[series.surface] ?? series.surface} · ${series.start} to ${series.end} UTC, end exclusive · <a href="${evidenceUrl(view, { layer: 'answers', receipt_filter: 'all', receipt_id: null })}">${report.coverage.comparableAnswers} comparable answer receipts</a></p>
+      <p><a href="${opportunityUrl(view)}">Review opportunities for this intent</a></p>
       ${layerNav(view)}
       ${view.layer === 'all' || view.layer === 'questions' ? questions(view, report) : ''}
       ${view.layer === 'all' || view.layer === 'queries' ? queries(view, report) : ''}

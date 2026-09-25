@@ -22,6 +22,78 @@ after(() => {
   _setFetch(); // restore the real fetch, matching test/providers.test.js
 });
 
+test('opportunities API and page keep exact evidence scope and ordinary reads do not write', async () => {
+  const app = await boot();
+  try {
+    const prompt = (await api(app.base, 'POST', '/api/prompts', {
+      reviewed: true, text: 'Which meeting tool should I buy?',
+    })).body;
+    const at = '2026-09-02T10:00:00Z';
+    const start = '2026-09-01T00:00:00Z';
+    const end = '2026-09-10T00:00:00Z';
+    const runId = dbRun(app.db, `INSERT INTO runs(started_at,trigger,status)
+      VALUES(?,'manual','done')`, [at]).lastInsertRowid;
+    const responseId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
+      created_at,surface,lane,target_status,comparability_status,comparison_key,analysis_revision,
+      search_policy,answer_status,web_status,query_metadata_status,prompt_text_snapshot)
+      VALUES(?,?,'codex','fixture',0,'Compare local processing and price.',?,'codex-agent',
+      'tracking','completed','comparable','opportunity-fixture',?,'required','complete',
+      'verified','unavailable',?)`, [runId, prompt.id, at, STANCE_REVISION,
+      'Which meeting tool should I buy?']).lastInsertRowid;
+    const seriesList = await api(app.base, 'GET', `/api/series?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+    const seriesId = seriesList.body.series.find((series) => series.surface === 'codex-agent').id;
+    const selection = `series_id=${encodeURIComponent(seriesId)}&intent_id=${prompt.intent_id}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+    const before = Number(get(app.db, 'SELECT COUNT(*) AS n FROM opportunities')?.n);
+    const read = await api(app.base, 'GET', `/api/opportunities?${selection}`);
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.body.candidates, []);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM opportunities')?.n), before);
+    const page = await fetch(`${app.base}/opportunities?${selection}`).then((response) => response.text());
+    assert.match(page, /Create an investigation from selected evidence/);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM opportunities')?.n), before);
+    const selected = await api(app.base, 'POST', '/api/opportunities', {
+      series_id: seriesId, start, end, intent_id: prompt.intent_id,
+      response_ids: [responseId], hypothesis: 'Investigate buyer information needs.',
+    });
+    assert.equal(selected.status, 201);
+    assert.equal(selected.body.evidence.responseIds[0], responseId);
+    assert.equal(selected.body.status, 'investigate');
+    const wrong = await api(app.base, 'POST', '/api/opportunities/propose', {
+      series_id: seriesId, start, end, intent_id: prompt.intent_id,
+      evidence: [{ response_id: responseId, source_id: 999 }], hypothesis: 'Check source.',
+    });
+    assert.equal(wrong.status, 422);
+    const detail = await api(app.base, 'GET', `/api/opportunities/${selected.body.id}`);
+    assert.equal(detail.body.id, selected.body.id);
+    assert.equal(detail.body.staleEvidence, false);
+    const secondResponseId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
+      created_at,surface,lane,target_status,comparability_status,comparison_key,analysis_revision,
+      search_policy,answer_status,web_status,query_metadata_status,prompt_text_snapshot)
+      VALUES(?,?,'codex','fixture',1,'Another comparison.',?,'codex-agent',
+      'tracking','completed','comparable','opportunity-fixture',?,'required','complete',
+      'verified','unavailable',?)`, [runId, prompt.id, at, STANCE_REVISION,
+      'Which meeting tool should I buy?']).lastInsertRowid;
+    const proposal = await api(app.base, 'POST', '/api/opportunities/propose', {
+      series_id: seriesId, start, end, intent_id: prompt.intent_id,
+      evidence: [{ response_id: secondResponseId }], hypothesis: 'Buyers may need more detail.',
+    });
+    assert.equal(proposal.status, 201);
+    assert.equal(proposal.body.status, 'pending');
+    const grouped = await api(app.base, 'GET', `/api/opportunities?${selection}`);
+    assert.equal(grouped.body.opportunities.length, 1);
+    assert.equal(grouped.body.pendingProposals.length, 1);
+    const withPending = await fetch(`${app.base}/opportunities?${selection}`)
+      .then((response) => response.text());
+    assert.match(withPending, /Pending assistant proposals/);
+    const exported = await api(app.base, 'GET', '/api/export');
+    assert.equal(exported.body.exportFormatVersion, 6);
+    assert.equal(exported.body.tables.opportunities.length, 2);
+    assert.equal(exported.body.tables.opportunity_events.length, 2);
+  } finally {
+    await app.close();
+  }
+});
+
 test('evidence API and page expose the same scoped receipts without rendering stored markup or unsafe links', async () => {
   const app = await boot();
   try {
@@ -74,7 +146,7 @@ test('evidence API and page expose the same scoped receipts without rendering st
     assert.deepEqual(themed.body.report.themeGroups.map((group) => [group.label, group.responseIncidence]),
       [['Pricing & <review>', 1]]);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 5);
+    assert.equal(exported.body.exportFormatVersion, 6);
     assert.equal(exported.body.tables.query_themes.length, 1);
     assert.equal(exported.body.tables.query_theme_assignments.length, 1);
 
@@ -427,7 +499,7 @@ test('draft review rejects placeholders and duplicates, then approves a keyless 
     assert.deepEqual((await api(app.base, 'GET', '/api/prompts')).body.map((row) => row.source_note),
       ['From buyer email', 'From sales call']);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 5);
+    assert.equal(exported.body.exportFormatVersion, 6);
     assert.equal(exported.body.tables.benchmark_drafts.length, 1);
     assert.ok(JSON.stringify(exported.body.tables.benchmark_drafts).includes('From buyer email'));
     assert.ok(!String(get(app.db, 'SELECT snapshot_json FROM benchmark_revisions ORDER BY created_at DESC LIMIT 1')?.snapshot_json)

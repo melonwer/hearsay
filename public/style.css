@@ -481,9 +481,66 @@ p {
 .evidence-receipt:target { border-color: var(--s1); }
 .evidence-themes .tag { margin-right: 4px; }
 
+.opportunity-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.opportunity-filters label { display: grid; gap: 4px; min-width: 0; }
+.opportunity-filters select { width: 100%; min-width: 0; }
+.opportunity-scope { overflow-wrap: anywhere; }
+.opportunity-section-head,
+.opportunity-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.opportunity-section-head > div { min-width: 0; }
+.opportunity-section-head form { flex: 0 0 auto; }
+.opportunity-list { display: grid; gap: 12px; }
+.opportunity-preview { border-top: 1px solid var(--border); padding-top: 12px; }
+.opportunity-save { margin-top: 10px; }
+.opportunity-preview h3,
+.opportunity-card h3 { font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+.opportunity-card { scroll-margin-top: 16px; }
+.opportunity-card:target { border-color: var(--s1); }
+.opportunity-card p,
+.opportunity-preview p { overflow-wrap: anywhere; }
+.opportunity-support summary,
+.opportunity-review-grid summary { cursor: pointer; }
+.opportunity-support ul { margin: 8px 0; }
+.opportunity-review-grid { display: grid; gap: 10px; margin-top: 12px; }
+.opportunity-review-grid > details { border-top: 1px solid var(--border); padding-top: 10px; }
+.opportunity-form { display: grid; gap: 10px; margin-top: 10px; }
+.opportunity-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.opportunity-form label { display: grid; gap: 4px; min-width: 0; }
+.opportunity-form .check { display: flex; align-items: flex-start; }
+.opportunity-form input:not([type='checkbox']),
+.opportunity-form select,
+.opportunity-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+.opportunity-form textarea { resize: vertical; }
+.opportunity-form .btn { justify-self: start; }
+.opportunity-page-evidence { border-left: 2px solid var(--grid); padding: 8px 12px; margin: 12px 0; }
+.opportunity-page-evidence blockquote { white-space: pre-wrap; margin: 8px 0; overflow-wrap: anywhere; }
+
 /* ---------- narrow screens ---------- */
 
 @media (max-width: 720px) {
+  .opportunity-filters { grid-template-columns: minmax(0, 1fr); }
+  .opportunity-section-head { flex-direction: column; }
+  .opportunity-form-grid { grid-template-columns: 1fr; }
   .form-grid,
   #suggest-list [data-suggest-phrasing] {
     grid-template-columns: 1fr;

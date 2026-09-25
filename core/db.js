@@ -462,6 +462,81 @@ export const MIGRATIONS = [
       ALTER TABLE prompts ADD COLUMN approval_fingerprint TEXT;
     `,
   },
+  {
+    version: 10,
+    sql: `
+      CREATE TABLE opportunities (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        candidate_key TEXT NOT NULL UNIQUE,
+        candidate_type TEXT NOT NULL,
+        intent_id INTEGER NOT NULL,
+        buyer_relevance TEXT NOT NULL,
+        series_id TEXT NOT NULL,
+        series_json TEXT NOT NULL,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        benchmark_revision_id TEXT,
+        evidence_json TEXT NOT NULL,
+        observed_finding TEXT NOT NULL,
+        hypothesis TEXT NOT NULL,
+        suggested_action TEXT NOT NULL,
+        action_kind TEXT NOT NULL DEFAULT 'investigate' CHECK (action_kind IN ('investigate','page_change','other')),
+        target_url TEXT,
+        product_area TEXT,
+        controllability TEXT NOT NULL CHECK (controllability IN ('owned','third_party','product')),
+        effort_band TEXT NOT NULL CHECK (effort_band IN ('unknown','low','medium','high')),
+        priority INTEGER NOT NULL DEFAULT 0 CHECK (priority BETWEEN 0 AND 3),
+        owner TEXT,
+        review_date TEXT,
+        status TEXT NOT NULL CHECK (status IN ('investigate','pending','planned','in_progress','shipped','reviewed','dismissed','no_action','combined')),
+        origin TEXT NOT NULL CHECK (origin IN ('deterministic','manual','assistant')),
+        author TEXT NOT NULL,
+        missing_evidence_json TEXT NOT NULL,
+        claim_classification TEXT NOT NULL CHECK (claim_classification IN ('observation','verify_claim')),
+        dismissal_reason TEXT,
+        combined_into_id INTEGER REFERENCES opportunities(id),
+        resurfaced_explanation TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_opportunities_scope ON opportunities(series_id, window_start, window_end, intent_id);
+      CREATE INDEX idx_opportunities_sort ON opportunities(status, priority DESC, effort_band, updated_at DESC);
+      CREATE TABLE opportunity_support (
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        response_id INTEGER NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        PRIMARY KEY (opportunity_id, response_id)
+      );
+      CREATE TABLE opportunity_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL,
+        details_json TEXT NOT NULL,
+        author TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_opportunity_events_opportunity ON opportunity_events(opportunity_id, id);
+      CREATE TABLE opportunity_page_evidence (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        url TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        excerpt TEXT NOT NULL,
+        provenance TEXT NOT NULL CHECK (provenance IN ('manual_user','manual_assistant','observed_fetch')),
+        source_observation_id INTEGER,
+        is_authoritative INTEGER NOT NULL DEFAULT 0 CHECK (is_authoritative IN (0,1)),
+        author TEXT NOT NULL,
+        reviewed_at TEXT,
+        reviewed_by TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_opportunity_page_evidence_opportunity ON opportunity_page_evidence(opportunity_id, id);
+      CREATE TRIGGER opportunity_events_no_update BEFORE UPDATE ON opportunity_events
+        BEGIN SELECT RAISE(ABORT, 'opportunity events are immutable'); END;
+      CREATE TRIGGER opportunity_events_no_delete BEFORE DELETE ON opportunity_events
+        BEGIN SELECT RAISE(ABORT, 'opportunity events are immutable'); END;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

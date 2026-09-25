@@ -37,6 +37,10 @@ import { aliasesFor, MIN_ALIAS_LENGTH } from '../../core/analyze.js';
 import { answerReview, appendCorrection, STANCES } from '../../core/interpretations.js';
 import { answerEvidence, createQueryTheme, intentEvidenceReport, listEvidenceIntents,
   listQueryThemes, setQueryThemeAssignment } from '../../core/evidence-report.js';
+import { OpportunityError, deriveOpportunityCandidates, generateOpportunityCandidates,
+  listOpportunities, getOpportunity, createOpportunity, reviewOpportunity,
+  attachOpportunityPageEvidence, reviewOpportunityPageEvidence,
+  combineOpportunities } from '../../core/opportunities.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
@@ -1550,6 +1554,67 @@ function selectedSeries(db, url, now) {
   }
 }
 
+/** @param {import('node:sqlite').DatabaseSync} db @param {Record<string, unknown>} selection */
+function selectedOpportunitySeries(db, selection) {
+  const url = new URL('http://localhost/api/opportunities');
+  for (const key of ['series_id', 'start', 'end']) {
+    const value = str(selection[key], key, { max: 128, required: true });
+    url.searchParams.set(key, /** @type {string} */ (value));
+  }
+  const { series } = selectedSeries(db, url, isoNow());
+  if (!series) throw new ApiError(404, 'series_not_found', 'No such series in this window');
+  return series;
+}
+
+/** @param {unknown} value @param {string} name */
+function opportunityId(value, name) {
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id < 1) {
+    throw new ApiError(422, 'unprocessable', `${name} must be a positive integer`);
+  }
+  return id;
+}
+
+/** @param {unknown} value @param {string} name */
+function opportunityIds(value, name) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new ApiError(422, 'unprocessable', `${name} must be an array`);
+  return [...new Set(value.map((item) => opportunityId(item, name)))];
+}
+
+/** @param {import('node:sqlite').DatabaseSync} db @param {Record<string, unknown>} body */
+function opportunityEvidence(db, body) {
+  if (body.evidence !== undefined) {
+    const records = objectList(body.evidence, 'evidence');
+    const responseIds = new Set();
+    const queryIds = new Set();
+    const sourceIds = new Set();
+    const citationIds = new Set();
+    for (const item of records) {
+      const responseId = opportunityId(item.response_id, 'evidence.response_id');
+      responseIds.add(responseId);
+      for (const [field, table, output] of /** @type {[string,string,Set<number>][]} */ ([
+        ['query_id', 'search_queries', queryIds],
+        ['source_id', 'source_observations', sourceIds],
+        ['citation_id', 'answer_citations', citationIds],
+      ])) {
+        if (item[field] === undefined) continue;
+        const id = opportunityId(item[field], `evidence.${field}`);
+        if (Number(get(db, `SELECT response_id FROM ${table} WHERE id = ?`, [id])?.response_id) !== responseId) {
+          throw new ApiError(422, 'unprocessable', `evidence.${field} does not belong to response #${responseId}`);
+        }
+        output.add(id);
+      }
+    }
+    return { responseIds: [...responseIds], queryIds: [...queryIds],
+      sourceIds: [...sourceIds], citationIds: [...citationIds] };
+  }
+  return { responseIds: opportunityIds(body.response_ids, 'response_ids'),
+    queryIds: opportunityIds(body.query_ids, 'query_ids'),
+    sourceIds: opportunityIds(body.source_ids, 'source_ids'),
+    citationIds: opportunityIds(body.citation_ids, 'citation_ids') };
+}
+
 /** @param {import('node:sqlite').DatabaseSync} db @param {URL} url */
 function exactSeriesSummary(db, url) {
   const now = isoNow();
@@ -1630,6 +1695,10 @@ function json(handler, okStatus = 200) {
         sendError(ctx, err.status, err.message, {}, err.code);
         return;
       }
+      if (err instanceof OpportunityError) {
+        sendError(ctx, err.status, err.message, {}, err.code);
+        return;
+      }
       if (err instanceof NotReadyError) {
         sendError(ctx, 503, `${err.fnName} is not available in this build yet`, {}, 'not_ready');
         return;
@@ -1677,6 +1746,105 @@ export function registerApiRoutes(router, deps) {
     const detail = answerEvidence(db, { series, responseId: idParam(ctx.params.id) });
     if (!detail) throw new ApiError(404, 'answer_not_found', 'No such answer in this series');
     return { selectedSeriesId: series.id, series, answer: detail };
+  }));
+  router.add('GET', '/api/opportunities', json((ctx) => {
+    const series = selectedOpportunitySeries(db, Object.fromEntries(ctx.url.searchParams));
+    const intentId = ctx.url.searchParams.has('intent_id')
+      ? opportunityId(ctx.url.searchParams.get('intent_id'), 'intent_id') : undefined;
+    const intents = listEvidenceIntents(db, { series });
+    if (intentId !== undefined && !intents.some((intent) => intent.id === intentId)) {
+      throw new ApiError(404, 'intent_not_found', 'No such intent in this series');
+    }
+    const items = listOpportunities(db, { series,
+      includeDismissed: ctx.url.searchParams.get('include_dismissed') === '1' });
+    return { selectedSeriesId: series.id, series, intents,
+      candidates: deriveOpportunityCandidates(db, { series, intentId }),
+      opportunities: items.filter((item) => item.status !== 'pending'),
+      pendingProposals: items.filter((item) => item.status === 'pending') };
+  }));
+  router.add('POST', '/api/opportunities/generate', json((ctx) => {
+    const body = asObject(ctx.body);
+    const series = selectedOpportunitySeries(db, body);
+    const intentId = body.intent_id === undefined ? undefined : opportunityId(body.intent_id, 'intent_id');
+    return { selectedSeriesId: series.id, series,
+      opportunities: generateOpportunityCandidates(db, { series, intentId,
+        candidateKey: str(body.candidate_key, 'candidate_key', { max: 64 }), now: isoNow() }) };
+  }));
+  router.add('GET', '/api/opportunities/:id', json((ctx) => {
+    const opportunity = getOpportunity(db, idParam(ctx.params.id));
+    if (!opportunity) throw new ApiError(404, 'not_found', 'No such opportunity');
+    return opportunity;
+  }));
+  router.add('POST', '/api/opportunities', json((ctx) => {
+    const body = asObject(ctx.body);
+    const series = selectedOpportunitySeries(db, body);
+    return createOpportunity(db, { series, intentId: opportunityId(body.intent_id, 'intent_id'),
+      evidence: opportunityEvidence(db, body), origin: 'manual', author: 'user',
+      buyerRelevance: str(body.buyer_relevance, 'buyer_relevance', { max: 1000 }),
+      hypothesis: str(body.hypothesis, 'hypothesis', { max: 2000 }),
+      suggestedAction: str(body.suggested_action, 'suggested_action', { max: 2000 }),
+      targetUrl: str(body.target_url, 'target_url', { max: 2048 }),
+      productArea: str(body.product_area, 'product_area', { max: 200 }),
+      controllability: str(body.controllability, 'controllability', { max: 30 }),
+      effortBand: str(body.effort_band, 'effort_band', { max: 30 }),
+      claimedFalseOrOutdated: bool(body.claimed_false_or_outdated, 'claimed_false_or_outdated'),
+      now: isoNow() });
+  }, 201));
+  router.add('POST', '/api/opportunities/propose', json((ctx) => {
+    const body = asObject(ctx.body);
+    const series = selectedOpportunitySeries(db, body);
+    return createOpportunity(db, { series, intentId: opportunityId(body.intent_id, 'intent_id'),
+      evidence: opportunityEvidence(db, body), origin: 'assistant', author: 'mcp_assistant',
+      hypothesis: str(body.hypothesis, 'hypothesis', { max: 2000, required: true }),
+      suggestedAction: str(body.suggested_action, 'suggested_action', { max: 2000 }),
+      targetUrl: str(body.target_url, 'target_url', { max: 2048 }),
+      productArea: str(body.product_area, 'product_area', { max: 200 }),
+      controllability: str(body.controllability, 'controllability', { max: 30 }),
+      claimedFalseOrOutdated: bool(body.claimed_false_or_outdated, 'claimed_false_or_outdated'),
+      now: isoNow() });
+  }, 201));
+  router.add('PATCH', '/api/opportunities/:id', json((ctx) => {
+    const body = asObject(ctx.body);
+    return reviewOpportunity(db, { id: idParam(ctx.params.id),
+      status: str(body.status, 'status', { max: 30 }),
+      priority: body.priority === undefined ? undefined : Number(body.priority),
+      effortBand: str(body.effort_band, 'effort_band', { max: 30 }),
+      owner: str(body.owner, 'owner', { max: 200 }),
+      reviewDate: str(body.review_date, 'review_date', { max: 30 }),
+      dismissalReason: str(body.dismissal_reason, 'dismissal_reason', { max: 1000 }),
+      hypothesis: str(body.hypothesis, 'hypothesis', { max: 2000 }),
+      suggestedAction: str(body.suggested_action, 'suggested_action', { max: 2000 }),
+      targetUrl: str(body.target_url, 'target_url', { max: 2048 }),
+      productArea: str(body.product_area, 'product_area', { max: 200 }),
+      controllability: str(body.controllability, 'controllability', { max: 30 }),
+      actionKind: str(body.action_kind, 'action_kind', { max: 30 }),
+      author: 'user', now: isoNow() });
+  }));
+  router.add('POST', '/api/opportunities/:id/page-evidence', json((ctx) => {
+    const body = asObject(ctx.body);
+    return attachOpportunityPageEvidence(db, { id: idParam(ctx.params.id),
+      url: /** @type {string} */ (str(body.url, 'url', { max: 2048, required: true })),
+      observedAt: /** @type {string} */ (str(body.observed_at, 'observed_at', { max: 30, required: true })),
+      excerpt: /** @type {string} */ (str(body.excerpt, 'excerpt', { max: 2000, required: true })),
+      provenance: /** @type {'manual_user'|'manual_assistant'|'observed_fetch'} */ (
+        str(body.provenance, 'provenance', { max: 30, required: true })),
+      sourceObservationId: body.source_observation_id === undefined && body.source_id === undefined
+        ? undefined : opportunityId(body.source_observation_id ?? body.source_id, 'source_observation_id'),
+      isAuthoritative: bool(body.is_authoritative, 'is_authoritative'),
+      author: 'user', now: isoNow() });
+  }, 201));
+  router.add('POST', '/api/opportunities/:id/page-evidence/:evidence_id/review', json((ctx) => {
+    const body = asObject(ctx.body);
+    if (bool(body.reviewed, 'reviewed') !== true) {
+      throw new ApiError(422, 'unprocessable', 'reviewed must be true');
+    }
+    return reviewOpportunityPageEvidence(db, { id: idParam(ctx.params.id),
+      pageEvidenceId: idParam(ctx.params.evidence_id), author: 'user', now: isoNow() });
+  }));
+  router.add('POST', '/api/opportunities/:id/combine', json((ctx) => {
+    const body = asObject(ctx.body);
+    return combineOpportunities(db, { targetId: idParam(ctx.params.id),
+      sourceId: opportunityId(body.source_id, 'source_id'), author: 'user', now: isoNow() });
   }));
   router.add('GET', '/api/query-themes', json(() => ({ themes: listQueryThemes(db) })));
   router.add('POST', '/api/query-themes', json((ctx) => {

@@ -1,6 +1,6 @@
 # Local JSON export
 
-`GET /api/export` returns a JSON object with `exportFormatVersion`, `databaseSchemaVersion`, `exportedAt`, and `tables`. Format version 5 adds benchmark drafts. Drafts can contain private buyer context and source notes, so handle the export as local sensitive data. The export is a local data dump, not an import or a backup of raw artifact files. Use the SQLite migration backup and matching artifact directory to restore an installation.
+`GET /api/export` returns a JSON object with `exportFormatVersion`, `databaseSchemaVersion`, `exportedAt`, and `tables`. Format version 6 adds opportunities and page evidence. Drafts and page excerpts can contain private buyer context and source notes, so handle the export as local sensitive data. The export is a local data dump, not an import or a backup of raw artifact files. Use the SQLite migration backup and matching artifact directory to restore an installation.
 
 `GET /api/series/export?series_id=...` exports answer receipts for one exact series and time window. Its `series` object identifies the surface, profile, benchmark, analysis revision, search policy, and half-open UTC window. `answers` includes effective stance reviews, source observations, and answer citations. Add `eligible=1` to export only answers counted by the headline rates. This scoped answer export does not replace the full database dump or include raw artifact files.
 
@@ -11,6 +11,8 @@ Version 3 adds append-only `mention_interpretations` and `mention_corrections`. 
 Version 4 adds `query_themes` and `query_theme_assignments`. These are user-authored labels linked to normalized observed query keys. They do not replace original query rows or change their measured counts.
 
 Version 5 adds `benchmark_drafts`. Schema version 9 also adds `prompts.source_note` and `prompts.approval_fingerprint`. The draft table preserves buyer context, exact reviewed wording, and the approval receipt. Source notes and buyer context remain local planning data; they are exported for recovery but are not provider prompt inputs. An older `approved_at` without an approval fingerprint does not prove review.
+
+Version 6 adds `opportunities`, `opportunity_support`, `opportunity_events`, and `opportunity_page_evidence`. Schema version 10 keeps the selected series and window, observed evidence IDs, human or assistant hypothesis, review decisions, and page excerpt provenance. A saved evidence ID can become stale if its answer is deleted; the opportunity then reports that its linked evidence is unavailable. An exported page excerpt is a user or assistant input unless its provenance is `observed_fetch` and it matches a stored fetch source.
 
 The export preserves original query text and URLs next to normalized grouping keys. `search_events` records actions; `search_queries` records exposed wording; `source_observations` records returned or fetched sources; `answer_citations` records explicit final references. A null action or source association means the provider did not establish that edge. The old `citations` table remains for compatibility and can contain legacy provenance that is not known precisely.
 

@@ -124,6 +124,35 @@ const TOOLS = [
       ['series_id', 'days', 'start', 'end'])}` }),
   },
   {
+    name: 'hearsay_opportunities',
+    readOnly: true,
+    description: 'Read deterministic opportunity candidates and the reviewed shortlist for one exact measurement series, intent, and UTC window. Findings retain receipt IDs and never trigger a provider call.',
+    inputSchema: obj({ series_id: { type: 'string' }, intent_id: { type: 'integer', minimum: 1 },
+      days: DAYS, start: UTC_BOUNDARY, end: UTC_BOUNDARY }, ['series_id', 'intent_id', 'start', 'end']),
+    call: (a) => ({ method: 'GET', path: `/api/opportunities${query(a,
+      ['series_id', 'intent_id', 'days', 'start', 'end'])}` }),
+  },
+  {
+    name: 'hearsay_opportunity_propose',
+    description: 'Save an assistant-authored opportunity proposal from exact scoped answer, query, source, or citation IDs. The server validates every ID and derives observed facts; your hypothesis stays labeled and a human must accept it before it enters the action queue. This never publishes or starts a measurement run.',
+    inputSchema: obj({
+      series_id: { type: 'string' }, intent_id: { type: 'integer', minimum: 1 },
+      start: UTC_BOUNDARY, end: UTC_BOUNDARY,
+      evidence: { type: 'array', minItems: 1, items: obj({
+        response_id: { type: 'integer', minimum: 1 }, query_id: { type: 'integer', minimum: 1 },
+        source_id: { type: 'integer', minimum: 1 }, citation_id: { type: 'integer', minimum: 1 },
+      }, ['response_id']) },
+      hypothesis: { type: 'string', minLength: 1, maxLength: 2000 },
+      suggested_action: { type: 'string', maxLength: 2000 },
+      target_url: { type: 'string', maxLength: 2048 },
+      product_area: { type: 'string', maxLength: 200 },
+      controllability: { type: 'string', enum: ['owned', 'third_party', 'product'] },
+      missing_evidence: { type: 'string', maxLength: 1000 },
+      claimed_false_or_outdated: { type: 'boolean', description: 'Classify an alleged false or outdated answer claim as verify_claim until the user attaches and reviews authoritative evidence' },
+    }, ['series_id', 'intent_id', 'start', 'end', 'evidence', 'hypothesis']),
+    call: (a) => ({ method: 'POST', path: '/api/opportunities/propose', body: a }),
+  },
+  {
     name: 'hearsay_intent_results',
     readOnly: true,
     description:

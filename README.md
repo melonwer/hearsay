@@ -110,6 +110,12 @@ describe this configured panel, not customer search demand. Manual theme labels 
 separate from the provider's wording. The [evidence report guide](docs/evidence-report.md)
 explains the denominators and unknown associations.
 
+The Opportunities page turns selected receipts and repeated patterns into a reviewable
+shortlist. Each observed finding links to the answer and evidence IDs in one exact series
+and window. You can prioritize, dismiss, combine, or investigate a candidate. Page-change
+actions need reviewed page evidence, and assistant proposals need human acceptance.
+See [review evidence-backed opportunities](docs/opportunities.md).
+
 The setup wizard asks who buys, what job they need done, and the desired conversion.
 It offers five editable intent groups with three phrasings each, then shows the exact
 questions and first-run target count before approval. Fewer questions are fine.

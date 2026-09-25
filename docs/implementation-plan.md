@@ -23,7 +23,7 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [x] C10 — question, search, source, and answer report
 - [ ] Release A gate — C03 usage accounting and C06 legal review remain open
 - [x] C11 — buyer-focused benchmark setup
-- [ ] C12 — reviewable evidence-linked opportunities
+- [x] C12 — reviewable evidence-linked opportunities
 - [ ] C13 — interventions and follow-up plans
 - [ ] C14 — descriptive intervention comparisons
 - [ ] C15 — outcome records and weekly review
