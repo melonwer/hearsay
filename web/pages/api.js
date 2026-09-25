@@ -47,6 +47,7 @@ import { buildWeeklyReview, renderWeeklyMarkdown, WeeklyReviewError } from '../.
 import { OutcomeError, recordOutcome, importOutcomeCsv, recordLedgerEntry,
   exportOutcomeCsv } from '../../core/outcomes.js';
 import { renderWeeklyReviewExport } from './weekly-review.js';
+import { trackingHealth } from '../../core/tracking-health.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
@@ -1456,9 +1457,11 @@ function statusReport({ db, config, version }) {
     },
     schedule: {
       runAt: config.runAt,
-      schedulerEnabled: !config.demo && (config.enabledProviders.length > 0 || getSubscriptionSchedule(db) !== null),
+      schedulerEnabled: !config.demo && (config.enabledProviders.length > 0 ||
+        config.subscriptionSurfaces.length > 0 && getSubscriptionSchedule(db) !== null),
       subscription: getSubscriptionSchedule(db),
     },
+    trackingHealth: trackingHealth({ db, config }),
     subscription: {
       surfaces: config.subscriptionSurfaces.map((surface) => ({
         id: surface,

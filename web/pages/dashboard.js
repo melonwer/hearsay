@@ -30,6 +30,7 @@ import { barChartH, lineChart, meter, sparkline } from '../svg.js';
 import { metrics, soft } from '../data.js';
 import { brandEntity, colorIndexFor, latestReceipts, listAlerts, listEntities } from '../queries.js';
 import { surfaceLabel } from '../../core/subscription-model.js';
+import { trackingHealth } from '../../core/tracking-health.js';
 
 /** Window the dashboard reports on, in days (§7). */
 export const WINDOW_DAYS = 30;
@@ -130,6 +131,7 @@ export function deltaPoints(last7, last14) {
  * @property {ReturnType<typeof metrics.listMeasurementSeries>} seriesOptions
  * @property {string} recMethod
  * @property {boolean} demo
+ * @property {ReturnType<typeof trackingHealth>} trackingHealth
  * @property {{id: number, name: string}|null} brand
  * @property {number} entityCount
  * @property {DashboardKpis} kpi
@@ -258,6 +260,7 @@ export function buildView({ db, config }, opts = {}) {
     seriesOptions,
     recMethod,
     demo: config.demo,
+    trackingHealth: trackingHealth({ db, config, now }),
     brand: brand ? { id: brand.id, name: brand.name } : null,
     entityCount: entities.length,
     kpi: {
@@ -707,14 +710,39 @@ function receiptsPanel(view) {
   </section>`;
 }
 
+/** @param {ReturnType<typeof buildView>} view */
+function trackingPanel(view) {
+  const rows = [
+    { label: 'API', lane: view.trackingHealth.api },
+    { label: 'Subscription agents', lane: view.trackingHealth.subscription },
+  ].map(({ label, lane }) => html`<tr>
+    <th scope="row">${label}</th>
+    <td>${lane.enabled ? 'Scheduled' : 'Disabled'}</td>
+    <td>${lane.lastSuccessfulObservationAt ?? 'No successful observation yet'}</td>
+    <td>${lane.nextScheduledAt ?? 'None'}</td>
+    <td>${lane.recentIssues.length ? `${lane.recentIssues.length} recent missed or failed run(s)` : 'No recent missed or failed runs'}</td>
+  </tr>`);
+  const guidance = [view.trackingHealth.api.guidance, view.trackingHealth.subscription.guidance]
+    .filter(Boolean);
+  return html`<section class="card" aria-label="Tracking health">
+    <h2>Tracking health</h2>
+    <p class="muted small">Times below are UTC. The next occurrence requires Hearsay to be running; missed runs do not replay.</p>
+    <table class="table"><thead><tr><th>Route</th><th>Schedule</th><th>Last successful observation</th><th>Next occurrence</th><th>Recent runs</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    ${guidance.map((message) => html`<p class="muted small">${message}</p>`)}
+    <p><a href="/settings">View schedule settings and run health</a></p>
+  </section>`;
+}
+
 /**
  * @param {import('../layout.js').ShellCtx} ctx
  * @param {ReturnType<typeof buildView>} view
  * @returns {string}
  */
 export function render(ctx, view) {
+  const health = trackingPanel(view);
   if (view.entityCount === 0) {
-    const body = html`${emptyState({
+    const body = html`${health}${emptyState({
       title: 'Nothing measured yet',
       line: 'Hearsay needs to know which brands to count before it can tell you anything.',
       hint: ctx.demo
@@ -726,7 +754,7 @@ export function render(ctx, view) {
   }
 
   if (view.series === null) {
-    const body = html`${view.seriesOptions.length ? seriesSelector(view) : ''}${emptyState({
+    const body = html`${health}${view.seriesOptions.length ? seriesSelector(view) : ''}${emptyState({
       title: view.seriesOptions.length ? 'Selected series has no data in this window' : 'No measurement series has data yet',
       line: 'Run a reviewed tracking panel to create comparable answer evidence.',
       hint: 'The dashboard will select a series with real observations when one is available.',
@@ -736,7 +764,7 @@ export function render(ctx, view) {
   }
   if (view.series.comparableAnswers === 0) {
     const targets = new URLSearchParams({ series_id: view.series.id, days: String(view.days) });
-    const body = html`${seriesSelector(view)}${emptyState({
+    const body = html`${health}${seriesSelector(view)}${emptyState({
       title: 'No comparable answers in this series',
       line: `${view.series.attemptedTargets} targets were attempted, but none has a complete comparable answer in this window.`,
       hint: 'Inspect failed and incomplete targets before interpreting a missing rate.',
@@ -745,7 +773,7 @@ export function render(ctx, view) {
     return layout({ title: 'Dashboard', active: '/', ctx, body });
   }
 
-  const body = html`${seriesSelector(view)}${kpiRow(view)}${evidencePanel(view)}${trendPanel(view)}${providerRow(view)}${leaderboardPanel(view)}${alertsPanel(view)}${citationGapPanel(
+  const body = html`${health}${seriesSelector(view)}${kpiRow(view)}${evidencePanel(view)}${trendPanel(view)}${providerRow(view)}${leaderboardPanel(view)}${alertsPanel(view)}${citationGapPanel(
     view,
   )}${receiptsPanel(view)}`;
   return layout({ title: 'Dashboard', active: '/', ctx, body });

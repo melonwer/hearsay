@@ -18,6 +18,7 @@ import { apiSearchScheduleApproved } from '../../core/api-search-schedule.js';
 import { activePromptCount } from '../queries.js';
 import { get, getSetting, SETTING_KEYS } from '../../core/db.js';
 import { getSubscriptionSchedule } from '../../core/subscription-scheduler.js';
+import { trackingHealth } from '../../core/tracking-health.js';
 
 /** Window used for computed API usage cost (§4.3). */
 export const SPEND_DAYS = 30;
@@ -86,6 +87,7 @@ function humanSize(bytes) {
  * @property {{id:string,label:string,enabled:boolean,optedIn:boolean}[]} subscriptionSurfaces
  * @property {{id:number,status:string,totalCalls:number,doneCalls:number}|null} subscriptionRun
  * @property {import('../../core/subscription-scheduler.js').SubscriptionSchedule|null} subscriptionSchedule
+ * @property {ReturnType<typeof trackingHealth>} trackingHealth
  */
 
 /**
@@ -165,6 +167,7 @@ export function buildView({ db, config }) {
         }
       : null,
     subscriptionSchedule: getSubscriptionSchedule(db),
+    trackingHealth: trackingHealth({ db, config }),
   };
 }
 
@@ -318,6 +321,30 @@ function subscriptionPanel(view) {
   </section>`;
 }
 
+/** @param {ReturnType<typeof buildView>} view */
+function trackingHealthPanel(view) {
+  const rows = [
+    { label: 'API panel', lane: view.trackingHealth.api },
+    { label: 'Subscription agents', lane: view.trackingHealth.subscription },
+  ].map(({ label, lane }) => html`<tr>
+    <th scope="row">${label}</th>
+    <td>${lane.enabled ? 'Enabled' : 'Disabled'}</td>
+    <td>${lane.lastSuccessfulObservationAt ?? 'None yet'}</td>
+    <td>${lane.nextScheduledAt ?? 'None'}</td>
+    <td>${lane.recentIssues.length
+      ? lane.recentIssues.map((issue) => html`<span>${issue.status} on ${issue.occurredAt} (run ${issue.runId})<br /></span>`)
+      : 'None'}</td>
+  </tr>`);
+  return html`<section class="card" aria-label="Tracking health">
+    <h2>Tracking health</h2>
+    <p class="muted small">Observation and next occurrence times are UTC. Hearsay only runs schedules while the server is running.</p>
+    <table class="table"><thead><tr><th>Route</th><th>Schedule</th><th>Last successful observation</th><th>Next occurrence</th><th>Recent missed or failed runs</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    ${view.trackingHealth.api.guidance ? html`<p>${view.trackingHealth.api.guidance}</p>` : ''}
+    ${view.trackingHealth.subscription.guidance ? html`<p>${view.trackingHealth.subscription.guidance}</p>` : ''}
+  </section>`;
+}
+
 /**
  * @param {import('../layout.js').ShellCtx} ctx
  * @param {ReturnType<typeof buildView>} view
@@ -333,7 +360,7 @@ export function render(ctx, view) {
     </tr>`,
   );
 
-  const body = html`${subscriptionPanel(view)}
+  const body = html`${trackingHealthPanel(view)}${subscriptionPanel(view)}
     <section class="card">
       <h2>API providers</h2>
       <p class="muted">

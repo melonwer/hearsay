@@ -3,9 +3,8 @@
  *
  * A one-minute interval, not a cron parser: once local wall-clock time has passed
  * `config.runAt` and `settings.last_scheduled_run_date` is not today's local date, fire
- * one panel run with trigger `cron` and record the date. Deliberately naive and readable
- * — recovery after downtime falls out of it (miss 07:00 because the box was off, run at
- * boot instead), and it costs nothing on a machine that is asleep at the scheduled time.
+ * one panel run with trigger `cron` and record the date. A restart after the day's
+ * scheduled time records a missed occurrence without starting a paid catch-up run.
  *
  * Dates: `runAt` and the run-date bookkeeping are **local** time, because "run at 07:00"
  * means the operator's 07:00. Everything written to the database stays UTC ISO-8601
@@ -15,7 +14,7 @@
  */
 
 import { config as processConfig } from './config.js';
-import { SETTING_KEYS, getSetting, setSetting } from './db.js';
+import { SETTING_KEYS, getSetting, isoNow, run, setSetting } from './db.js';
 import { runPanel as defaultRunPanel } from './runner.js';
 import { runSubscriptionPanel as defaultRunSubscriptionPanel } from './subscription-runner.js';
 import { getSubscriptionSchedule, subscriptionScheduleTick } from './subscription-scheduler.js';
@@ -98,21 +97,30 @@ export function startScheduler(options) {
   } = options;
 
   const apiEnabled = !config.demo && config.enabledProviders.length > 0;
-  const subscriptionEnabled = !config.demo && config.subscriptionSurfaces.length > 0 && getSubscriptionSchedule(db) !== null;
-  // §8.2: disabled when demo mode (demo instances must never spend money) or when
-  // neither an API panel nor an explicitly consented subscription schedule exists.
-  if (!apiEnabled && !subscriptionEnabled) {
+  const subscriptionCapable = !config.demo && config.subscriptionSurfaces.length > 0;
+  // Demo mode and installs without any available provider keep no scheduler timer.
+  // A subscription-only install checks for consent each tick so saving a schedule
+  // after startup does not require a restart.
+  if (!apiEnabled && !subscriptionCapable) {
     return { enabled: false, tick: async () => false, stop: () => {} };
   }
 
   if (apiEnabled) {
-    // Startup guard: if today's scheduled time has already passed when we boot and we have
-    // no record for today, claim the day rather than firing immediately. Restarting the
-    // server at 23:00 should not spend a panel run's worth of API credit on the spot; the
-    // next run happens at tomorrow's `runAt`. Booting *before* runAt still runs today.
+    // A prior run date may be several days old after downtime. Claim today's missed
+    // occurrence before any tick so restarting never spends API credit to catch up.
     const bootedAt = now();
-    if (getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, null) === null && localHm(bootedAt) >= config.runAt) {
-      setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, localDate(bootedAt));
+    const today = localDate(bootedAt);
+    const previousRunDate = getSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, /** @type {string|null} */ (null));
+    if (previousRunDate !== today && localHm(bootedAt) >= config.runAt) {
+      const [hour, minute] = config.runAt.split(':').map(Number);
+      const scheduledFor = new Date(bootedAt.getFullYear(), bootedAt.getMonth(), bootedAt.getDate(), hour, minute);
+      if (previousRunDate !== null) {
+        run(db, `INSERT OR IGNORE INTO runs(started_at,finished_at,trigger,status,total_calls,done_calls,error,
+          schedule_key,scheduled_for,occurrence_local_date)
+          VALUES(?,?,'cron','missed',0,0,'api:missed_occurrence','api-panel',?,?)`,
+        [isoNow(bootedAt), isoNow(bootedAt), isoNow(scheduledFor), today]);
+      }
+      setSetting(db, SETTING_KEYS.LAST_SCHEDULED_RUN_DATE, today);
     }
   }
 
@@ -144,7 +152,7 @@ export function startScheduler(options) {
         }
       }
     }
-    if (subscriptionEnabled && !subscriptionBusy) {
+    if (subscriptionCapable && getSubscriptionSchedule(db) !== null && !subscriptionBusy) {
       subscriptionBusy = true;
       try {
         const changed = await subscriptionScheduleTick({ db, config, now: now(), runSubscription, log });
@@ -165,7 +173,7 @@ export function startScheduler(options) {
   timer.unref?.();
   // A subscription schedule must inspect the current and prior local dates at boot so
   // an offline machine records a missed occurrence instead of silently replaying it.
-  if (subscriptionEnabled) void tick();
+  if (subscriptionCapable && getSubscriptionSchedule(db) !== null) void tick();
 
   return {
     enabled: true,
