@@ -144,6 +144,41 @@ test('populated v12 data survives outcome ledger migration with a recoverable ba
   backup.close();
 });
 
+test('populated v13 data gains separate provider charge fields and a recoverable backup', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'hearsay-charge-migration-'));
+  const path = join(dir, 'hearsay.db');
+  const oldDb = new DatabaseSync(path);
+  oldDb.exec(V1);
+  advanceFixtureToV4(oldDb);
+  for (const migration of MIGRATIONS.filter((item) => item.version >= 5 && item.version <= 13)) {
+    oldDb.exec('BEGIN');
+    if (typeof migration.apply === 'function') migration.apply(oldDb);
+    else oldDb.exec(migration.sql);
+    oldDb.exec(`PRAGMA user_version = ${migration.version}`);
+    oldDb.exec('COMMIT');
+  }
+  oldDb.close();
+  const db = openDb(path);
+  t.after(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  assert.equal(userVersion(db), SCHEMA_VERSION);
+  const oldAnswer = get(db, 'SELECT text, reported_charge_usd, reported_charge_provenance FROM responses WHERE id = 1');
+  assert.deepEqual({ ...oldAnswer }, {
+    text: 'Acme is a good option.', reported_charge_usd: null, reported_charge_provenance: null,
+  });
+  assert.throws(() => run(db, 'UPDATE responses SET reported_charge_usd = 1 WHERE id = 1'), /CHECK constraint failed/);
+  assert.throws(() => run(db, `UPDATE responses SET reported_charge_usd = -1,
+    reported_charge_provenance = 'provider_reported' WHERE id = 1`), /CHECK constraint failed/);
+  const backupName = readdirSync(dir).find((name) => /^hearsay\.db\.migration-.*\.v13\.db$/.test(name));
+  assert.ok(backupName);
+  const backup = new DatabaseSync(join(dir, backupName));
+  assert.equal(userVersion(backup), 13);
+  assert.equal(Number(get(backup, 'SELECT COUNT(*) AS n FROM responses')?.n), 2);
+  backup.close();
+});
+
 test('new evidence rows retain distinct queries, sources, citations, and attempt usage', (t) => {
   const db = openDb(':memory:');
   t.after(() => db.close());
@@ -264,7 +299,7 @@ test('queued target keeps its original definitions and stores provider evidence 
 
   const exported = exportAll(db);
   const tables = /** @type {Record<string, Record<string, unknown>[]>} */ (exported.tables);
-  assert.equal(exported.exportFormatVersion, 9);
+  assert.equal(exported.exportFormatVersion, 10);
   assert.equal(exported.databaseSchemaVersion, SCHEMA_VERSION);
   assert.equal(tables.execution_profiles.length, 1);
   assert.equal(tables.benchmark_revisions.length, 1);

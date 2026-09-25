@@ -186,6 +186,27 @@ test('search estimate includes one tool call per target and labels the forecast 
   assert.ok(Math.abs(Number(estimate.estUsd) - 0.02128) < 1e-12);
 });
 
+test('unknown token price retains known web-search forecast as a partial subtotal', () => {
+  const estimate = estimateRunCost({ promptCount: 2, samples: 1,
+    providers: [{ id: 'openai', model: 'unpriced-search-model', searchPolicy: 'required' }] }, NO_ENV);
+  assert.equal(estimate.estUsd, null);
+  assert.equal(estimate.knownSubtotalUsd, 0.02);
+  assert.equal(estimate.costStatus, 'partial');
+  assert.deepEqual(estimate.perProvider[0].unpricedComponents, ['tokens']);
+  assert.equal(estimate.perProvider[0].tokenUsd, null);
+  assert.equal(estimate.perProvider[0].searchToolUsd, 0.02);
+});
+
+test('request price override remains visible when token price is unknown', () => {
+  const estimate = estimateRunCost({ promptCount: 2, samples: 1,
+    providers: [{ id: 'perplexity', model: 'unpriced-sonar-model' }] },
+  { ...NO_ENV, HEARSAY_PRICE_PERPLEXITY_REQUEST: '0.008' });
+  assert.equal(estimate.estUsd, null);
+  assert.equal(estimate.knownSubtotalUsd, 0.016);
+  assert.equal(estimate.perProvider[0].requestUsd, 0.016);
+  assert.deepEqual(estimate.perProvider[0].unpricedComponents, ['tokens']);
+});
+
 test('bounded Anthropic search includes its tool-call forecast without claiming an internal unlimited route', () => {
   const estimate = estimateRunCost({ promptCount: 1, samples: 1,
     providers: [{ id: 'anthropic', model: 'claude-sonnet-5', searchPolicy: 'auto',

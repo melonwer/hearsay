@@ -989,6 +989,7 @@ function patchIntent({ db }, ctx) {
  * @returns {{calls: number, estUsd: number|null, knownSubtotalUsd:number|null,
  *   costStatus:'known'|'partial'|'unavailable', unpriced:string[],
  *   perProvider: import('../../core/cost.js').ProviderEstimate[], hasUnboundedSearch:boolean, hasSearch:boolean,
+ *   assumedTokens:{input:number,output:number},
  *   quoteId:string, executionBudgets:ReturnType<typeof apiExecutionBudget>[]}}
  */
 export function costEstimate({ db, config }) {
@@ -1019,6 +1020,7 @@ export function costEstimate({ db, config }) {
     costStatus: estimate.costStatus,
     unpriced: estimate.unpriced,
     perProvider: estimate.perProvider,
+    assumedTokens: estimate.assumedTokens,
     hasUnboundedSearch: estimate.hasUnboundedSearch,
     hasSearch: estimate.hasSearch,
     executionBudgets,
@@ -1378,6 +1380,7 @@ async function startRun({ db, config }, ctx) {
       costStatus: estimate.costStatus,
       unpriced: estimate.unpriced,
       perProvider: estimate.perProvider,
+      assumedTokens: estimate.assumedTokens,
       hasUnboundedSearch: estimate.hasUnboundedSearch,
       hasSearch: estimate.hasSearch,
       executionBudgets: estimate.executionBudgets,
@@ -2256,6 +2259,12 @@ export function registerApiRoutes(router, deps) {
           benchmark_revision_id: item.benchmark_revision_id,
           comparison_key: item.comparison_key,
           search_policy: item.search_policy,
+          cost_usd: item.cost_usd,
+          cost_known_subtotal_usd: item.cost_known_subtotal_usd,
+          cost_status: item.cost_status,
+          cost_provenance: item.cost_provenance,
+          reported_charge_usd: item.reported_charge_usd,
+          reported_charge_provenance: item.reported_charge_provenance,
           correction_cutoff: item.correction_cutoff,
           mentions: item.mentions.map((mention) => ({
             id: mention.id,

@@ -180,7 +180,14 @@ function costPanel(view) {
     (row) => html`<tr>
       <td>${row.provider}</td>
       <td class="num">${row.calls}</td>
-      <td class="num">${usd(row.estUsd)}</td>
+      <td class="num">${usd(row.tokenUsd)}</td>
+      <td class="num">${usd(row.requestUsd)}</td>
+      <td class="num">${usd(row.searchToolUsd)}</td>
+      <td class="num">${row.estUsd === null
+        ? row.knownSubtotalUsd === null
+          ? html`Unknown ${row.unpricedComponents.join(', ')}`
+          : html`${usd(row.knownSubtotalUsd)} known + unknown ${row.unpricedComponents.join(', ')}`
+        : usd(row.estUsd)}</td>
     </tr>`,
   );
   const budgets = view.executionBudgets.map((budget) => html`<tr>
@@ -221,6 +228,9 @@ function costPanel(view) {
             <tr>
               <th>API provider</th>
               <th class="num">API calls</th>
+              <th class="num">Tokens</th>
+              <th class="num">Requests</th>
+              <th class="num">Search tools</th>
               <th class="num">Estimated API cost</th>
             </tr>
           </thead>

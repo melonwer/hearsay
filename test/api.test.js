@@ -109,7 +109,7 @@ test('weekly review API, page, and local exports share exact scope without start
     assert.match(await exportedCsv.text(), /Qualified leads/);
     assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n), before);
     const fullExport = await api(app.base, 'GET', '/api/export');
-    assert.equal(fullExport.body.exportFormatVersion, 9);
+    assert.equal(fullExport.body.exportFormatVersion, 10);
     assert.equal(fullExport.body.tables.outcome_records.length, 2);
     assert.equal(fullExport.body.tables.ledger_entries.length, 1);
   } finally {
@@ -252,7 +252,7 @@ test('opportunities API and page keep exact evidence scope and ordinary reads do
       .then((response) => response.text());
     assert.match(withPending, /Pending assistant proposals/);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 9);
+    assert.equal(exported.body.exportFormatVersion, 10);
     assert.equal(exported.body.tables.opportunities.length, 2);
     assert.equal(exported.body.tables.opportunity_events.length, 7);
     assert.equal(exported.body.tables.follow_up_plans.length, 1);
@@ -315,7 +315,7 @@ test('evidence API and page expose the same scoped receipts without rendering st
     assert.deepEqual(themed.body.report.themeGroups.map((group) => [group.label, group.responseIncidence]),
       [['Pricing & <review>', 1]]);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 9);
+    assert.equal(exported.body.exportFormatVersion, 10);
     assert.equal(exported.body.tables.query_themes.length, 1);
     assert.equal(exported.body.tables.query_theme_assignments.length, 1);
 
@@ -668,7 +668,7 @@ test('draft review rejects placeholders and duplicates, then approves a keyless 
     assert.deepEqual((await api(app.base, 'GET', '/api/prompts')).body.map((row) => row.source_note),
       ['From buyer email', 'From sales call']);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 9);
+    assert.equal(exported.body.exportFormatVersion, 10);
     assert.equal(exported.body.tables.benchmark_drafts.length, 1);
     assert.ok(JSON.stringify(exported.body.tables.benchmark_drafts).includes('From buyer email'));
     assert.ok(!String(get(app.db, 'SELECT snapshot_json FROM benchmark_revisions ORDER BY created_at DESC LIMIT 1')?.snapshot_json)
@@ -757,6 +757,9 @@ test('OpenAI search run requires its forecast quote and persists separate eviden
     assert.equal(quote.body.hasUnboundedSearch, true);
     assert.equal(quote.body.perProvider[0].assumedSearchCalls, 1);
     assert.equal(quote.body.perProvider[0].searchToolUsd, 0.01);
+    assert.deepEqual(quote.body.assumedTokens, { input: 200, output: 500 });
+    assert.ok(Math.abs(quote.body.perProvider[0].tokenUsd - 0.00064) < 1e-12);
+    assert.equal(quote.body.perProvider[0].requestUsd, 0);
     assert.equal(providerCalls, 0);
     const started = await api(app.base, 'POST', '/api/run', {
       confirm: true, quote_id: quote.body.quoteId,
@@ -792,6 +795,40 @@ test('OpenAI search run requires its forecast quote and persists separate eviden
     assert.match(dashboard, new RegExp(`series_id=${selected.id}`));
     const exact = await api(app.base, 'GET', `/api/series/summary?series_id=${selected.id}`);
     assert.equal(exact.body.series.comparableAnswers, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test('Sonar provider charge stays separate from computed cost in API, page, and export', async () => {
+  const app = await bootRunnable({ OPENAI_API_KEY: '', PERPLEXITY_API_KEY: 'fixture-key',
+    HEARSAY_CONFIRM_USD: '999' });
+  _setFetch(async () => new Response(JSON.stringify({
+    model: 'sonar', choices: [{ finish_reason: 'stop',
+      message: { content: 'Try Acme.' } }],
+    usage: { prompt_tokens: 5, completion_tokens: 5, cost: { total_cost: 0.037 } },
+    search_results: [], citations: [],
+  }), { status: 200 }));
+  try {
+    const started = await api(app.base, 'POST', '/api/run', {});
+    assert.equal(started.status, 202);
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (get(app.db, 'SELECT status FROM runs WHERE id = ?', [started.body.runId])?.status === 'done') break;
+      await sleep(20);
+    }
+    const receipt = (await api(app.base, 'GET', '/api/answers')).body.items[0];
+    assert.equal(receipt.reported_charge_usd, 0.037);
+    assert.equal(receipt.reported_charge_provenance, 'provider_reported');
+    assert.equal(receipt.cost_provenance, 'computed');
+    assert.ok(Math.abs(receipt.cost_usd - 0.00501) < 1e-12);
+    const page = await fetch(`${app.base}/answers`).then((response) => response.text());
+    assert.match(page, /Provider-reported charge: \$0\.037/);
+    assert.match(page, /Computed usage cost: \$0\.0050/);
+    const exported = await api(app.base, 'GET', '/api/export');
+    assert.equal(exported.body.exportFormatVersion, 10);
+    const saved = exported.body.tables.responses.find((item) => item.id === receipt.id);
+    assert.equal(saved.reported_charge_usd, 0.037);
+    assert.equal(saved.reported_charge_provenance, 'provider_reported');
   } finally {
     await app.close();
   }

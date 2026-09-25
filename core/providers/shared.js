@@ -25,6 +25,7 @@
  * @property {import('../measurement-contract.js').AnswerCitation[]} [answerCitations]
  * @property {boolean} [noSearchConfirmed] complete auto response with no search call
  * @property {import('../cost.js').BillableAttempt[]} [billableAttempts] provider-reported attempt and continuation usage
+ * @property {number|null} [providerReportedChargeUsd] provider-supplied monetary total, separate from computed usage cost
  */
 
 /** @typedef {'auth'|'quota'|'timeout'|'cancelled'|'other'} ProviderErrorKind */

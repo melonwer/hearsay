@@ -222,8 +222,13 @@ export function summarizeComputedCosts(input) {
  * @property {string} model
  * @property {number} calls
  * @property {number|null} estUsd null when this provider's model has no known price
+ * @property {number|null} knownSubtotalUsd known estimate components for this provider
+ * @property {number|null} tokenUsd forecast token cost
+ * @property {number|null} requestUsd forecast per-request cost
  * @property {number} assumedSearchCalls search calls forecast for this provider
  * @property {number|null} searchToolUsd included search-tool forecast, null if unpriced
+ * @property {'known'|'partial'|'unavailable'} costStatus
+ * @property {string[]} unpricedComponents components with no checked price
  * @property {boolean} unboundedSearch provider does not enforce a search-call ceiling
  */
 
@@ -266,6 +271,7 @@ export function estimateRunCost(input, env = process.env) {
   const unpriced = [];
   let total = 0;
   let priced = 0;
+  let anyKnown = false;
   let hasUnboundedSearch = false;
   let hasSearch = false;
 
@@ -275,29 +281,44 @@ export function estimateRunCost(input, env = process.env) {
     const assumedSearchCalls = searchEnabled ? callsPerProvider : 0;
     const searchPrice = searchEnabled
       ? SEARCH_TOOL_PRICES[/** @type {keyof typeof SEARCH_TOOL_PRICES} */ (provider.id)] ?? null : 0;
-    const searchToolUsd = searchPrice === null ? null : searchPrice * assumedSearchCalls;
+    const searchToolUsd = !searchEnabled ? 0 : searchPrice === null ? null : searchPrice * assumedSearchCalls;
     hasUnboundedSearch ||= unboundedSearch;
     hasSearch ||= searchEnabled;
-    const unit = costUsd({ provider: provider.id, model: provider.model, tokensIn, tokensOut }, env);
-    if (unit === null || searchToolUsd === null) {
-      unpriced.push(provider.id);
-      perProvider.push({ provider: provider.id, model: provider.model, calls: callsPerProvider,
-        estUsd: null, assumedSearchCalls, searchToolUsd, unboundedSearch });
-      continue;
+    const modelPrice = priceFor(provider.id, provider.model, env);
+    const tokenUsd = modelPrice === null ? null :
+      (tokensIn * modelPrice.inputPerMTok + tokensOut * modelPrice.outputPerMTok) * callsPerProvider / MILLION;
+    const requestOverride = positiveNumber(env[`HEARSAY_PRICE_${String(provider.id).toUpperCase()}_REQUEST`]);
+    const requestUsd = modelPrice === null
+      ? requestOverride !== null ? requestOverride * callsPerProvider
+        : provider.id === 'openai' || provider.id === 'anthropic' || provider.id === 'gemini' ? 0 : null
+      : modelPrice.requestUsd * callsPerProvider;
+    const unpricedComponents = [
+      ...(tokenUsd === null ? ['tokens'] : []),
+      ...(requestUsd === null ? ['request'] : []),
+      ...(searchEnabled && searchToolUsd === null ? ['web_search'] : []),
+    ];
+    const knownParts = [tokenUsd, requestUsd, ...(searchEnabled ? [searchToolUsd] : [])]
+      .filter((amount) => amount !== null);
+    const knownSubtotalUsd = knownParts.length === 0 ? null : knownParts.reduce((sum, amount) => sum + Number(amount), 0);
+    const estUsd = unpricedComponents.length === 0 ? knownSubtotalUsd : null;
+    const costStatus = unpricedComponents.length === 0 ? 'known' : knownSubtotalUsd === null ? 'unavailable' : 'partial';
+    if (estUsd === null) unpriced.push(provider.id);
+    else priced += 1;
+    if (knownSubtotalUsd !== null) {
+      total += knownSubtotalUsd;
+      anyKnown = true;
     }
-    const estUsd = unit * callsPerProvider + searchToolUsd;
-    priced += 1;
-    total += estUsd;
     perProvider.push({ provider: provider.id, model: provider.model, calls: callsPerProvider,
-      estUsd, assumedSearchCalls, searchToolUsd, unboundedSearch });
+      estUsd, knownSubtotalUsd, tokenUsd, requestUsd, assumedSearchCalls,
+      searchToolUsd, costStatus, unpricedComponents, unboundedSearch });
   }
 
   return {
     calls: callsPerProvider * input.providers.length,
     estUsd: priced === input.providers.length && priced > 0 ? total : null,
-    knownSubtotalUsd: priced === 0 ? null : total,
+    knownSubtotalUsd: anyKnown ? total : null,
     costStatus: priced === input.providers.length && priced > 0 ? 'known'
-      : priced > 0 ? 'partial' : 'unavailable',
+      : anyKnown ? 'partial' : 'unavailable',
     perProvider,
     unpriced,
     assumedTokens: { input: tokensIn, output: tokensOut },

@@ -689,6 +689,17 @@ export const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'ledger entries are immutable'); END;
     `,
   },
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE responses ADD COLUMN reported_charge_usd REAL
+        CHECK (reported_charge_usd IS NULL OR reported_charge_usd >= 0);
+      ALTER TABLE responses ADD COLUMN reported_charge_provenance TEXT
+        CHECK ((reported_charge_provenance IS NULL AND reported_charge_usd IS NULL)
+          OR (COALESCE(reported_charge_provenance, '') = 'provider_reported'
+            AND reported_charge_usd IS NOT NULL));
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

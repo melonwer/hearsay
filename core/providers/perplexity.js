@@ -86,7 +86,7 @@ export async function runPrompt(text, opts = {}) {
   );
   const latencyMs = Date.now() - startedAt;
 
-  const data = /** @type {{model?: unknown, choices?: {message?: {content?: unknown}, finish_reason?:unknown}[], citations?: unknown, search_results?: unknown, usage?: {prompt_tokens?: unknown, completion_tokens?: unknown}}|null} */ (
+  const data = /** @type {{model?: unknown, choices?: {message?: {content?: unknown}, finish_reason?:unknown}[], citations?: unknown, search_results?: unknown, usage?: {prompt_tokens?: unknown, completion_tokens?: unknown, cost?:{total_cost?:unknown}}}|null} */ (
     res.json
   );
   const { inputTokens: input, outputTokens: output } = reportedUsage(res.json);
@@ -140,6 +140,7 @@ export async function runPrompt(text, opts = {}) {
     latencyMs,
     tokens: tokensOrUndefined(input, output),
     billableAttempts: billableAttempts(res, input, output),
+    providerReportedChargeUsd: usageNumber(data.usage?.cost?.total_cost),
     answerStatus,
     sources,
     answerCitations,

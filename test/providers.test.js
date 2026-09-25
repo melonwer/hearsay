@@ -38,6 +38,7 @@ import {
 import { localDate, localHm, shouldRun, startScheduler } from '../core/scheduler.js';
 import { saveApiSearchSchedule } from '../core/api-search-schedule.js';
 import { reviewTrackingPrompt } from '../core/benchmark-draft.js';
+import { queryAnswers } from '../web/queries.js';
 
 /**
  * @param {string} name
@@ -363,7 +364,9 @@ describe('adapters (§5.2)', () => {
   });
 
   it('perplexity: retrieved results and final references remain separate', async () => {
-    const { calls } = stubFetch([{ status: 200, body: fixture('perplexity') }]);
+    const payload = fixture('perplexity');
+    payload.usage.cost = { total_cost: 0.019 };
+    const { calls } = stubFetch([{ status: 200, body: payload }]);
     const result = await perplexity.runPrompt('best AI meeting notes tool?', {
       apiKey: FAKE_KEY,
       model: 'sonar',
@@ -376,6 +379,7 @@ describe('adapters (§5.2)', () => {
     assert.match(result.text, /^Based on recent reviews/);
     assert.equal(result.model, 'sonar');
     assert.deepEqual(result.tokens, { input: 26, output: 144 });
+    assert.equal(result.providerReportedChargeUsd, 0.019);
     assert.deepEqual(result.sources?.map(({ url, provenance, order }) => [url, provenance, order]), [
       ['https://reviewradar.io/best-ai-meeting-notes', 'search_result', 0],
       ['https://worktools.dev/guides/meeting-notes-2026', 'search_result', 1],
@@ -610,13 +614,23 @@ describe('runner (§8.1)', () => {
     payload.search_results = payload.search_results.slice(0, 2);
     payload.citations = ['https://reviewradar.io/best-ai-meeting-notes'];
     payload.choices[0].message.content = 'Notewell is recommended [1].';
+    payload.usage.cost = { total_cost: 0.019 };
     stubFetch([{ status: 200, body: payload }]);
     const config = buildConfig({ PERPLEXITY_API_KEY: FAKE_KEY, HEARSAY_SAMPLES: '1' });
     const summary = await runPanel({ db, config, adapters: { perplexity }, analyzeResponse: fakeAnalyze, env: {} });
     assert.equal(summary.okCalls, 1);
-    const response = get(db, 'SELECT id, query_metadata_status, search_policy FROM responses LIMIT 1');
+    const response = get(db, `SELECT id, query_metadata_status, search_policy, cost_usd,
+      cost_provenance, reported_charge_usd, reported_charge_provenance
+      FROM responses LIMIT 1`);
     assert.equal(response.query_metadata_status, 'unavailable');
     assert.equal(response.search_policy, 'legacy');
+    assert.equal(response.cost_provenance, 'computed');
+    assert.equal(response.reported_charge_usd, 0.019);
+    assert.equal(response.reported_charge_provenance, 'provider_reported');
+    assert.notEqual(response.cost_usd, response.reported_charge_usd);
+    const receipt = queryAnswers(db, { days: 30 }).items[0];
+    assert.equal(receipt.reported_charge_usd, 0.019);
+    assert.equal(receipt.reported_charge_provenance, 'provider_reported');
     assert.deepEqual(all(db, 'SELECT url, provenance, original_order FROM source_observations WHERE response_id = ? ORDER BY original_order', [response.id]).map((row) => ({ ...row })), [
       { url: 'https://reviewradar.io/best-ai-meeting-notes', provenance: 'search_result', original_order: 0 },
       { url: 'https://worktools.dev/guides/meeting-notes-2026', provenance: 'search_result', original_order: 1 },

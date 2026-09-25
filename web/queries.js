@@ -369,6 +369,12 @@ export function activePromptCount(db) {
  * @property {string|null} benchmark_revision_id
  * @property {string|null} comparison_key
  * @property {string|null} search_policy
+ * @property {number|null} cost_usd
+ * @property {number|null} cost_known_subtotal_usd
+ * @property {string|null} cost_status
+ * @property {string|null} cost_provenance
+ * @property {number|null} reported_charge_usd
+ * @property {string|null} reported_charge_provenance
  * @property {number} correction_cutoff
  * @property {ReturnType<typeof answerReview>} review
  * @property {{id:number, entity_id: number, name: string, first_index: number, occurrences: number,
@@ -448,6 +454,8 @@ export function queryAnswers(db, filters = {}) {
             r.lane, r.target_status, r.comparability_status, r.web_status,
             r.prompt_text_snapshot, r.prompt_origin, r.cli_executable, r.artifact_ref,
             r.execution_profile_id, r.benchmark_revision_id, r.comparison_key, r.search_policy,
+            r.cost_usd, r.cost_known_subtotal_usd, r.cost_status, r.cost_provenance,
+            r.reported_charge_usd, r.reported_charge_provenance,
             COALESCE(r.prompt_text_snapshot, p.text) AS prompt
        FROM responses r
        JOIN prompts p ON p.id = r.prompt_id
@@ -486,6 +494,12 @@ export function queryAnswers(db, filters = {}) {
     benchmark_revision_id: row.benchmark_revision_id === null ? null : String(row.benchmark_revision_id),
     comparison_key: row.comparison_key === null ? null : String(row.comparison_key),
     search_policy: row.search_policy === null ? null : String(row.search_policy),
+    cost_usd: row.cost_usd === null ? null : Number(row.cost_usd),
+    cost_known_subtotal_usd: row.cost_known_subtotal_usd === null ? null : Number(row.cost_known_subtotal_usd),
+    cost_status: row.cost_status === null ? null : String(row.cost_status),
+    cost_provenance: row.cost_provenance === null ? null : String(row.cost_provenance),
+    reported_charge_usd: row.reported_charge_usd === null ? null : Number(row.reported_charge_usd),
+    reported_charge_provenance: row.reported_charge_provenance === null ? null : String(row.reported_charge_provenance),
     correction_cutoff: review.correctionCutoff,
     review,
     mentions: [],
@@ -635,7 +649,7 @@ export function exportAll(db) {
   ];
   /** @type {Record<string, unknown>} */
   const out = {
-    exportFormatVersion: 9,
+    exportFormatVersion: 10,
     databaseSchemaVersion: userVersion(db),
     exportedAt: `${new Date().toISOString().slice(0, 19)}Z`,
     tables: {},

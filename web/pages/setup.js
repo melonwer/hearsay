@@ -30,6 +30,8 @@ import { activePromptCount, brandEntity, listEntities } from '../queries.js';
  * @property {number} calls calls the first run would make (§4.2)
  * @property {number} subscriptionCalls subscription targets in the first run
  * @property {number|null} estUsd null when the price table has no entry — never a guess (§4.3)
+ * @property {number|null} knownSubtotalUsd priced components when the full estimate is unknown
+ * @property {string[]} unpriced providers with an unknown price component
  * @property {boolean} hasUnboundedSearch
  * @property {boolean} hasSearch
  */
@@ -77,6 +79,8 @@ export function buildView({ db, config }, query) {
     calls: estimate.calls,
     subscriptionCalls: prompts * config.subscriptionSamples * config.subscriptionSurfaces.length,
     estUsd: estimate.estUsd,
+    knownSubtotalUsd: estimate.knownSubtotalUsd,
+    unpriced: estimate.unpriced,
     hasUnboundedSearch: estimate.hasUnboundedSearch,
     hasSearch: estimate.hasSearch,
   };
@@ -282,10 +286,15 @@ function stepGo(view) {
         <dt>Estimated API cost</dt>
         <dd>
           ${view.estUsd === null
-            ? html`<span class="muted">not available until the price table covers your models — Hearsay does not guess</span>`
+            ? !view.hasKey
+              ? html`<span class="muted">Add an API provider key to preview cost.</span>`
+              : view.knownSubtotalUsd === null
+                ? html`<span class="muted">Unknown: ${view.unpriced.join(', ')} needs a checked price.</span>`
+              : html`<span class="muted">${usd(view.knownSubtotalUsd)} known subtotal plus unknown ${view.unpriced.join(', ')} components.</span>`
             : usd(view.estUsd)}
         </dd>
       </dl>
+      <p class="muted small">For a first paid measurement, start with three reviewed buyer questions and one API provider. This preview uses ${view.samples} sample(s) per question.</p>
       ${view.hasSearch ? html`<p class="muted">This forecast assumes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' OpenAI does not enforce a search-call ceiling.' : ''}</p>` : ''}
       ${view.demo
         ? html`<p class="muted">Demo mode is on, so live API runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`

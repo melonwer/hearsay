@@ -328,9 +328,10 @@ business alerts remain labeled as legacy context.
 
 The cost calculator estimates direct API usage before an API run starts and records a
 computed usage cost afterwards. It shows a known subtotal when some billing units are
-unknown; these figures are not an invoice. Subscription runs consume the signed-in
-Codex or Claude Code plan allowance and may incur overage, so they are not represented
-as a dollar estimate here.
+unknown; these figures are not an invoice. When Sonar supplies a monetary charge, the
+answer receipt shows it separately from the computed cost. Subscription runs consume
+the signed-in Codex or Claude Code plan allowance and may incur overage. Hearsay does
+not estimate their dollar cost here.
 
 ### What Hearsay refuses to build
 

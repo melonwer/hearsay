@@ -9,6 +9,7 @@
 
 import { emptyState, html, layout, PROVIDER_LABEL, providerBadge, raw, relTime, SURFACE_LABEL, truncate } from '../layout.js';
 import { randomUUID } from 'node:crypto';
+import { formatUsd } from '../../core/cost.js';
 import { highlightAnswer } from '../highlight.js';
 import { colorIndexFor, listEntities, listPrompts, PROVIDERS, queryAnswers } from '../queries.js';
 import { SURFACES } from '../../core/subscription-model.js';
@@ -255,12 +256,19 @@ function answerCard(view, item) {
     <span class="muted">${relTime(item.created_at, view.nowMs)}</span>
     <span class="muted">sample #${item.sample_idx + 1}</span>
   </header>`;
+  const charge = item.reported_charge_usd === null ? '' : html`<p class="muted small">
+    Provider-reported charge: ${formatUsd(item.reported_charge_usd)}.
+    Computed usage cost: ${item.cost_usd === null
+      ? item.cost_known_subtotal_usd === null ? 'unknown' : `${formatUsd(item.cost_known_subtotal_usd)} known subtotal, partial`
+      : formatUsd(item.cost_usd)}. These amounts have different provenance.
+  </p>`;
 
   if (item.error !== null) {
     // Errored responses collapse behind their error-kind chip (§11.4).
     const kind = item.error.split(':')[0];
     return html`<article class="card answer is-error">
       ${head}
+      ${charge}
       <p class="answer-prompt">${item.prompt}</p>
       <details>
         <summary><span class="pill pill-error">${kind}</span> No answer stored for this call</summary>
@@ -343,6 +351,7 @@ function answerCard(view, item) {
 
   return html`<article class="card answer">
     ${head}
+    ${charge}
     <p class="answer-prompt">${item.prompt}</p>
     ${view.series ? html`<p><a href="/evidence?days=${view.filters.days}&amp;series_id=${encodeURIComponent(view.series.id)}&amp;receipt_id=${item.id}&amp;layer=answers">View the five evidence layers for receipt #${item.id}</a></p>` : ''}
     <div class="answer-text">${raw(highlightAnswer(item.text ?? '', view.entities, view.colorIndex))}</div>
