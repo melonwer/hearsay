@@ -28,8 +28,9 @@ The checkboxes track completed commit gates. A partial C03 implementation is com
 - [x] C14 — descriptive intervention comparisons (`a5d5f1b`)
 - [x] C15 — outcome records and weekly review (`960b039`, `32644a6`)
 - [x] C16 — demo separation and tracking health (`3422f93`, `285e412`)
-- [ ] C17 — workflow documentation and Release B gate
-- [ ] E01–E16 — end-to-end acceptance scenarios
+- [x] C17 — workflow documentation and review handoff
+- [x] E01–E16 — deterministic end-to-end acceptance scenarios ([evidence](implementation-acceptance.md))
+- [ ] Release B gate — Release A blockers C03 and C06 prevent the full handoff
 
 ## 1. Objective and authority
 
