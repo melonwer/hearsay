@@ -81,6 +81,7 @@ export function html(strings, ...values) {
 const NAV = [
   { href: '/', label: 'Dashboard' },
   { href: '/answers', label: 'Answers' },
+  { href: '/evidence', label: 'Evidence' },
   { href: '/prompts', label: 'Prompts' },
   { href: '/entities', label: 'Entities' },
   { href: '/alerts', label: 'Alerts' },

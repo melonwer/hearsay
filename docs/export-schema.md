@@ -1,12 +1,14 @@
 # Local JSON export
 
-`GET /api/export` returns a JSON object with `exportFormatVersion`, `databaseSchemaVersion`, `exportedAt`, and `tables`. Format version 3 adds `mention_interpretations` and `mention_corrections` to the versioned measurement tables. The export is a local data dump, not an import or a backup of raw artifact files. Use the SQLite migration backup and matching artifact directory to restore an installation.
+`GET /api/export` returns a JSON object with `exportFormatVersion`, `databaseSchemaVersion`, `exportedAt`, and `tables`. Format version 4 adds manual query themes and their assignments. The export is a local data dump, not an import or a backup of raw artifact files. Use the SQLite migration backup and matching artifact directory to restore an installation.
 
 `GET /api/series/export?series_id=...` exports answer receipts for one exact series and time window. Its `series` object identifies the surface, profile, benchmark, analysis revision, search policy, and half-open UTC window. `answers` includes effective stance reviews, source observations, and answer citations. Add `eligible=1` to export only answers counted by the headline rates. This scoped answer export does not replace the full database dump or include raw artifact files.
 
 `tables` contains arrays of database rows. Version 2 adds `execution_profiles`, `benchmark_revisions`, `search_queries`, `source_observations`, `answer_citations`, and `usage_components`. It retains the version 1 table names and fields. `responses` carries the execution profile, benchmark, analysis, search policy, answer state, evidence completeness, and query metadata state for new observations. Historical rows have `search_policy = "legacy"` and null revision IDs where the exact old configuration is unknown.
 
 Version 3 adds append-only `mention_interpretations` and `mention_corrections`. An interpretation records an automatic stance, rule, answer span, and analysis revision, or a disclosed legacy heuristic bit without an invented four-way stance. Corrections retain the original value, previous value, replacement, reason, timestamp, and predecessor. The original answer text and `mentions.recommended` capture bit remain unchanged. Consumers can reconstruct a review at a correction ID cutoff.
+
+Version 4 adds `query_themes` and `query_theme_assignments`. These are user-authored labels linked to normalized observed query keys. They do not replace original query rows or change their measured counts.
 
 The export preserves original query text and URLs next to normalized grouping keys. `search_events` records actions; `search_queries` records exposed wording; `source_observations` records returned or fetched sources; `answer_citations` records explicit final references. A null action or source association means the provider did not establish that edge. The old `citations` table remains for compatibility and can contain legacy provenance that is not known precisely.
 

@@ -615,11 +615,12 @@ export function exportAll(db) {
     'settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions',
     'citations', 'search_events', 'search_queries', 'source_observations',
     'answer_citations', 'usage_components', 'execution_profiles',
-    'benchmark_revisions', 'mention_interpretations', 'mention_corrections', 'alerts',
+    'benchmark_revisions', 'mention_interpretations', 'mention_corrections',
+    'query_themes', 'query_theme_assignments', 'alerts',
   ];
   /** @type {Record<string, unknown>} */
   const out = {
-    exportFormatVersion: 3,
+    exportFormatVersion: 4,
     databaseSchemaVersion: userVersion(db),
     exportedAt: `${new Date().toISOString().slice(0, 19)}Z`,
     tables: {},

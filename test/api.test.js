@@ -22,6 +22,106 @@ after(() => {
   _setFetch(); // restore the real fetch, matching test/providers.test.js
 });
 
+test('evidence API and page expose the same scoped receipts without rendering stored markup or unsafe links', async () => {
+  const app = await boot();
+  try {
+    const prompt = (await api(app.base, 'POST', '/api/prompts', { text: 'How should I compare tools?' })).body;
+    const now = new Date().toISOString().slice(0, 19) + 'Z';
+    const runId = dbRun(app.db, "INSERT INTO runs(started_at,trigger,status) VALUES(?,'manual','done')", [now]).lastInsertRowid;
+    const answerId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
+      created_at,surface,lane,target_status,comparability_status,comparison_key,analysis_revision,
+      search_policy,answer_status,web_status,query_metadata_status,prompt_text_snapshot)
+      VALUES(?,?,'codex','fixture',0,?,?,'codex-agent','tracking','completed','comparable',
+      'evidence-fixture',?,'required','complete','verified','available',?)`,
+    [runId, prompt.id, '<script>bad answer</script>', now, STANCE_REVISION,
+      'How should I compare tools?']).lastInsertRowid;
+    const eventId = dbRun(app.db, `INSERT INTO search_events(response_id,event_type,status,observed_at,provider_action_id)
+      VALUES(?,'search','completed',?,'search-1')`, [answerId, now]).lastInsertRowid;
+    const queryText = '<img src=x onerror=alert(1)> comparison';
+    dbRun(app.db, `INSERT INTO search_queries(response_id,search_event_id,original_text,normalized_key,ordinal)
+      VALUES(?,?,?,?,0)`, [answerId, eventId, queryText, queryText]);
+    dbRun(app.db, `INSERT INTO source_observations(response_id,search_event_id,url,normalized_url,title,provenance)
+      VALUES(?,NULL,'javascript:alert(1)',NULL,'<svg onload=alert(1)>','search_result')`, [answerId]);
+    dbRun(app.db, `INSERT INTO answer_citations(response_id,source_observation_id,url,provenance,ordinal)
+      VALUES(?,NULL,'https://example.org/answer','explicit_reference',0)`, [answerId]);
+
+    const seriesList = await api(app.base, 'GET', '/api/series?days=365');
+    const seriesId = seriesList.body.series.find((item) => item.surface === 'codex-agent').id;
+    const selection = `days=365&series_id=${encodeURIComponent(seriesId)}&intent_id=${prompt.intent_id}`;
+    const report = await api(app.base, 'GET', `/api/series/evidence?${selection}`);
+    assert.equal(report.status, 200);
+    assert.equal(report.body.selectedSeriesId, seriesId);
+    assert.deepEqual(report.body.report.queries[0].responseIds, [answerId]);
+    assert.equal(report.body.report.queries[0].normalizedKey, queryText);
+    assert.equal(report.body.report.sources[0].publisherDomain, null);
+    assert.equal(report.body.report.answers[0].sourceObservations[0].searchEventId, null);
+    assert.equal(report.body.report.answers[0].answerCitations[0].sourceObservationId, null);
+    const detail = await api(app.base, 'GET', `/api/answers/${answerId}/evidence?days=365&series_id=${encodeURIComponent(seriesId)}`);
+    assert.equal(detail.status, 200);
+    assert.deepEqual(detail.body.answer.searchQueries.map((query) => query.originalText), [queryText]);
+    const theme = await api(app.base, 'POST', '/api/query-themes', { label: 'Pricing & <review>' });
+    assert.equal(theme.status, 201);
+    assert.equal((await api(app.base, 'POST', '/api/query-themes',
+      { label: 'Pricing & <review>' })).status, 409);
+    assert.equal((await api(app.base, 'POST', '/api/query-theme-assignments', {
+      theme_id: theme.body.id, normalized_key: 'an invented query', assigned: true,
+    })).status, 422);
+    const assignment = await api(app.base, 'POST', '/api/query-theme-assignments', {
+      theme_id: theme.body.id, normalized_key: queryText, assigned: true,
+    });
+    assert.equal(assignment.status, 200);
+    const themed = await api(app.base, 'GET', `/api/series/evidence?${selection}`);
+    assert.deepEqual(themed.body.report.themeGroups.map((group) => [group.label, group.responseIncidence]),
+      [['Pricing & <review>', 1]]);
+    const exported = await api(app.base, 'GET', '/api/export');
+    assert.equal(exported.body.exportFormatVersion, 4);
+    assert.equal(exported.body.tables.query_themes.length, 1);
+    assert.equal(exported.body.tables.query_theme_assignments.length, 1);
+
+    const page = await fetch(`${app.base}/evidence?${selection}`).then((response) => response.text());
+    assert.match(page, /Observed search queries/);
+    assert.match(page, /Receipt #/);
+    assert.match(page, /&lt;img src=x onerror=alert\(1\)&gt;/);
+    assert.match(page, /&lt;script&gt;bad answer&lt;\/script&gt;/);
+    assert.match(page, /&lt;svg onload=alert\(1\)&gt;/);
+    assert.match(page, /Pricing &amp; &lt;review&gt;/);
+    assert.doesNotMatch(page, /href="javascript:/);
+    assert.match(page, /source association unknown/);
+    const filteredSources = await fetch(`${app.base}/evidence?${selection}&layer=sources&source_layer=fetch`)
+      .then((response) => response.text());
+    assert.match(filteredSources, /Source evidence layer/);
+    assert.match(filteredSources, /No source observations are stored/);
+    assert.doesNotMatch(filteredSources, /javascript:alert\(1\)/);
+    const unassign = await api(app.base, 'POST', '/api/query-theme-assignments', {
+      theme_id: theme.body.id, normalized_key: queryText, assigned: false,
+    });
+    assert.equal(unassign.status, 200);
+    const unthemed = await api(app.base, 'GET', `/api/series/evidence?${selection}`);
+    assert.deepEqual(unthemed.body.report.themeGroups, []);
+    const wrongIntent = await api(app.base, 'GET',
+      `/api/series/evidence?days=365&series_id=${encodeURIComponent(seriesId)}&intent_id=999`);
+    assert.equal(wrongIntent.status, 404);
+    const wrongSeries = await api(app.base, 'GET', `/api/answers/${answerId}/evidence?days=365&series_id=wrong`);
+    assert.equal(wrongSeries.status, 404);
+  } finally {
+    await app.close();
+  }
+});
+
+test('evidence page presents an empty state without a measurement series', async () => {
+  const app = await boot();
+  try {
+    const page = await fetch(`${app.base}/evidence`).then((response) => response.text());
+    assert.match(page, /No evidence for this selection/);
+    const apiResult = await api(app.base, 'GET', '/api/series/evidence');
+    assert.equal(apiResult.status, 200);
+    assert.equal(apiResult.body.selectedSeriesId, null);
+    assert.deepEqual(apiResult.body.intents, []);
+  } finally {
+    await app.close();
+  }
+});
+
 test('answer review, correction, stance rate, and page share one versioned decision', async () => {
   const app = await boot();
   try {

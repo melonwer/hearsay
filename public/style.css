@@ -366,6 +366,41 @@ p {
   margin: 0;
 }
 
+.evidence-layer-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.evidence-layer-nav a {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.evidence-layer-nav a[aria-current='page'] {
+  background: var(--grid);
+  font-weight: 600;
+}
+
+.evidence-layer-nav a:focus-visible,
+.evidence-support summary:focus-visible {
+  outline: 2px solid var(--s1);
+  outline-offset: 2px;
+}
+
+.evidence-table-wrap { overflow-x: auto; }
+.evidence-table-wrap .table { min-width: 720px; }
+.evidence-support summary { cursor: pointer; }
+.evidence-support ul { margin: 8px 0; }
+.evidence-answer-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.evidence-receipt { scroll-margin-top: 16px; }
+.evidence-receipt:target { border-color: var(--s1); }
+.evidence-themes .tag { margin-right: 4px; }
+
 /* ---------- narrow screens ---------- */
 
 @media (max-width: 720px) {

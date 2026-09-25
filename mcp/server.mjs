@@ -106,6 +106,24 @@ const TOOLS = [
       eligible: a.comparable_only ? 1 : undefined }, ['days', 'start', 'end', 'series_id', 'eligible'])}` }),
   },
   {
+    name: 'hearsay_intent_evidence',
+    readOnly: true,
+    description: 'Inspect the buyer questions, observed search queries, source observations, final-answer citations, and answer receipts for one intent in an exact measurement series. Query incidence counts distinct answers, and unknown query-to-source associations remain unknown.',
+    inputSchema: obj({ series_id: { type: 'string' }, intent_id: { type: 'integer', minimum: 1 },
+      days: DAYS, start: UTC_BOUNDARY, end: UTC_BOUNDARY }, ['intent_id']),
+    call: (a) => ({ method: 'GET', path: `/api/series/evidence${query(a,
+      ['series_id', 'intent_id', 'days', 'start', 'end'])}` }),
+  },
+  {
+    name: 'hearsay_answer_evidence',
+    readOnly: true,
+    description: 'Read the five stored evidence layers for one answer receipt in an exact measurement series, including original wording, search event associations, nullable source links, citations, and capture metadata.',
+    inputSchema: obj({ answer_id: { type: 'integer', minimum: 1 }, series_id: { type: 'string' },
+      days: DAYS, start: UTC_BOUNDARY, end: UTC_BOUNDARY }, ['answer_id']),
+    call: (a) => ({ method: 'GET', path: `/api/answers/${a.answer_id}/evidence${query(a,
+      ['series_id', 'days', 'start', 'end'])}` }),
+  },
+  {
     name: 'hearsay_intent_results',
     readOnly: true,
     description:

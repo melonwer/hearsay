@@ -35,6 +35,8 @@ import {
 } from '../queries.js';
 import { aliasesFor, MIN_ALIAS_LENGTH } from '../../core/analyze.js';
 import { answerReview, appendCorrection, STANCES } from '../../core/interpretations.js';
+import { answerEvidence, createQueryTheme, intentEvidenceReport, listEvidenceIntents,
+  listQueryThemes, setQueryThemeAssignment } from '../../core/evidence-report.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
@@ -1538,6 +1540,53 @@ export function registerApiRoutes(router, deps) {
       series: listMeasurementSeries(db, { now, days, ...range }) };
   }));
   router.add('GET', '/api/series/summary', json((ctx) => exactSeriesSummary(db, ctx.url)));
+  router.add('GET', '/api/series/evidence', json((ctx) => {
+    const { series } = selectedSeries(db, ctx.url, isoNow());
+    if (!series) return { selectedSeriesId: null, series: null, intents: [], report: null };
+    const intents = listEvidenceIntents(db, { series });
+    const intentId = ctx.url.searchParams.has('intent_id')
+      ? intQuery(ctx.url, 'intent_id', 0, 1, Number.MAX_SAFE_INTEGER) : null;
+    if (intentId === null) return { selectedSeriesId: series.id, series, intents, report: null };
+    const report = intentEvidenceReport(db, { series, intentId });
+    if (!report) throw new ApiError(404, 'intent_not_found', 'No such intent in this series');
+    return { selectedSeriesId: series.id, series, intents, report };
+  }));
+  router.add('GET', '/api/answers/:id/evidence', json((ctx) => {
+    const { series } = selectedSeries(db, ctx.url, isoNow());
+    if (!series) throw new ApiError(404, 'series_not_found', 'No series in this window');
+    const detail = answerEvidence(db, { series, responseId: idParam(ctx.params.id) });
+    if (!detail) throw new ApiError(404, 'answer_not_found', 'No such answer in this series');
+    return { selectedSeriesId: series.id, series, answer: detail };
+  }));
+  router.add('GET', '/api/query-themes', json(() => ({ themes: listQueryThemes(db) })));
+  router.add('POST', '/api/query-themes', json((ctx) => {
+    const label = str(asObject(ctx.body).label, 'label', { max: 80, required: true });
+    if (get(db, 'SELECT id FROM query_themes WHERE label = ?', [/** @type {string} */ (label)])) {
+      throw new ApiError(409, 'conflict', 'A query theme with that label already exists');
+    }
+    try {
+      return createQueryTheme(db, { label: /** @type {string} */ (label), now: isoNow() });
+    } catch (error) {
+      if (error instanceof RangeError) throw new ApiError(422, 'unprocessable', error.message);
+      throw error;
+    }
+  }, 201));
+  router.add('POST', '/api/query-theme-assignments', json((ctx) => {
+    const body = asObject(ctx.body);
+    const themeId = Number(body.theme_id);
+    if (!Number.isSafeInteger(themeId) || themeId < 1) {
+      throw new ApiError(422, 'unprocessable', 'theme_id must be a positive integer');
+    }
+    const normalizedKey = str(body.normalized_key, 'normalized_key', { max: 500, required: true });
+    if (typeof body.assigned !== 'boolean') throw new ApiError(422, 'unprocessable', 'assigned must be a boolean');
+    try {
+      return setQueryThemeAssignment(db, { themeId,
+        normalizedKey: /** @type {string} */ (normalizedKey), assigned: body.assigned });
+    } catch (error) {
+      if (error instanceof RangeError) throw new ApiError(422, 'unprocessable', error.message);
+      throw error;
+    }
+  }));
   router.add('GET', '/api/series/export', json((ctx) => {
     const now = isoNow();
     const { days, series } = selectedSeries(db, ctx.url, now);

@@ -97,9 +97,17 @@ Hearsay's tools appear only after the assistant reconnects. Quit Claude Code and
 it again, then say "carry on setting up Hearsay". If they still do not show up, work
 over the JSON API instead, which needs no setup: `GET /api/status`,
 `POST /api/setup`, `GET /api/cost/estimate`, `POST /api/run`, `GET /api/runs/latest`,
-`GET /api/series`, `GET /api/series/summary`, `GET /api/answers?series_id=...`,
+`GET /api/series`, `GET /api/series/summary`, `GET /api/series/evidence?series_id=...&intent_id=...`,
+`GET /api/answers?series_id=...`,
 `GET /api/alerts`. `GET /api/summary?days=30` remains the legacy API view. There
 is no index page at `/api`.
+
+The Evidence page groups the buyer questions, observed search queries, source observations,
+final-answer citations, and answer receipts for one selected measurement series. Open a
+group's supporting receipts to inspect the recorded action and source links. Query counts
+describe this configured panel, not customer search demand. Manual theme labels are
+separate from the provider's wording. The [evidence report guide](docs/evidence-report.md)
+explains the denominators and unknown associations.
 
 MCP access and inference enablement are separate. Registering the Hearsay MCP server
 lets a client operate Hearsay; setting `HEARSAY_CODEX_ENABLED=1` or

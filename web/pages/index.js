@@ -12,6 +12,7 @@ import * as alertsPage from './alerts.js';
 import * as answersPage from './answers.js';
 import * as dashboardPage from './dashboard.js';
 import * as entitiesPage from './entities.js';
+import * as evidencePage from './evidence.js';
 import * as methodologyPage from './methodology.js';
 import * as promptsPage from './prompts.js';
 import * as settingsPage from './settings.js';
@@ -73,6 +74,10 @@ export function registerPageRoutes(router, deps) {
 
   router.add('GET', '/answers', (ctx) => {
     sendHtml(ctx.res, 200, answersPage.render(shellCtx(deps), answersPage.buildView(deps, ctx.url.searchParams)));
+  });
+
+  router.add('GET', '/evidence', (ctx) => {
+    sendHtml(ctx.res, 200, evidencePage.render(shellCtx(deps), evidencePage.buildView(deps, ctx.url.searchParams)));
   });
 
   router.add('GET', '/prompts', (ctx) => {

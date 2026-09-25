@@ -169,6 +169,7 @@ function intentBlock(view, intent) {
 
   return html`<section class="card">
     <h2>${intent.label}</h2>
+    ${view.series ? html`<p><a href="/evidence?days=${view.days}&amp;series_id=${encodeURIComponent(view.series.id)}&amp;intent_id=${intent.id}">Explore this intent's evidence</a></p>` : ''}
     <p class="muted small">
       ${intent.paraphrases.length === 1
         ? 'One paraphrase measures one wording. Add two more for a phrasing-robust number.'
