@@ -39,7 +39,7 @@ The matrix records the original C00 gates. OpenAI and Anthropic basic-search rou
 
 ## Source and price provenance
 
-These pages were checked on 2026-09-24. This section began as the C00 baseline contract. The current `core/cost.js` table has a checked version with token, Sonar request, and supported OpenAI and Anthropic search prices. C03 remains open for the rest of its usage-accounting acceptance gate. Price changes require a new checked version.
+These pages were checked on 2026-09-24. This section began as the C00 baseline contract. The current `core/cost.js` table has a checked version with token, Sonar request, and supported OpenAI and Anthropic search prices. C03 passed its usage-accounting checks in `ae2df79`. Price changes require a new checked version.
 
 | Provider | Contract source | Pricing source and unit to retain |
 |---|---|---|
@@ -49,7 +49,7 @@ These pages were checked on 2026-09-24. This section began as the C00 baseline c
 | Perplexity | [Sonar completion reference](https://docs.perplexity.ai/api-reference/sonar-post), [Agent API migration guide](https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar/overview) | [Perplexity pricing](https://docs.perplexity.ai/getting-started/pricing): response-reported cost where available, token and search-context request components. |
 | Codex and Claude Code | Local CLI help and the current `core/agent-profiles.js` profiles | Subscription usage or allowance remains separate from API billing. No USD amount is inferred from an agent event. |
 
-`core/cost.js` token and Sonar request rates were refreshed on 2026-09-24. OpenAI and Anthropic basic web-search calls now have checked list prices and separate usage components; the pre-run forecast assumes one call per target and is not a cap. Anthropic's tool also has a three-call ceiling per target. These figures are estimates, not invoices. Other provider search charges remain to implement. A known token subtotal alongside unknown tool charges is partial, not zero. A computed cost is complete only when every supported billing component for every known attempt has a quantity and a checked price.
+`core/cost.js` token and Sonar request rates were refreshed on 2026-09-24. OpenAI and Anthropic basic web-search calls have checked list prices and separate usage components; the pre-run forecast assumes one call per target and is not a cap. Anthropic's tool has a three-call ceiling per target. These figures are estimates, not invoices. Gemini grounding charges are outside the enabled routes while C06 is held for legal review. A known subtotal alongside unknown components is partial, not zero. A computed cost is complete only when every supported billing component for every known attempt has a quantity and a checked price.
 
 ## Fixture and release gates
 

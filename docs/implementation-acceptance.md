@@ -77,8 +77,8 @@ live model. `node --test` exercises the narrower provider and storage cases.
 
 Gemini grounded search is disabled while C06 awaits legal review. Perplexity Sonar
 remains a legacy built-in retrieval route with no exposed exact query wording or
-per-action search completion. Anthropic `required` search is unsupported. C03 still
-needs its remaining usage-accounting and budget acceptance work before the Release A
-and overall release gates can be checked. No live provider capability or billing smoke
-check has been performed. Local browser screenshots show wide light/dark and 390 px
-layouts; these are synthetic demo or fake-adapter observations.
+per-action search completion. Anthropic `required` search is unsupported. C03's
+budget and usage-accounting checks passed in `ae2df79`; the Release A and overall
+release gates remain open for C06. No live provider capability or billing smoke check
+has been performed. Local browser screenshots show wide light/dark and 390 px layouts;
+these are synthetic demo or fake-adapter observations.
