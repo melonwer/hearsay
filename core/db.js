@@ -426,6 +426,23 @@ export const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'corrections are immutable'); END;
     `,
   },
+  {
+    version: 8,
+    sql: `
+      CREATE TABLE query_themes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        label TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE query_theme_assignments (
+        theme_id INTEGER NOT NULL REFERENCES query_themes(id) ON DELETE CASCADE,
+        normalized_key TEXT NOT NULL,
+        PRIMARY KEY (theme_id, normalized_key)
+      );
+      CREATE INDEX idx_query_theme_assignments_key
+        ON query_theme_assignments(normalized_key, theme_id);
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */
