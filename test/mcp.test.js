@@ -109,12 +109,12 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
   const list = await rpc(mcp, 'tools/list', {}, 2);
   const tools = list.result.tools;
-  assert.equal(tools.length, 32);
+  assert.equal(tools.length, 33);
   const names = tools.map((/** @type {*} */ t) => t.name);
   for (const name of [
     'hearsay_status', 'hearsay_summary', 'hearsay_series_list', 'hearsay_series_summary',
     'hearsay_series_export', 'hearsay_intent_evidence', 'hearsay_answer_evidence',
-    'hearsay_opportunities', 'hearsay_opportunity_propose',
+    'hearsay_opportunities', 'hearsay_opportunity', 'hearsay_opportunity_propose',
     'hearsay_intent_results', 'hearsay_prompt_results',
     'hearsay_answers_search', 'hearsay_answer_review', 'hearsay_correct_stance',
     'hearsay_stance_rate', 'hearsay_citation_gap', 'hearsay_alerts', 'hearsay_cost_estimate',
@@ -133,7 +133,7 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   assert.deepEqual(readOnly, [
     'hearsay_alerts', 'hearsay_answer_evidence', 'hearsay_answer_review', 'hearsay_answers_search',
     'hearsay_citation_gap', 'hearsay_cost_estimate', 'hearsay_intent_evidence',
-    'hearsay_intent_results', 'hearsay_opportunities', 'hearsay_prompt_results',
+    'hearsay_intent_results', 'hearsay_opportunities', 'hearsay_opportunity', 'hearsay_prompt_results',
     'hearsay_review_benchmark_draft', 'hearsay_run_status', 'hearsay_series_export',
     'hearsay_series_list', 'hearsay_series_summary', 'hearsay_stance_rate',
     'hearsay_status', 'hearsay_subscription_preview', 'hearsay_summary',
@@ -151,6 +151,7 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
     'GET /api/series/export': { status: 200, body: { selectedSeriesId: 'series-one', answers: [] } },
     'GET /api/series/evidence': { status: 200, body: { selectedSeriesId: 'series-one', queries: [] } },
     'GET /api/opportunities': { status: 200, body: { selectedSeriesId: 'series-one', candidates: [], opportunities: [] } },
+    'GET /api/opportunities/4': { status: 200, body: { id: 4, followUpPlans: [] } },
     'POST /api/opportunities/propose': { status: 201, body: { id: 4, status: 'proposed' } },
     'GET /api/answers/9/evidence': { status: 200, body: { responseId: 9, queries: [] } },
     'GET /api/intents/results': { status: 200, body: { selectedSeriesId: 'series-one', results: [] } },
@@ -189,6 +190,9 @@ test('mcp tools/call: happy path, param mapping, error mapping, unreachable', as
   await call(29, 'hearsay_opportunities', { series_id: 'series-one', intent_id: 3,
     start: '2026-09-01T00:00:00Z', end: '2026-09-25T00:00:00Z' });
   assert.equal(backend.seen.at(-1).url, '/api/opportunities?series_id=series-one&intent_id=3&start=2026-09-01T00%3A00%3A00Z&end=2026-09-25T00%3A00%3A00Z');
+  const opportunity = await call(31, 'hearsay_opportunity', { id: 4 });
+  assert.equal(backend.seen.at(-1).url, '/api/opportunities/4');
+  assert.deepEqual(JSON.parse(opportunity.result.content[0].text).followUpPlans, []);
   await call(30, 'hearsay_opportunity_propose', { series_id: 'series-one', intent_id: 3,
     start: '2026-09-01T00:00:00Z', end: '2026-09-25T00:00:00Z',
     evidence: [{ response_id: 9, source_id: 2 }], hypothesis: 'Investigate this source.' });

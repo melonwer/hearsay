@@ -537,6 +537,54 @@ export const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'opportunity events are immutable'); END;
     `,
   },
+  {
+    version: 11,
+    sql: `
+      ALTER TABLE opportunities ADD COLUMN record_version INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE opportunities ADD COLUMN estimated_effort_hours REAL
+        CHECK (estimated_effort_hours IS NULL OR estimated_effort_hours >= 0);
+      ALTER TABLE opportunities ADD COLUMN actual_effort_hours REAL
+        CHECK (actual_effort_hours IS NULL OR actual_effort_hours >= 0);
+      ALTER TABLE opportunities ADD COLUMN change_description TEXT;
+      ALTER TABLE opportunities ADD COLUMN shipped_at TEXT;
+      CREATE TABLE follow_up_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        opportunity_id INTEGER NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        supersedes_id INTEGER REFERENCES follow_up_plans(id),
+        baseline_json TEXT NOT NULL,
+        intent_ids_json TEXT NOT NULL,
+        comparison_intent_ids_json TEXT NOT NULL,
+        primary_metric TEXT NOT NULL,
+        expected_direction TEXT NOT NULL,
+        review_start TEXT NOT NULL,
+        review_end TEXT NOT NULL,
+        observation_delay_days INTEGER NOT NULL,
+        retrospective INTEGER NOT NULL CHECK (retrospective IN (0,1)),
+        baseline_after_publication INTEGER NOT NULL CHECK (baseline_after_publication IN (0,1)),
+        author TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(opportunity_id, version)
+      );
+      CREATE INDEX idx_follow_up_plans_opportunity ON follow_up_plans(opportunity_id, version);
+      CREATE TABLE follow_up_review_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plan_id INTEGER NOT NULL REFERENCES follow_up_plans(id) ON DELETE CASCADE,
+        snapshot_json TEXT NOT NULL,
+        author TEXT NOT NULL,
+        captured_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_follow_up_review_plan ON follow_up_review_snapshots(plan_id, id);
+      CREATE TRIGGER follow_up_plans_no_update BEFORE UPDATE ON follow_up_plans
+        BEGIN SELECT RAISE(ABORT, 'follow-up plans are immutable'); END;
+      CREATE TRIGGER follow_up_plans_no_delete BEFORE DELETE ON follow_up_plans
+        BEGIN SELECT RAISE(ABORT, 'follow-up plans are immutable'); END;
+      CREATE TRIGGER follow_up_snapshots_no_update BEFORE UPDATE ON follow_up_review_snapshots
+        BEGIN SELECT RAISE(ABORT, 'follow-up snapshots are immutable'); END;
+      CREATE TRIGGER follow_up_snapshots_no_delete BEFORE DELETE ON follow_up_review_snapshots
+        BEGIN SELECT RAISE(ABORT, 'follow-up snapshots are immutable'); END;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

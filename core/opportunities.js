@@ -346,6 +346,11 @@ function shape(row) {
     controllability: String(row.controllability), effortBand: String(row.effort_band),
     priority: Number(row.priority), owner: row.owner === null ? null : String(row.owner),
     reviewDate: row.review_date === null ? null : String(row.review_date), status: String(row.status),
+    recordVersion: Number(row.record_version),
+    estimatedEffortHours: row.estimated_effort_hours === null ? null : Number(row.estimated_effort_hours),
+    actualEffortHours: row.actual_effort_hours === null ? null : Number(row.actual_effort_hours),
+    changeDescription: row.change_description === null ? null : String(row.change_description),
+    shippedAt: row.shipped_at === null ? null : String(row.shipped_at),
     origin: String(row.origin), author: String(row.author),
     missingEvidence: JSON.parse(String(row.missing_evidence_json)),
     claimClassification: String(row.claim_classification),
@@ -363,6 +368,7 @@ export function getOpportunity(db, id) {
   const item = shape(row);
   const pages = all(db, 'SELECT * FROM opportunity_page_evidence WHERE opportunity_id = ? ORDER BY id', [id]);
   const events = all(db, 'SELECT * FROM opportunity_events WHERE opportunity_id = ? ORDER BY id', [id]);
+  const followUpPlans = all(db, 'SELECT * FROM follow_up_plans WHERE opportunity_id = ? ORDER BY version', [id]);
   let staleEvidence = false;
   try {
     validateEvidence(intentEvidenceReport(db, { series: item.series, intentId: item.intentId }), item.evidence);
@@ -370,6 +376,25 @@ export function getOpportunity(db, id) {
   }
   catch { staleEvidence = true; }
   return { ...item, staleEvidence,
+    followUpPlans: followUpPlans.map((plan) => ({
+      id: Number(plan.id), version: Number(plan.version),
+      supersedesId: plan.supersedes_id === null ? null : Number(plan.supersedes_id),
+      baseline: JSON.parse(String(plan.baseline_json)),
+      intentIds: JSON.parse(String(plan.intent_ids_json)),
+      comparisonIntentIds: JSON.parse(String(plan.comparison_intent_ids_json)),
+      primaryMetric: String(plan.primary_metric), expectedDirection: String(plan.expected_direction),
+      reviewWindow: { start: String(plan.review_start), end: String(plan.review_end),
+        observationDelayDays: Number(plan.observation_delay_days) },
+      retrospective: Number(plan.retrospective) === 1
+        || !!item.shippedAt && String(plan.created_at) >= item.shippedAt,
+      baselineAfterPublication: Number(plan.baseline_after_publication) === 1
+        || !!item.shippedAt && JSON.parse(String(plan.baseline_json)).windowEnd > item.shippedAt,
+      author: String(plan.author), createdAt: String(plan.created_at),
+      reviewSnapshots: all(db, 'SELECT * FROM follow_up_review_snapshots WHERE plan_id = ? ORDER BY id',
+        [Number(plan.id)]).map((snapshot) => ({ id: Number(snapshot.id),
+        ...JSON.parse(String(snapshot.snapshot_json)), author: String(snapshot.author),
+        capturedAt: String(snapshot.captured_at) })),
+    })),
     pageEvidence: pages.map((page) => ({ id: Number(page.id), url: String(page.url),
       observedAt: String(page.observed_at), excerpt: String(page.excerpt), provenance: String(page.provenance),
       sourceObservationId: page.source_observation_id === null ? null : Number(page.source_observation_id),
@@ -399,6 +424,30 @@ function event(db, id, type, details, author, at) {
     VALUES(?,?,?,?,?)`, [id, type, JSON.stringify(details), author, at]);
 }
 
+/** @param {{recordVersion:number}} current @param {unknown} expectedVersion */
+export function checkOpportunityVersion(current, expectedVersion) {
+  if (!Number.isSafeInteger(Number(expectedVersion)) || Number(expectedVersion) < 1) {
+    throw new OpportunityError('expectedVersion must be a positive integer');
+  }
+  if (Number(expectedVersion) !== current.recordVersion) {
+    throw new OpportunityError('Opportunity changed since it was loaded; refresh and retry', 409, 'conflict');
+  }
+}
+
+/** @param {Db} db @param {{id:number,recordVersion:number}} current @param {string} at */
+export function advanceOpportunityVersion(db, current, at) {
+  const changed = run(db, `UPDATE opportunities SET record_version = record_version + 1, updated_at = ?
+    WHERE id = ? AND record_version = ?`, [at, current.id, current.recordVersion]);
+  if (changed.changes !== 1) {
+    throw new OpportunityError('Opportunity changed since it was loaded; refresh and retry', 409, 'conflict');
+  }
+}
+
+/** @param {Db} db @param {number} id @param {string} type @param {unknown} details @param {string} author @param {string} at */
+export function recordOpportunityEvent(db, id, type, details, author, at) {
+  event(db, id, type, details, author, at);
+}
+
 /** @param {Db} db @param {ReturnType<typeof deriveOpportunityCandidates>[number]} candidate @param {string} at */
 function saveCandidate(db, candidate, at) {
   const prior = get(db, 'SELECT * FROM opportunities WHERE candidate_key = ?', [candidate.candidateKey]);
@@ -412,7 +461,7 @@ function saveCandidate(db, candidate, at) {
       const resurfaced = ['dismissed', 'no_action', 'combined'].includes(old.status);
       run(db, `UPDATE opportunities SET series_json = ?, window_start = ?, window_end = ?,
         evidence_json = ?, observed_finding = ?, status = ?, resurfaced_explanation = ?,
-        dismissal_reason = ?, combined_into_id = ?, updated_at = ? WHERE id = ?`, [
+        dismissal_reason = ?, combined_into_id = ?, updated_at = ?, record_version = record_version + 1 WHERE id = ?`, [
         JSON.stringify(candidate.series), candidate.windowStart, candidate.windowEnd,
         JSON.stringify(candidate.evidence), candidate.observedFinding,
         resurfaced ? 'investigate' : old.status,
@@ -519,15 +568,29 @@ export function createOpportunity(db, input) {
   return getOpportunity(db, id);
 }
 
-/** @param {Db} db @param {{id:number,status?:string,priority?:number,effortBand?:string,owner?:string,
+/** @param {Db} db @param {{id:number,expectedVersion:number,status?:string,priority?:number,effortBand?:string,owner?:string,
  * reviewDate?:string,dismissalReason?:string,hypothesis?:string,suggestedAction?:string,
- * targetUrl?:string,productArea?:string,controllability?:string,actionKind?:string,author:string,now?:Date|string}} input */
+ * targetUrl?:string,productArea?:string,controllability?:string,actionKind?:string,
+ * estimatedEffortHours?:number|null,actualEffortHours?:number|null,changeDescription?:string,
+ * shippedAt?:string,author:string,now?:Date|string}} input */
 export function reviewOpportunity(db, input) {
   const current = getOpportunity(db, input.id);
   if (!current) throw new OpportunityError('Opportunity not found', 404, 'not_found');
+  checkOpportunityVersion(current, input.expectedVersion);
   const author = required(input.author, 'author', 120);
   const status = input.status ?? current.status;
   if (!STATUSES.includes(status) || status === 'combined') throw new OpportunityError('Invalid opportunity status');
+  /** @type {Record<string, string[]>} */
+  const allowed = {
+    pending: ['pending', 'investigate', 'planned', 'dismissed', 'no_action'],
+    investigate: ['investigate', 'planned', 'dismissed', 'no_action'],
+    planned: ['planned', 'in_progress', 'shipped', 'investigate', 'dismissed', 'no_action'],
+    in_progress: ['in_progress', 'planned', 'shipped', 'dismissed', 'no_action'],
+    shipped: ['shipped', 'reviewed'], reviewed: ['reviewed'],
+    dismissed: ['dismissed', 'investigate'], no_action: ['no_action', 'investigate'],
+    combined: [],
+  };
+  if (!allowed[current.status]?.includes(status)) throw new OpportunityError('Invalid action state transition');
   if (current.origin === 'assistant' && current.status === 'pending'
     && !['investigate', 'planned', 'dismissed', 'no_action'].includes(status)) {
     throw new OpportunityError('Assistant proposal needs human acceptance or dismissal');
@@ -542,7 +605,7 @@ export function reviewOpportunity(db, input) {
   const reviewDate = input.reviewDate === undefined ? current.reviewDate : bounded(input.reviewDate, 'reviewDate', 10) || null;
   if (reviewDate && (!/^\d{4}-\d{2}-\d{2}$/.test(reviewDate)
     || Number.isNaN(Date.parse(`${reviewDate}T00:00:00Z`)))) throw new OpportunityError('Review date must be YYYY-MM-DD');
-  if (['planned', 'in_progress', 'shipped'].includes(status) && (!owner || !reviewDate)) {
+  if (['planned', 'in_progress', 'shipped', 'reviewed'].includes(status) && (!owner || !reviewDate)) {
     throw new OpportunityError('Planned actions need an owner and review date');
   }
   const hypothesis = input.hypothesis === undefined ? current.hypothesis : required(input.hypothesis, 'hypothesis', 2000);
@@ -559,24 +622,65 @@ export function reviewOpportunity(db, input) {
   if (!CONTROL.includes(controllability)) throw new OpportunityError('Invalid controllability');
   const dismissalReason = ['dismissed', 'no_action'].includes(status)
     ? required(input.dismissalReason ?? current.dismissalReason, 'dismissalReason', 1000) : null;
-  if (['planned', 'in_progress', 'shipped'].includes(status) && current.staleEvidence) {
+  if (['planned', 'in_progress', 'shipped', 'reviewed'].includes(status) && current.staleEvidence) {
     throw new OpportunityError('Selected evidence is no longer available in the saved scope');
   }
-  if (['planned', 'in_progress', 'shipped'].includes(status) && actionKind === 'page_change' && (!targetUrl || !current.pageEvidence.some((page) => page.reviewedAt
+  if (['planned', 'in_progress', 'shipped', 'reviewed'].includes(status) && actionKind === 'page_change' && (!targetUrl || !current.pageEvidence.some((page) => page.reviewedAt
     && page.url === targetUrl))) throw new OpportunityError('A page-specific action requires reviewed page evidence');
-  if (['planned', 'in_progress', 'shipped'].includes(status) && actionKind === 'page_change'
+  if (['planned', 'in_progress', 'shipped', 'reviewed'].includes(status) && actionKind === 'page_change'
     && suggestedAction === DEFAULT_ACTION) {
     throw new OpportunityError('Describe the specific page change before planning it');
   }
-  if (['planned', 'in_progress', 'shipped'].includes(status) && current.claimClassification === 'verify_claim'
+  if (['planned', 'in_progress', 'shipped', 'reviewed'].includes(status) && current.claimClassification === 'verify_claim'
     && !current.pageEvidence.some((page) => page.provenance === 'manual_user' && page.isAuthoritative && page.reviewedAt)) {
     throw new OpportunityError('A false or outdated claim requires user-supplied authoritative evidence');
   }
   const at = isoNow(new Date(input.now ?? Date.now()));
+  /** @param {unknown} value @param {string} name */
+  const hours = (value, name) => {
+    if (value === null || value === '') return null;
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 0 || number > 100000) {
+      throw new OpportunityError(`${name} must be between 0 and 100000 hours`);
+    }
+    return number;
+  };
+  const estimatedEffortHours = input.estimatedEffortHours === undefined
+    ? current.estimatedEffortHours : hours(input.estimatedEffortHours, 'estimatedEffortHours');
+  const actualEffortHours = input.actualEffortHours === undefined
+    ? current.actualEffortHours : hours(input.actualEffortHours, 'actualEffortHours');
+  const changeDescription = input.changeDescription === undefined ? current.changeDescription
+    : bounded(input.changeDescription, 'changeDescription', 4000) || null;
+  const shippedAt = input.shippedAt === undefined ? current.shippedAt
+    : input.shippedAt ? utc(input.shippedAt, 'shippedAt') : null;
+  if (['shipped', 'reviewed'].includes(status)) {
+    if (!changeDescription || !shippedAt || (!targetUrl && !productArea)) {
+      throw new OpportunityError('Shipped actions need a change description, timestamp, and affected URL or feature');
+    }
+    if (shippedAt > at) throw new OpportunityError('Shipped timestamp cannot be in the future');
+    if (reviewDate && reviewDate < shippedAt.slice(0, 10)) {
+      throw new OpportunityError('Review date must be on or after the shipped date');
+    }
+    const latestPlan = current.followUpPlans.at(-1);
+    if (latestPlan) {
+      const delayed = new Date(Date.parse(shippedAt)
+        + latestPlan.reviewWindow.observationDelayDays * 86400000).toISOString().slice(0, 19) + 'Z';
+      if (latestPlan.reviewWindow.start < delayed) {
+        throw new OpportunityError('Follow-up review window must start after shipment and the selected observation delay');
+      }
+    }
+  } else if (input.shippedAt || input.changeDescription) {
+    throw new OpportunityError('Shipment details require shipped or reviewed status');
+  }
+  if (status === 'reviewed' && (current.status !== 'shipped' && current.status !== 'reviewed'
+    || !current.followUpPlans.at(-1)?.reviewSnapshots.length)) {
+    throw new OpportunityError('Review requires a shipped action and a captured follow-up snapshot');
+  }
   transaction(db, () => {
     run(db, `UPDATE opportunities SET status=?,priority=?,effort_band=?,owner=?,review_date=?,
       hypothesis=?,suggested_action=?,action_kind=?,target_url=?,product_area=?,controllability=?,
-      dismissal_reason=?,missing_evidence_json=?,updated_at=? WHERE id=?`, [
+      dismissal_reason=?,missing_evidence_json=?,estimated_effort_hours=?,actual_effort_hours=?,
+      change_description=?,shipped_at=? WHERE id=?`, [
       status, priority, effortBand, owner, reviewDate, hypothesis, suggestedAction, actionKind,
       targetUrl, productArea, controllability, dismissalReason,
       JSON.stringify([
@@ -585,21 +689,33 @@ export function reviewOpportunity(db, input) {
         ...(current.claimClassification === 'verify_claim'
           && !current.pageEvidence.some((page) => page.provenance === 'manual_user' && page.isAuthoritative && page.reviewedAt)
           ? ['authoritative_claim_evidence'] : []),
-      ]), at, current.id,
+      ]), estimatedEffortHours, actualEffortHours, changeDescription, shippedAt, current.id,
     ]);
-    event(db, current.id, 'reviewed', { previous: current, status, priority, effortBand,
+    advanceOpportunityVersion(db, current, at);
+    event(db, current.id, 'reviewed', { previous: {
+      status: current.status, priority: current.priority, effortBand: current.effortBand,
+      owner: current.owner, reviewDate: current.reviewDate, hypothesis: current.hypothesis,
+      suggestedAction: current.suggestedAction, targetUrl: current.targetUrl,
+      productArea: current.productArea, controllability: current.controllability,
+      dismissalReason: current.dismissalReason, actionKind: current.actionKind,
+      estimatedEffortHours: current.estimatedEffortHours,
+      actualEffortHours: current.actualEffortHours,
+      changeDescription: current.changeDescription, shippedAt: current.shippedAt,
+    }, status, priority, effortBand,
       owner, reviewDate, hypothesis, suggestedAction, targetUrl, productArea, controllability,
-      dismissalReason, actionKind }, author, at);
+      dismissalReason, actionKind, estimatedEffortHours, actualEffortHours,
+      changeDescription, shippedAt }, author, at);
   });
   return getOpportunity(db, current.id);
 }
 
 /** @param {Db} db @param {{id:number,url:string,observedAt:string,excerpt:string,
  * provenance:'manual_user'|'manual_assistant'|'observed_fetch',sourceObservationId?:number,
- * isAuthoritative?:boolean,author:string,now?:Date|string}} input */
+ * isAuthoritative?:boolean,expectedVersion:number,author:string,now?:Date|string}} input */
 export function attachOpportunityPageEvidence(db, input) {
   const current = getOpportunity(db, input.id);
   if (!current) throw new OpportunityError('Opportunity not found', 404, 'not_found');
+  checkOpportunityVersion(current, input.expectedVersion);
   const observedAt = utc(input.observedAt, 'observedAt');
   const pageUrl = url(input.url, 'url');
   const excerpt = required(input.excerpt, 'excerpt', 2000);
@@ -629,6 +745,7 @@ export function attachOpportunityPageEvidence(db, input) {
   }
   const at = isoNow(new Date(input.now ?? Date.now()));
   const id = transaction(db, () => {
+    advanceOpportunityVersion(db, current, at);
     const inserted = run(db, `INSERT INTO opportunity_page_evidence(opportunity_id,url,observed_at,
       excerpt,provenance,source_observation_id,is_authoritative,author,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, [
       current.id, pageUrl, observedAt, excerpt, provenance, sourceObservationId,
@@ -641,10 +758,11 @@ export function attachOpportunityPageEvidence(db, input) {
   return getOpportunity(db, current.id)?.pageEvidence.find((page) => page.id === id) ?? null;
 }
 
-/** @param {Db} db @param {{id:number,pageEvidenceId:number,author:string,now?:Date|string}} input */
+/** @param {Db} db @param {{id:number,pageEvidenceId:number,expectedVersion:number,author:string,now?:Date|string}} input */
 export function reviewOpportunityPageEvidence(db, input) {
   const current = getOpportunity(db, input.id);
   if (!current) throw new OpportunityError('Opportunity not found', 404, 'not_found');
+  checkOpportunityVersion(current, input.expectedVersion);
   const pageId = integer(input.pageEvidenceId, 'pageEvidenceId');
   const page = current.pageEvidence.find((item) => item.id === pageId);
   if (!page) throw new OpportunityError('Page evidence not found', 404, 'not_found');
@@ -655,6 +773,7 @@ export function reviewOpportunityPageEvidence(db, input) {
   if (page.reviewedAt) return page;
   const at = isoNow(new Date(input.now ?? Date.now()));
   transaction(db, () => {
+    advanceOpportunityVersion(db, current, at);
     run(db, 'UPDATE opportunity_page_evidence SET reviewed_at = ?, reviewed_by = ? WHERE id = ?', [at, author, pageId]);
     const reviewedPages = current.pageEvidence.map((item) => item.id === pageId
       ? { ...item, reviewedAt: at } : item);
@@ -665,19 +784,22 @@ export function reviewOpportunityPageEvidence(db, input) {
         && !reviewedPages.some((item) => item.reviewedAt && item.provenance === 'manual_user' && item.isAuthoritative)
         ? ['authoritative_claim_evidence'] : []),
     ];
-    run(db, 'UPDATE opportunities SET missing_evidence_json = ?, updated_at = ? WHERE id = ?', [
-      JSON.stringify(missingEvidence), at, current.id,
+    run(db, 'UPDATE opportunities SET missing_evidence_json = ? WHERE id = ?', [
+      JSON.stringify(missingEvidence), current.id,
     ]);
     event(db, current.id, 'page_evidence_reviewed', { pageEvidenceId: pageId }, author, at);
   });
   return getOpportunity(db, current.id)?.pageEvidence.find((item) => item.id === pageId) ?? null;
 }
 
-/** @param {Db} db @param {{targetId:number,sourceId:number,author:string,now?:Date|string}} input */
+/** @param {Db} db @param {{targetId:number,sourceId:number,expectedVersion:number,
+ * sourceExpectedVersion:number,author:string,now?:Date|string}} input */
 export function combineOpportunities(db, input) {
   const target = getOpportunity(db, input.targetId);
   const source = getOpportunity(db, input.sourceId);
   if (!target || !source) throw new OpportunityError('Opportunity not found', 404, 'not_found');
+  checkOpportunityVersion(target, input.expectedVersion);
+  checkOpportunityVersion(source, input.sourceExpectedVersion);
   if (target.id === source.id) throw new OpportunityError('Two distinct opportunities are required');
   if (target.seriesId !== source.seriesId || target.windowStart !== source.windowStart
     || target.windowEnd !== source.windowEnd || target.intentId !== source.intentId) {
@@ -687,7 +809,9 @@ export function combineOpportunities(db, input) {
   const author = required(input.author, 'author', 120);
   const at = isoNow(new Date(input.now ?? Date.now()));
   transaction(db, () => {
-    run(db, `UPDATE opportunities SET status='combined', combined_into_id=?, updated_at=? WHERE id=?`, [target.id, at, source.id]);
+    advanceOpportunityVersion(db, target, at);
+    advanceOpportunityVersion(db, source, at);
+    run(db, `UPDATE opportunities SET status='combined', combined_into_id=? WHERE id=?`, [target.id, source.id]);
     event(db, source.id, 'combined', { targetId: target.id, evidence: source.evidence }, author, at);
     event(db, target.id, 'combined_source', { sourceId: source.id, evidence: source.evidence }, author, at);
   });

@@ -41,6 +41,7 @@ import { OpportunityError, deriveOpportunityCandidates, generateOpportunityCandi
   listOpportunities, getOpportunity, createOpportunity, reviewOpportunity,
   attachOpportunityPageEvidence, reviewOpportunityPageEvidence,
   combineOpportunities } from '../../core/opportunities.js';
+import { saveFollowUpPlan, captureFollowUpReview } from '../../core/follow-up.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
@@ -1582,6 +1583,13 @@ function opportunityIds(value, name) {
   return [...new Set(value.map((item) => opportunityId(item, name)))];
 }
 
+/** @param {unknown} value */
+function optionalHours(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  return Number(value);
+}
+
 /** @param {import('node:sqlite').DatabaseSync} db @param {Record<string, unknown>} body */
 function opportunityEvidence(db, body) {
   if (body.evidence !== undefined) {
@@ -1806,11 +1814,16 @@ export function registerApiRoutes(router, deps) {
   router.add('PATCH', '/api/opportunities/:id', json((ctx) => {
     const body = asObject(ctx.body);
     return reviewOpportunity(db, { id: idParam(ctx.params.id),
+      expectedVersion: opportunityId(body.expected_version, 'expected_version'),
       status: str(body.status, 'status', { max: 30 }),
       priority: body.priority === undefined ? undefined : Number(body.priority),
       effortBand: str(body.effort_band, 'effort_band', { max: 30 }),
+      estimatedEffortHours: optionalHours(body.estimated_effort_hours),
+      actualEffortHours: optionalHours(body.actual_effort_hours),
       owner: str(body.owner, 'owner', { max: 200 }),
       reviewDate: str(body.review_date, 'review_date', { max: 30 }),
+      changeDescription: str(body.change_description, 'change_description', { max: 2000 }),
+      shippedAt: str(body.shipped_at, 'shipped_at', { max: 30 }),
       dismissalReason: str(body.dismissal_reason, 'dismissal_reason', { max: 1000 }),
       hypothesis: str(body.hypothesis, 'hypothesis', { max: 2000 }),
       suggestedAction: str(body.suggested_action, 'suggested_action', { max: 2000 }),
@@ -1820,9 +1833,32 @@ export function registerApiRoutes(router, deps) {
       actionKind: str(body.action_kind, 'action_kind', { max: 30 }),
       author: 'user', now: isoNow() });
   }));
+  router.add('POST', '/api/opportunities/:id/follow-up', json((ctx) => {
+    const body = asObject(ctx.body);
+    return saveFollowUpPlan(db, { id: idParam(ctx.params.id),
+      expectedVersion: opportunityId(body.expected_version, 'expected_version'),
+      baselineStart: /** @type {string} */ (str(body.baseline_start, 'baseline_start', { max: 30, required: true })),
+      baselineEnd: /** @type {string} */ (str(body.baseline_end, 'baseline_end', { max: 30, required: true })),
+      intentIds: opportunityIds(body.intent_ids, 'intent_ids'),
+      comparisonIntentIds: opportunityIds(body.comparison_intent_ids, 'comparison_intent_ids'),
+      primaryMetric: /** @type {string} */ (str(body.primary_metric, 'primary_metric', { max: 80, required: true })),
+      expectedDirection: /** @type {string} */ (str(body.expected_direction, 'expected_direction', { max: 30, required: true })),
+      reviewStart: /** @type {string} */ (str(body.review_start, 'review_start', { max: 30, required: true })),
+      reviewEnd: /** @type {string} */ (str(body.review_end, 'review_end', { max: 30, required: true })),
+      observationDelayDays: body.observation_delay_days === undefined ? 0 : Number(body.observation_delay_days),
+      author: 'user', now: isoNow() });
+  }, 201));
+  router.add('POST', '/api/opportunities/:id/follow-up/:plan_id/capture', json((ctx) => {
+    const body = asObject(ctx.body);
+    return captureFollowUpReview(db, { id: idParam(ctx.params.id),
+      planId: idParam(ctx.params.plan_id),
+      expectedVersion: opportunityId(body.expected_version, 'expected_version'),
+      author: 'user', now: isoNow() });
+  }, 201));
   router.add('POST', '/api/opportunities/:id/page-evidence', json((ctx) => {
     const body = asObject(ctx.body);
     return attachOpportunityPageEvidence(db, { id: idParam(ctx.params.id),
+      expectedVersion: opportunityId(body.expected_version, 'expected_version'),
       url: /** @type {string} */ (str(body.url, 'url', { max: 2048, required: true })),
       observedAt: /** @type {string} */ (str(body.observed_at, 'observed_at', { max: 30, required: true })),
       excerpt: /** @type {string} */ (str(body.excerpt, 'excerpt', { max: 2000, required: true })),
@@ -1839,12 +1875,16 @@ export function registerApiRoutes(router, deps) {
       throw new ApiError(422, 'unprocessable', 'reviewed must be true');
     }
     return reviewOpportunityPageEvidence(db, { id: idParam(ctx.params.id),
+      expectedVersion: opportunityId(body.expected_version, 'expected_version'),
       pageEvidenceId: idParam(ctx.params.evidence_id), author: 'user', now: isoNow() });
   }));
   router.add('POST', '/api/opportunities/:id/combine', json((ctx) => {
     const body = asObject(ctx.body);
     return combineOpportunities(db, { targetId: idParam(ctx.params.id),
-      sourceId: opportunityId(body.source_id, 'source_id'), author: 'user', now: isoNow() });
+      expectedVersion: opportunityId(body.expected_version, 'expected_version'),
+      sourceId: opportunityId(body.source_id, 'source_id'),
+      sourceExpectedVersion: opportunityId(body.source_expected_version, 'source_expected_version'),
+      author: 'user', now: isoNow() });
   }));
   router.add('GET', '/api/query-themes', json(() => ({ themes: listQueryThemes(db) })));
   router.add('POST', '/api/query-themes', json((ctx) => {

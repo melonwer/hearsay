@@ -115,6 +115,7 @@ shortlist. Each observed finding links to the answer and evidence IDs in one exa
 and window. You can prioritize, dismiss, combine, or investigate a candidate. Page-change
 actions need reviewed page evidence, and assistant proposals need human acceptance.
 See [review evidence-backed opportunities](docs/opportunities.md).
+The same page records shipped changes and versioned follow-up plans against the saved baseline.
 
 The setup wizard asks who buys, what job they need done, and the desired conversion.
 It offers five editable intent groups with three phrasings each, then shows the exact

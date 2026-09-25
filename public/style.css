@@ -532,6 +532,13 @@ p {
 }
 .opportunity-form textarea { resize: vertical; }
 .opportunity-form .btn { justify-self: start; }
+.opportunity-follow-up { border-left: 3px solid var(--s1); padding: 4px 12px 12px; margin: 12px 0 16px; }
+.opportunity-follow-up h4 { margin: 4px 0; overflow-wrap: anywhere; }
+.opportunity-follow-up li { overflow-wrap: anywhere; }
+.opportunity-warning { color: var(--ink); font-weight: 600; }
+.opportunity-combine-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding: 8px 0; }
+.opportunity-combine-form span { min-width: 0; overflow-wrap: anywhere; }
+.opportunity-combine-form .form-error { grid-column: 1 / -1; }
 .opportunity-page-evidence { border-left: 2px solid var(--grid); padding: 8px 12px; margin: 12px 0; }
 .opportunity-page-evidence blockquote { white-space: pre-wrap; margin: 8px 0; overflow-wrap: anywhere; }
 
@@ -541,6 +548,7 @@ p {
   .opportunity-filters { grid-template-columns: minmax(0, 1fr); }
   .opportunity-section-head { flex-direction: column; }
   .opportunity-form-grid { grid-template-columns: 1fr; }
+  .opportunity-combine-form { grid-template-columns: minmax(0, 1fr); }
   .form-grid,
   #suggest-list [data-suggest-phrasing] {
     grid-template-columns: 1fr;

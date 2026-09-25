@@ -19,3 +19,13 @@ A dismissed pattern stays dismissed when generation sees the same receipts. If a
 Add the page URL, UTC observation time, and an excerpt of at most 2,000 characters. Choose whether you supplied it, an assistant supplied it, or it came from an already recorded fetch. A recorded fetch must match the selected source ID, URL, observation time, and stored excerpt. Manual excerpts remain manual evidence; they are never labeled as provider retrieval. Review the excerpt, then choose **Specific page change** and **Planned**. For an alleged false or outdated claim, mark a user-supplied excerpt as authoritative before review. Without the required evidence, keep the action as an investigation or a request to verify the claim.
 
 An MCP client can call `hearsay_opportunity_propose` with exact response and child record IDs. Hearsay validates the IDs and stores the assistant's hypothesis as **Pending**. A person accepts or dismisses the proposal in Opportunities. The client cannot turn its own proposal into a planned action.
+
+## Record a shipped action and follow-up
+
+Choose an owner, review date, target URL or product area, and estimated effort before moving an action to **Planned**. Add a follow-up plan with its primary metric, expected direction, selected buyer intents, optional comparison intents, baseline window, review window, and observation delay. The baseline must use comparable answers from the opportunity's saved series and benchmark. The delay is your observation choice; it does not establish when a search engine indexed a change.
+
+After the change is live, choose **Shipped** and record what changed, the UTC publication time, and actual effort. This records your action only. It does not publish anything, start a paid run, or change a schedule. Hearsay flags a baseline chosen after publication as retrospective and warns when its window includes time after publication.
+
+When the review window has started, capture existing observations. Hearsay saves the exact comparable answers, current stance decisions, data cutoff, model/profile/benchmark variants seen in the window, and whether the window is still in progress. An empty capture is valid evidence of insufficient observations; it is not a completed measurement result. You can preview a separate run through Hearsay's existing run quote controls, then decide whether to authorize it. Capturing a follow-up never authorizes that run.
+
+Changing the plan or a date creates a new plan version or action event. Earlier baseline and review snapshots stay available. A stale form returns a conflict so you can refresh before editing. The `hearsay_opportunity` MCP tool reads these records; it does not change them.

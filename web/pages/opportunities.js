@@ -155,6 +155,71 @@ function manualForm(view) {
   </section>`;
 }
 
+/** @param {ReturnType<typeof listOpportunities>[number]} item */
+function followUpSection(item) {
+  const plans = item.followUpPlans ?? [];
+  const latest = plans.at(-1);
+  const canPlan = ['planned', 'in_progress', 'shipped', 'reviewed'].includes(item.status);
+  return html`<details><summary>Follow-up plans (${plans.length})</summary>
+    <p class="muted">Select the question and baseline before shipping when possible. Saving or capturing a plan only uses stored observations. It does not start a run, publish a change, or edit a schedule.</p>
+    <p class="muted">If you need more observations, <a href="/settings">review the run estimate and preview an on-demand run in Settings</a>. Starting that run requires a separate confirmation.</p>
+    ${latest ? html`<p class="muted">A revised plan creates a new version. Earlier baselines, dates, and review snapshots remain in the history above.</p>` : ''}
+    ${plans.map((plan) => html`<article class="opportunity-follow-up">
+      <h4>Plan v${plan.version} · ${plan.primaryMetric.replaceAll('_', ' ')} · ${plan.expectedDirection}</h4>
+      <p class="muted small">Baseline ${plan.baseline.windowStart} to ${plan.baseline.windowEnd} UTC, end exclusive · ${plan.baseline.answers.length} saved answers · captured ${plan.baseline.capturedAt}</p>
+      <p class="muted small">Series ${plan.baseline.series.id} · benchmark ${plan.baseline.series.benchmarkRevisionId ?? 'legacy'} · profile ${plan.baseline.series.executionProfileId ?? 'legacy'}</p>
+      <p>Intent IDs: ${plan.intentIds.join(', ')}${plan.comparisonIntentIds.length ? html` · comparison intents: ${plan.comparisonIntentIds.join(', ')}` : ''}</p>
+      <p>Review window: ${plan.reviewWindow.start} to ${plan.reviewWindow.end} UTC, end exclusive · observation delay ${plan.reviewWindow.observationDelayDays} day${plan.reviewWindow.observationDelayDays === 1 ? '' : 's'}</p>
+      ${plan.retrospective ? html`<p class="opportunity-warning">Retrospective baseline and metric selection. Interpret changes with care.</p>` : ''}
+      ${plan.baselineAfterPublication ? html`<p class="opportunity-warning">The baseline window includes time after the recorded ship time.</p>` : ''}
+      ${plan.reviewSnapshots.length ? html`<details><summary>Saved review snapshots (${plan.reviewSnapshots.length})</summary>
+        <ul>${plan.reviewSnapshots.map((snapshot) => html`<li>Captured ${snapshot.capturedAt} · ${snapshot.windowStart} to ${snapshot.windowEnd} UTC, end exclusive · ${snapshot.answers.length} saved answers
+          ${snapshot.partialWindow ? html`<span class="opportunity-warning"> · review window is still open</span>` : ''}
+          ${snapshot.seriesChanges.length ? html`<ul>${snapshot.seriesChanges.map((/** @type {{count:number,surface:string,model:string,benchmarkRevisionId:string|null,executionProfileId:string|null,analysisRevision:string|null,searchPolicy:string|null}} */ series) => html`<li>${series.count} target${series.count === 1 ? '' : 's'} · ${series.surface} · model ${series.model} · benchmark ${series.benchmarkRevisionId ?? 'legacy'} · profile ${series.executionProfileId ?? 'legacy'} · analysis ${series.analysisRevision ?? 'legacy'} · policy ${series.searchPolicy ?? 'legacy'}${series.executionProfileId !== plan.baseline.series.executionProfileId || series.benchmarkRevisionId !== plan.baseline.series.benchmarkRevisionId ? html` <strong class="opportunity-warning">Profile or benchmark differs from baseline</strong>` : ''}</li>`)}</ul>` : ''}
+        </li>`)}</ul>
+      </details>` : html`<p class="muted small">No review snapshot captured yet.</p>`}
+      ${['shipped', 'reviewed'].includes(item.status) && plan.id === plans.at(-1)?.id ? html`<form data-api-form="/api/opportunities/${item.id}/follow-up/${plan.id}/capture" class="opportunity-form">
+        <input type="hidden" name="expected_version" value="${item.recordVersion}" />
+        <button type="submit" class="btn btn-sm">Capture stored review observations</button>
+        <p class="form-error" data-form-error role="alert" hidden></p>
+      </form>` : ''}
+    </article>`)}
+    ${canPlan ? html`<form data-api-form="/api/opportunities/${item.id}/follow-up" class="opportunity-form">
+      <input type="hidden" name="expected_version" value="${item.recordVersion}" />
+      <div class="opportunity-form-grid">
+        <label><span>Primary metric</span><select name="primary_metric" required>
+          ${[['brand_mention_rate', 'Brand mention rate'], ['positive_stance_rate', 'Positive stance rate'], ['answer_citation_rate', 'Answer citation rate']].map(([value, label]) => html`<option value="${value}"${(latest?.primaryMetric ?? 'brand_mention_rate') === value ? raw(' selected') : ''}>${label}</option>`)}
+        </select></label>
+        <label><span>Expected direction</span><select name="expected_direction" required>
+          ${[['increase', 'Increase'], ['decrease', 'Decrease'], ['hold', 'Hold steady']].map(([value, label]) => html`<option value="${value}"${(latest?.expectedDirection ?? 'increase') === value ? raw(' selected') : ''}>${label}</option>`)}
+        </select></label>
+        <label><span>Buyer intent IDs</span><input name="intent_ids" data-list value="${latest?.intentIds.join(', ') ?? item.intentId}" placeholder="1, 2" required /></label>
+        <label><span>Comparison intent IDs, optional</span><input name="comparison_intent_ids" data-list value="${latest?.comparisonIntentIds.join(', ') ?? ''}" placeholder="3, 4" /></label>
+        <label><span>Baseline start, UTC</span><input name="baseline_start" value="${latest?.baseline.windowStart ?? item.windowStart}" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" required /></label>
+        <label><span>Baseline end, UTC, exclusive</span><input name="baseline_end" value="${latest?.baseline.windowEnd ?? item.windowEnd}" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" required /></label>
+        <label><span>Review start, UTC</span><input name="review_start" value="${latest?.reviewWindow.start ?? ''}" placeholder="2026-10-01T00:00:00Z" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" required /></label>
+        <label><span>Review end, UTC, exclusive</span><input name="review_end" value="${latest?.reviewWindow.end ?? ''}" placeholder="2026-10-15T00:00:00Z" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" required /></label>
+        <label><span>Observation delay, days</span><input name="observation_delay_days" type="number" min="0" max="180" step="1" value="${latest?.reviewWindow.observationDelayDays ?? 0}" required /></label>
+      </div>
+      <button type="submit" class="btn">${latest ? 'Save revised plan' : 'Save follow-up plan'}</button>
+      <p class="form-error" data-form-error role="alert" hidden></p>
+    </form>` : html`<p class="muted">Accept and plan the action before setting a follow-up question.</p>`}
+  </details>`;
+}
+
+/** @param {string} current */
+function availableStatuses(current) {
+  const transitions = {
+    pending: ['investigate', 'planned', 'dismissed', 'no_action'],
+    investigate: ['investigate', 'planned', 'dismissed', 'no_action'],
+    planned: ['planned', 'in_progress', 'shipped', 'investigate', 'dismissed', 'no_action'],
+    in_progress: ['in_progress', 'planned', 'shipped', 'dismissed', 'no_action'],
+    shipped: ['shipped', 'reviewed'], reviewed: ['reviewed'],
+    dismissed: ['dismissed', 'investigate'], no_action: ['no_action', 'investigate'],
+  };
+  return /** @type {Record<string,string[]>} */ (transitions)[current] ?? [current];
+}
+
 /** @param {ReturnType<typeof buildView>} view @param {ReturnType<typeof listOpportunities>[number]} item */
 function opportunityCard(view, item) {
   const evidence = item.evidence ?? { responseIds: [], queryIds: [], sourceIds: [], citationIds: [] };
@@ -170,17 +235,21 @@ function opportunityCard(view, item) {
     ${item.hypothesis ? html`<p><strong>${item.origin === 'assistant' ? 'Assistant hypothesis' : 'Hypothesis'}:</strong> ${item.hypothesis}</p>` : ''}
     ${item.suggestedAction ? html`<p><strong>Possible action (${item.actionKind ?? 'investigate'}):</strong> ${item.suggestedAction}</p>` : ''}
     ${item.targetUrl || item.productArea ? html`<p class="muted">Target: ${item.targetUrl ?? item.productArea}</p>` : ''}
+    ${item.owner || item.reviewDate ? html`<p class="muted">Owner: ${item.owner ?? 'unassigned'} · review date: ${item.reviewDate ?? 'unset'}</p>` : ''}
+    ${item.estimatedEffortHours !== null || item.actualEffortHours !== null ? html`<p class="muted">Effort: estimated ${item.estimatedEffortHours ?? 'unset'} hours · actual ${item.actualEffortHours ?? 'unset'} hours</p>` : ''}
+    ${item.shippedAt ? html`<p><strong>Shipped ${item.shippedAt}:</strong> ${item.changeDescription}</p>` : ''}
     ${item.claimClassification ? html`<p class="muted">Claim handling: ${item.claimClassification}</p>` : ''}
     ${item.missingEvidence?.length ? html`<p class="muted">Still needed: ${item.missingEvidence.join('; ')}</p>` : ''}
     ${item.staleEvidence ? html`<p class="form-error">Some linked evidence is missing. Recheck the receipt before review.</p>` : ''}
     ${item.resurfacedExplanation ? html`<p class="muted">Resurfaced because ${item.resurfacedExplanation}</p>` : ''}
     ${support(view, evidence)}
     <div class="opportunity-review-grid">
-      <details><summary>Review and prioritize</summary>
+      ${item.status === 'combined' ? '' : html`<details><summary>Review and prioritize</summary>
         <form data-api-form="/api/opportunities/${item.id}" data-method="PATCH" class="opportunity-form">
+          <input type="hidden" name="expected_version" value="${item.recordVersion}" />
           <div class="opportunity-form-grid">
             <label><span>Outcome</span><select name="status">
-              ${['investigate', 'planned', 'dismissed', 'no_action'].map((status) => html`<option value="${status}"${item.status === status ? raw(' selected') : ''}>${status.replace('_', ' ')}</option>`)}
+              ${availableStatuses(item.status).map((status) => html`<option value="${status}"${item.status === status ? raw(' selected') : ''}>${status.replace('_', ' ')}</option>`)}
             </select></label>
             <label><span>User priority</span><select name="priority">
               ${[[0, 'Unset'], [3, 'High'], [2, 'Medium'], [1, 'Low']].map(([value, label]) => html`<option value="${value}"${item.priority === value ? raw(' selected') : ''}>${label}</option>`)}
@@ -190,6 +259,8 @@ function opportunityCard(view, item) {
             </select></label>
             <label><span>Owner</span><input name="owner" value="${item.owner ?? ''}" maxlength="120" data-include-empty /></label>
             <label><span>Review date</span><input name="review_date" type="date" value="${item.reviewDate ?? ''}" data-include-empty /></label>
+            <label><span>Estimated effort, hours</span><input name="estimated_effort_hours" type="number" min="0" max="100000" step="0.25" value="${item.estimatedEffortHours ?? ''}" data-include-empty /></label>
+            <label><span>Actual effort, hours</span><input name="actual_effort_hours" type="number" min="0" max="100000" step="0.25" value="${item.actualEffortHours ?? ''}" data-include-empty /></label>
             <label><span>Target URL</span><input name="target_url" type="url" value="${item.targetUrl ?? ''}" data-include-empty /></label>
             <label><span>Product area</span><input name="product_area" value="${item.productArea ?? ''}" maxlength="160" data-include-empty /></label>
             <label><span>Action type</span><select name="action_kind">
@@ -201,25 +272,31 @@ function opportunityCard(view, item) {
           </div>
           <label><span>Hypothesis</span><textarea name="hypothesis" rows="2" maxlength="2000" data-include-empty>${item.hypothesis ?? ''}</textarea></label>
           <label><span>Possible action</span><textarea name="suggested_action" rows="2" maxlength="2000" data-include-empty>${item.suggestedAction ?? ''}</textarea></label>
+          <label><span>Shipped change description</span><textarea name="change_description" rows="2" maxlength="2000" data-include-empty placeholder="What changed on the target page or feature">${item.changeDescription ?? ''}</textarea></label>
+          <label><span>Shipped at, UTC</span><input name="shipped_at" value="${item.shippedAt ?? ''}" placeholder="2026-09-25T12:00:00Z" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" data-include-empty /></label>
           <label><span>Reason when dismissing or choosing no action</span><textarea name="dismissal_reason" rows="2" maxlength="1000" data-include-empty>${item.dismissalReason ?? ''}</textarea></label>
           ${item.origin === 'assistant' && item.status === 'pending' ? html`<p class="muted">Accepting this assistant proposal is a separate human review. It does not publish or start a run.</p>` : ''}
           ${!reviewedPage ? html`<p class="muted">For a specific page change, attach and review page evidence first. The next step remains an investigation until then.</p>` : ''}
+          <p class="muted">Mark shipped only after the change exists. Record what changed, its UTC time, and its target. Saving this status does not publish a change, start a paid run, or change a schedule.</p>
           <button type="submit" class="btn">Save review</button>
           <p class="form-error" data-form-error role="alert" hidden></p>
         </form>
-      </details>
+      </details>`}
+      ${followUpSection(item)}
       <details><summary>Page evidence (${pageEvidence.length})</summary>
         <p class="muted">A manual excerpt records what you or an assistant supplied. It is separate from provider-observed retrieval.</p>
         ${pageEvidence.map((entry) => html`<div class="opportunity-page-evidence">
           <p>${entry.url} · ${entry.observedAt} · ${entry.provenance}${entry.isAuthoritative ? html` · user marked authoritative` : ''}${entry.reviewedAt ? html` · reviewed ${entry.reviewedAt}` : ''}</p>
           <blockquote>${entry.excerpt}</blockquote>
           ${entry.reviewedAt ? '' : html`<form data-api-form="/api/opportunities/${item.id}/page-evidence/${entry.id}/review">
+            <input type="hidden" name="expected_version" value="${item.recordVersion}" />
             <input type="hidden" name="reviewed" value="true" data-bool />
             <button type="submit" class="btn btn-sm">I reviewed this excerpt</button>
             <p class="form-error" data-form-error role="alert" hidden></p>
           </form>`}
         </div>`)}
         <form data-api-form="/api/opportunities/${item.id}/page-evidence" class="opportunity-form">
+          <input type="hidden" name="expected_version" value="${item.recordVersion}" />
           <label><span>Page URL</span><input name="url" type="url" required /></label>
           <label><span>Observation time, UTC</span><input name="observed_at" type="text" placeholder="2026-09-25T12:00:00Z" pattern="[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z" required /></label>
           <label><span>Source</span><select name="provenance"><option value="manual_user">I supplied the excerpt</option><option value="manual_assistant">Assistant supplied the excerpt</option><option value="observed_fetch">Already observed fetch</option></select></label>
@@ -232,15 +309,18 @@ function opportunityCard(view, item) {
       </details>
       ${otherItems.length ? html`<details><summary>Combine with another opportunity</summary>
         <p class="muted">The selected record is combined into this one. Its receipts and review history remain linked.</p>
-        <form data-api-form="/api/opportunities/${item.id}/combine" class="opportunity-form">
-          <label><span>Combine record</span><select name="source_id">${otherItems.map((other) => html`<option value="${other.id}">#${other.id} · ${other.observedFinding}</option>`)}</select></label>
+        ${otherItems.map((other) => html`<form data-api-form="/api/opportunities/${item.id}/combine" class="opportunity-combine-form">
+          <input type="hidden" name="expected_version" value="${item.recordVersion}" />
+          <input type="hidden" name="source_expected_version" value="${other.recordVersion}" />
+          <input type="hidden" name="source_id" value="${other.id}" />
+          <span>#${other.id} · ${other.observedFinding}</span>
           <button type="submit" class="btn btn-sm">Combine</button>
           <p class="form-error" data-form-error role="alert" hidden></p>
-        </form>
+        </form>`)}
       </details>` : ''}
     </div>
     ${item.events?.length ? html`<details class="opportunity-history"><summary>Review history (${item.events.length})</summary>
-      <ul>${item.events.map((entry) => html`<li>${entry.createdAt} · ${entry.eventType} · ${entry.author}${entry.eventType === 'combined_source' ? html` · source opportunity #${entry.details.sourceId}` : ''}${entry.eventType === 'combined' ? html` · combined into #${entry.details.targetId}` : ''}</li>`)}</ul>
+      <ul>${item.events.map((entry) => html`<li>${entry.createdAt} · ${entry.eventType} · ${entry.author}${entry.details.status ? html` · ${entry.details.status}` : ''}${entry.details.reviewDate ? html` · review date ${entry.details.reviewDate}` : ''}${entry.details.shippedAt ? html` · shipped ${entry.details.shippedAt}` : ''}${entry.details.changeDescription ? html` · ${entry.details.changeDescription}` : ''}${entry.eventType === 'combined_source' ? html` · source opportunity #${entry.details.sourceId}` : ''}${entry.eventType === 'combined' ? html` · combined into #${entry.details.targetId}` : ''}</li>`)}</ul>
     </details>` : ''}
   </article>`;
 }

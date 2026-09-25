@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { get, openDb, run } from '../core/db.js';
 import { createQueryTheme, setQueryThemeAssignment } from '../core/evidence-report.js';
+import { captureFollowUpReview, saveFollowUpPlan } from '../core/follow-up.js';
 import { appendCorrection } from '../core/interpretations.js';
 import { listMeasurementSeries } from '../core/metrics.js';
 import { attachOpportunityPageEvidence, combineOpportunities, createOpportunity,
@@ -11,6 +12,20 @@ import { attachOpportunityPageEvidence, combineOpportunities, createOpportunity,
 
 const START = '2026-09-01T00:00:00Z';
 const END = '2026-09-10T00:00:00Z';
+
+/** @param {import('node:sqlite').DatabaseSync} db @param {Omit<Parameters<typeof reviewOpportunity>[1], 'expectedVersion'>} input */
+const review = (db, input) => reviewOpportunity(db, { ...input,
+  expectedVersion: getOpportunity(db, input.id)?.recordVersion ?? 0 });
+/** @param {import('node:sqlite').DatabaseSync} db @param {Omit<Parameters<typeof attachOpportunityPageEvidence>[1], 'expectedVersion'>} input */
+const attach = (db, input) => attachOpportunityPageEvidence(db, { ...input,
+  expectedVersion: getOpportunity(db, input.id)?.recordVersion ?? 0 });
+/** @param {import('node:sqlite').DatabaseSync} db @param {Omit<Parameters<typeof reviewOpportunityPageEvidence>[1], 'expectedVersion'>} input */
+const reviewPage = (db, input) => reviewOpportunityPageEvidence(db, { ...input,
+  expectedVersion: getOpportunity(db, input.id)?.recordVersion ?? 0 });
+/** @param {import('node:sqlite').DatabaseSync} db @param {Omit<Parameters<typeof combineOpportunities>[1], 'expectedVersion'|'sourceExpectedVersion'>} input */
+const combine = (db, input) => combineOpportunities(db, { ...input,
+  expectedVersion: getOpportunity(db, input.targetId)?.recordVersion ?? 0,
+  sourceExpectedVersion: getOpportunity(db, input.sourceId)?.recordVersion ?? 0 });
 
 /** @param {import('node:test').TestContext} t */
 function fixture(t) {
@@ -132,9 +147,9 @@ test('manual and assistant proposals validate exact scope and require human acce
   assert.match(proposed.observedFinding, /1 selected comparable answer/);
   assert.doesNotMatch(proposed.observedFinding, /Acme may need a guide/);
   assert.equal(listOpportunities(db, { series }).length, 1);
-  assert.throws(() => reviewOpportunity(db, { id: proposed.id, status: 'planned',
+  assert.throws(() => review(db, { id: proposed.id, status: 'planned',
     author: 'mcp_assistant' }), /Assistant cannot accept/);
-  assert.equal(reviewOpportunity(db, { id: proposed.id, status: 'investigate', author: 'user',
+  assert.equal(review(db, { id: proposed.id, status: 'investigate', author: 'user',
     priority: 3, effortBand: 'low' }).priority, 3);
   assert.throws(() => createOpportunity(db, { series, intentId: 1, evidence, origin: 'manual',
     author: 'user' }), /already has an opportunity/);
@@ -155,28 +170,28 @@ test('page actions require reviewed, attributed evidence; false claims need a us
     targetUrl: 'https://acme.example/docs',
     suggestedAction: 'Explain the local-processing capability on the docs page.',
     owner: 'Product team', reviewDate: '2026-10-01', author: 'user' };
-  assert.throws(() => reviewOpportunity(db, plan), /reviewed page evidence/);
-  assert.throws(() => attachOpportunityPageEvidence(db, { id: item.id,
+  assert.throws(() => review(db, plan), /reviewed page evidence/);
+  assert.throws(() => attach(db, { id: item.id,
     url: 'https://example.org/guide', observedAt: '2026-09-02T10:00:00Z', excerpt: 'Page excerpt',
     provenance: 'observed_fetch', sourceObservationId: 1, author: 'user' }), /Observed fetch excerpt/);
-  const fetched = attachOpportunityPageEvidence(db, { id: item.id,
+  const fetched = attach(db, { id: item.id,
     url: 'https://acme.example/docs', observedAt: '2026-09-02T10:00:00Z',
     excerpt: 'Acme handles local processing.', provenance: 'observed_fetch',
     sourceObservationId: 6, author: 'user' });
   assert.equal(fetched?.sourceObservationId, 6);
   assert.equal(fetched?.isAuthoritative, false);
-  const page = attachOpportunityPageEvidence(db, { id: item.id, url: 'https://acme.example/docs',
+  const page = attach(db, { id: item.id, url: 'https://acme.example/docs',
     observedAt: '2026-09-04T10:00:00Z', excerpt: 'Acme handles local processing.',
     provenance: 'manual_user', author: 'user' });
   assert.ok(page);
-  reviewOpportunityPageEvidence(db, { id: item.id, pageEvidenceId: page.id, author: 'user' });
-  assert.throws(() => reviewOpportunity(db, plan), /authoritative evidence/);
-  const authority = attachOpportunityPageEvidence(db, { id: item.id, url: 'https://acme.example/docs',
+  reviewPage(db, { id: item.id, pageEvidenceId: page.id, author: 'user' });
+  assert.throws(() => review(db, plan), /authoritative evidence/);
+  const authority = attach(db, { id: item.id, url: 'https://acme.example/docs',
     observedAt: '2026-09-04T10:00:00Z', excerpt: 'Acme handles local processing.',
     provenance: 'manual_user', isAuthoritative: true, author: 'user' });
   assert.ok(authority);
-  reviewOpportunityPageEvidence(db, { id: item.id, pageEvidenceId: authority.id, author: 'user' });
-  assert.equal(reviewOpportunity(db, plan).status, 'planned');
+  reviewPage(db, { id: item.id, pageEvidenceId: authority.id, author: 'user' });
+  assert.equal(review(db, plan).status, 'planned');
 });
 
 test('dismissal, resurfacing, no action, combination, and stale records preserve provenance', (t) => {
@@ -185,7 +200,7 @@ test('dismissal, resurfacing, no action, combination, and stale records preserve
   const source = generated.find((item) => item.candidateType === 'source_without_brand');
   const theme = generated.find((item) => item.candidateType === 'query_theme');
   assert.ok(source && theme);
-  reviewOpportunity(db, { id: source.id, status: 'dismissed', dismissalReason: 'Not relevant',
+  review(db, { id: source.id, status: 'dismissed', dismissalReason: 'Not relevant',
     author: 'user', now: '2026-09-04T00:00:00Z' });
   assert.equal(deriveOpportunityCandidates(db, { series, intentId: 1 })
     .some((item) => item.candidateKey === source.candidateKey), false);
@@ -206,14 +221,99 @@ test('dismissal, resurfacing, no action, combination, and stale records preserve
   generateOpportunityCandidates(db, { series, intentId: 1 });
   assert.equal(getOpportunity(db, source.id)?.status, 'investigate');
   assert.equal(getOpportunity(db, source.id)?.events.some((event) => event.eventType === 'resurfaced'), true);
-  reviewOpportunity(db, { id: theme.id, status: 'no_action', dismissalReason: 'No value', author: 'user' });
-  const combined = combineOpportunities(db, { targetId: source.id, sourceId: theme.id, author: 'user' });
+  review(db, { id: theme.id, status: 'no_action', dismissalReason: 'No value', author: 'user' });
+  const combined = combine(db, { targetId: source.id, sourceId: theme.id, author: 'user' });
   assert.equal(combined?.events.some((event) => event.eventType === 'combined_source'), true);
   assert.equal(getOpportunity(db, theme.id)?.status, 'combined');
   run(db, 'DELETE FROM responses WHERE id = 1');
   assert.equal(getOpportunity(db, source.id)?.staleEvidence, true);
-  assert.throws(() => reviewOpportunity(db, { id: source.id, status: 'planned', author: 'user' }),
+  assert.throws(() => review(db, { id: source.id, status: 'planned', author: 'user' }),
     /owner and review date/);
-  assert.throws(() => reviewOpportunity(db, { id: source.id, status: 'planned', author: 'user',
+  assert.throws(() => review(db, { id: source.id, status: 'planned', author: 'user',
     owner: 'Product team', reviewDate: '2026-10-01' }), /no longer available/);
+});
+
+test('a shipped action keeps its selected baseline, versioned dates, and observed profile changes', (t) => {
+  const { db, series, answer } = fixture(t);
+  const first = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [1], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-04T00:00:00Z' });
+  const second = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [3], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-04T00:00:00Z' });
+  assert.notEqual(first.id, second.id);
+  const planned = review(db, { id: first.id, status: 'planned', owner: 'Content team',
+    reviewDate: '2026-09-22', author: 'user', now: '2026-09-05T00:00:00Z' });
+  assert.throws(() => reviewOpportunity(db, { id: first.id, expectedVersion: first.recordVersion,
+    priority: 3, author: 'user' }), (error) => error.code === 'conflict');
+  assert.throws(() => review(db, { id: first.id, status: 'shipped', author: 'user',
+    now: '2026-09-10T00:00:00Z' }), /change description/);
+  const fields = { id: first.id, baselineStart: START, baselineEnd: END,
+    intentIds: [1], comparisonIntentIds: [2], primaryMetric: 'positive_stance_rate',
+    expectedDirection: 'increase', reviewStart: '2026-09-11T00:00:00Z',
+    reviewEnd: '2026-09-20T00:00:00Z', observationDelayDays: 1, author: 'user' };
+  assert.throws(() => saveFollowUpPlan(db, { ...fields, expectedVersion: planned.recordVersion,
+    reviewStart: '2026-09-09T00:00:00Z', now: '2026-09-09T00:00:00Z' }), /nonoverlapping/);
+  const firstPlan = saveFollowUpPlan(db, { ...fields, expectedVersion: planned.recordVersion,
+    now: '2026-09-09T00:00:00Z' });
+  assert.deepEqual(firstPlan.baseline.answers.map((item) => item.responseId).sort((a, b) => a - b), [1, 2, 3, 4]);
+  assert.equal(firstPlan.retrospective, false);
+  const shipped = review(db, { id: first.id, status: 'shipped', author: 'user',
+    changeDescription: 'Published a clearer comparison page', shippedAt: '2026-09-10T00:00:00Z',
+    estimatedEffortHours: 4, actualEffortHours: 5,
+    now: '2026-09-10T01:00:00Z' });
+  assert.equal(shipped.status, 'shipped');
+  assert.equal(shipped.actualEffortHours, 5);
+  assert.throws(() => captureFollowUpReview(db, { id: second.id, planId: firstPlan.id,
+    expectedVersion: second.recordVersion, author: 'user', now: '2026-09-21T00:00:00Z' }),
+  /Only a shipped action/);
+  answer(8, 3, 1, '2026-09-12T10:00:00Z');
+  answer(9, 3, 1, '2026-09-12T11:00:00Z', 'profile-b');
+  run(db, "INSERT INTO benchmark_revisions(id,snapshot_json,created_at) VALUES('benchmark-b','{}',?)", [START]);
+  run(db, "UPDATE responses SET model='fixture-v2', benchmark_revision_id='benchmark-b' WHERE id=9");
+  const capture = captureFollowUpReview(db, { id: first.id, planId: firstPlan.id,
+    expectedVersion: shipped.recordVersion, author: 'user', now: '2026-09-21T00:00:00Z' });
+  assert.deepEqual(capture.answers.map((item) => item.responseId), [8]);
+  assert.equal(capture.seriesChanges.some((item) => item.executionProfileId === 'profile-b'
+    && item.benchmarkRevisionId === 'benchmark-b' && item.model === 'fixture-v2'), true);
+  assert.equal(capture.partialWindow, false);
+  assert.deepEqual(getOpportunity(db, first.id)?.followUpPlans[0].baseline.answers
+    .map((item) => item.responseId).sort((a, b) => a - b), [1, 2, 3, 4]);
+  const changed = saveFollowUpPlan(db, { ...fields, expectedVersion: getOpportunity(db, first.id).recordVersion,
+    reviewStart: '2026-09-12T00:00:00Z', reviewEnd: '2026-09-22T00:00:00Z',
+    now: '2026-09-22T00:00:00Z' });
+  assert.equal(changed.version, 2);
+  assert.equal(changed.retrospective, true);
+  assert.equal(getOpportunity(db, first.id)?.followUpPlans[0].reviewSnapshots[0].id, capture.id);
+  assert.equal(getOpportunity(db, first.id)?.followUpPlans[0].reviewWindow.end, '2026-09-20T00:00:00Z');
+  assert.equal(getOpportunity(db, first.id)?.events.some((item) => item.eventType === 'follow_up_planned'), true);
+  run(db, 'DELETE FROM responses WHERE id = 1');
+  assert.equal(getOpportunity(db, first.id)?.staleEvidence, true);
+  assert.deepEqual(getOpportunity(db, first.id)?.followUpPlans[0].baseline.answers
+    .map((item) => item.responseId).sort((a, b) => a - b), [1, 2, 3, 4]);
+});
+
+test('historical shipment flags a late baseline and preserves each date edit', (t) => {
+  const { db, series } = fixture(t);
+  const item = createOpportunity(db, { series, intentId: 1,
+    evidence: { responseIds: [1], queryIds: [], sourceIds: [], citationIds: [] },
+    origin: 'manual', author: 'user', now: '2026-09-04T00:00:00Z' });
+  review(db, { id: item.id, status: 'planned', owner: 'Product team',
+    reviewDate: '2026-09-22', author: 'user', now: '2026-09-05T00:00:00Z' });
+  const shipped = review(db, { id: item.id, status: 'shipped',
+    changeDescription: 'Updated buyer guide', shippedAt: '2026-09-09T00:00:00Z',
+    author: 'user', now: '2026-09-10T00:00:00Z' });
+  const plan = saveFollowUpPlan(db, { id: item.id, expectedVersion: shipped.recordVersion,
+    baselineStart: START, baselineEnd: END, intentIds: [1], comparisonIntentIds: [],
+    primaryMetric: 'brand_mention_rate', expectedDirection: 'increase',
+    reviewStart: '2026-09-11T00:00:00Z', reviewEnd: '2026-09-20T00:00:00Z',
+    observationDelayDays: 1, author: 'user', now: '2026-09-12T00:00:00Z' });
+  assert.equal(plan.retrospective, true);
+  assert.equal(plan.baselineAfterPublication, true);
+  const changed = review(db, { id: item.id, shippedAt: '2026-09-08T00:00:00Z',
+    author: 'user', now: '2026-09-13T00:00:00Z' });
+  assert.equal(changed.shippedAt, '2026-09-08T00:00:00Z');
+  const last = changed.events.at(-1);
+  assert.equal(last?.details.previous.shippedAt, '2026-09-09T00:00:00Z');
+  assert.equal(last?.details.shippedAt, '2026-09-08T00:00:00Z');
 });

@@ -24,8 +24,8 @@ try {
   run(db, `INSERT INTO intents(id,label,created_at) VALUES(1,'Choosing meeting software',?)`, [start]);
   run(db, `INSERT INTO prompts(id,intent_id,text,category,active,created_at)
     VALUES(1,1,'Which meeting tool fits my team?','general',1,?)`, [start]);
-  for (const id of [1, 2]) {
-    const at = `2026-09-0${id + 1}T10:00:00Z`;
+  for (const id of [1, 2, 3]) {
+    const at = id === 3 ? '2026-09-17T10:00:00Z' : `2026-09-0${id + 1}T10:00:00Z`;
     run(db, `INSERT INTO runs(id,started_at,trigger,status) VALUES(?,?,'manual','done')`, [id, at]);
     run(db, `INSERT INTO responses(id,run_id,prompt_id,provider,model,sample_idx,text,created_at,
       surface,lane,target_status,comparability_status,comparison_key,analysis_revision,
@@ -90,15 +90,64 @@ try {
   await page.locator('.opportunity-card').first().getByRole('button', { name: 'Save review' }).click();
   assert.equal((await accepted).status(), 200);
   await page.getByText('planned', { exact: true }).first().waitFor();
+  await page.locator('.opportunity-card').first().getByText('Follow-up plans (0)').click();
+  const planCard = page.locator('.opportunity-card').first();
+  await planCard.locator('[name="review_start"]').fill('2026-09-15T00:00:00Z');
+  await planCard.locator('[name="review_end"]').fill('2026-09-20T00:00:00Z');
+  await planCard.locator('[name="observation_delay_days"]').fill('2');
+  const planned = page.waitForResponse((response) => response.url().endsWith('/follow-up')
+    && response.request().method() === 'POST');
+  await planCard.getByRole('button', { name: 'Save follow-up plan' }).click();
+  const savedPlan = await planned;
+  assert.equal(savedPlan.status(), 201);
+  const plannedRecord = await page.request.get(`${base}/api/opportunities/1`);
+  assert.deepEqual((await plannedRecord.json()).followUpPlans[0].baseline.answers
+    .map((/** @type {{responseId:number}} */ answer) => answer.responseId)
+    .sort((/** @type {number} */ a, /** @type {number} */ b) => a - b), [1, 2]);
+  await page.locator('.opportunity-card').first().getByText('Review and prioritize').click();
+  await page.locator('.opportunity-card').first().locator('[name="status"]').selectOption('shipped');
+  await page.locator('.opportunity-card').first().locator('[name="change_description"]')
+    .fill('Published a clearer explanation of meeting data handling.');
+  await page.locator('.opportunity-card').first().locator('[name="shipped_at"]')
+    .fill('2026-09-11T12:00:00Z');
+  await page.locator('.opportunity-card').first().locator('[name="estimated_effort_hours"]').fill('4');
+  await page.locator('.opportunity-card').first().locator('[name="actual_effort_hours"]').fill('3.5');
+  const shipped = page.waitForResponse((response) => response.url().includes('/api/opportunities/')
+    && response.request().method() === 'PATCH');
+  await page.locator('.opportunity-card').first().getByRole('button', { name: 'Save review' }).click();
+  assert.equal((await shipped).status(), 200);
+  await page.locator('.opportunity-card').first().getByText('Follow-up plans (1)').click();
+  const captured = page.waitForResponse((response) => response.url().endsWith('/capture')
+    && response.request().method() === 'POST');
+  await page.locator('.opportunity-card').first()
+    .getByRole('button', { name: 'Capture stored review observations' }).click();
+  const savedSnapshot = await captured;
+  assert.equal(savedSnapshot.status(), 201);
+  const capturedRecord = await page.request.get(`${base}/api/opportunities/1`);
+  assert.deepEqual((await capturedRecord.json()).followUpPlans[0].reviewSnapshots[0].answers
+    .map((/** @type {{responseId:number}} */ answer) => answer.responseId), [3]);
+  await page.locator('.opportunity-card').first().getByText('Follow-up plans (1)').click();
+  await page.locator('.opportunity-card').first().getByText('Saved review snapshots (1)').waitFor();
+  await page.locator('.opportunity-card').first().getByText('Review and prioritize').click();
+  await page.locator('.opportunity-card').first().locator('[name="status"]').selectOption('reviewed');
+  const completed = page.waitForResponse((response) => response.url().includes('/api/opportunities/')
+    && response.request().method() === 'PATCH');
+  await page.locator('.opportunity-card').first().getByRole('button', { name: 'Save review' }).click();
+  assert.equal((await completed).status(), 200);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM runs').get()?.n, 3);
+  await page.locator('.opportunity-card').first().getByText('Follow-up plans (1)').click();
+  await page.locator('.opportunity-card').first().getByText('Saved review snapshots (1)').click();
   if (process.env.HEARSAY_CAPTURE_OPPORTUNITIES === '1') {
-    await page.screenshot({ path: '/tmp/hearsay-c12-light.png', fullPage: true });
+    await page.screenshot({ path: '/tmp/hearsay-c13-light.png', fullPage: true });
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
-    await page.screenshot({ path: '/tmp/hearsay-c12-dark.png', fullPage: true });
+    await page.screenshot({ path: '/tmp/hearsay-c13-dark.png', fullPage: true });
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
+  await page.locator('.opportunity-card').first().getByText('Follow-up plans (1)').click();
+  await page.locator('.opportunity-card').first().getByText('Saved review snapshots (1)').click();
   if (process.env.HEARSAY_CAPTURE_OPPORTUNITIES === '1') {
-    await page.screenshot({ path: '/tmp/hearsay-c12-narrow.png', fullPage: true });
+    await page.screenshot({ path: '/tmp/hearsay-c13-narrow.png', fullPage: true });
   }
   const overflow = await page.evaluate(() => ({
     width: document.documentElement.scrollWidth,
@@ -108,7 +157,7 @@ try {
       .slice(0, 8).map((element) => `${element.tagName}.${element.className}`),
   }));
   assert.equal(overflow.width > overflow.viewport, false, JSON.stringify(overflow));
-  process.stdout.write('Evidence link, manual review, page evidence gate, planned action, and narrow layout passed.\n');
+  process.stdout.write('Evidence link, review gate, follow-up plan, shipped action, saved snapshot, reviewed state, and narrow layout passed.\n');
 } finally {
   await browser.close();
   await app.close();

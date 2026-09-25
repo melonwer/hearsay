@@ -432,6 +432,10 @@ function kpiRow(view) {
 function evidencePanel(view) {
   if (!view.evidence) return '';
   const e = view.evidence;
+  const opportunitiesHref = `/opportunities?${new URLSearchParams({
+    series_id: view.series?.id ?? '', start: view.series?.start ?? '',
+    end: view.series?.end ?? '', days: String(view.days),
+  })}`;
   /** @param {import('../../core/metrics.js').Rate} rate */
   const displayRate = (rate) => rateWithCI({ n: rate.n, p: rate.p,
     lo: rate.lo ?? undefined, hi: rate.hi ?? undefined });
@@ -443,6 +447,7 @@ function evidencePanel(view) {
       <dt>Answers with final-answer citations</dt><dd>${e.responsesWithAnswerCitations}/${e.n} · ${displayRate(e.citationRate)}</dd>
       <dt>Answers mentioning the brand</dt><dd>${e.responsesWithMentions}/${e.n} · ${displayRate(e.mentionRate)}</dd>
     </dl>
+    <p><a href="${opportunitiesHref}">Review opportunities and follow-up plans for this series →</a></p>
   </section>`;
 }
 

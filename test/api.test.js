@@ -66,6 +66,38 @@ test('opportunities API and page keep exact evidence scope and ordinary reads do
     const detail = await api(app.base, 'GET', `/api/opportunities/${selected.body.id}`);
     assert.equal(detail.body.id, selected.body.id);
     assert.equal(detail.body.staleEvidence, false);
+    const planInput = { expected_version: detail.body.recordVersion,
+      baseline_start: start, baseline_end: end,
+      intent_ids: [prompt.intent_id], comparison_intent_ids: [],
+      primary_metric: 'brand_mention_rate', expected_direction: 'increase',
+      review_start: '2026-09-11T00:00:00Z', review_end: '2026-09-20T00:00:00Z',
+      observation_delay_days: 0 };
+    const runCount = Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n);
+    const savedPlan = await api(app.base, 'POST', `/api/opportunities/${selected.body.id}/follow-up`, planInput);
+    assert.equal(savedPlan.status, 201);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n), runCount);
+    const stalePlan = await api(app.base, 'POST', `/api/opportunities/${selected.body.id}/follow-up`, planInput);
+    assert.equal(stalePlan.status, 409);
+    const withPlan = await api(app.base, 'GET', `/api/opportunities/${selected.body.id}`);
+    assert.equal(withPlan.body.followUpPlans.length, 1);
+    assert.equal(withPlan.body.followUpPlans[0].primaryMetric, 'brand_mention_rate');
+    const planned = await api(app.base, 'PATCH', `/api/opportunities/${selected.body.id}`, {
+      expected_version: withPlan.body.recordVersion, status: 'planned',
+      owner: 'Product team', review_date: '2026-09-20', product_area: 'Meeting tool comparison',
+      suggested_action: 'Add an owned comparison guide.', estimated_effort_hours: 4,
+    });
+    assert.equal(planned.status, 200);
+    const shipped = await api(app.base, 'PATCH', `/api/opportunities/${selected.body.id}`, {
+      expected_version: planned.body.recordVersion, status: 'shipped',
+      change_description: 'Published the comparison guide.', shipped_at: '2026-09-10T12:00:00Z',
+      actual_effort_hours: 3,
+    });
+    assert.equal(shipped.status, 200);
+    const captured = await api(app.base, 'POST',
+      `/api/opportunities/${selected.body.id}/follow-up/${withPlan.body.followUpPlans[0].id}/capture`,
+      { expected_version: shipped.body.recordVersion });
+    assert.equal(captured.status, 201);
+    assert.equal(Number(get(app.db, 'SELECT COUNT(*) AS n FROM runs')?.n), runCount);
     const secondResponseId = dbRun(app.db, `INSERT INTO responses(run_id,prompt_id,provider,model,sample_idx,text,
       created_at,surface,lane,target_status,comparability_status,comparison_key,analysis_revision,
       search_policy,answer_status,web_status,query_metadata_status,prompt_text_snapshot)
@@ -86,9 +118,11 @@ test('opportunities API and page keep exact evidence scope and ordinary reads do
       .then((response) => response.text());
     assert.match(withPending, /Pending assistant proposals/);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 6);
+    assert.equal(exported.body.exportFormatVersion, 7);
     assert.equal(exported.body.tables.opportunities.length, 2);
-    assert.equal(exported.body.tables.opportunity_events.length, 2);
+    assert.equal(exported.body.tables.opportunity_events.length, 6);
+    assert.equal(exported.body.tables.follow_up_plans.length, 1);
+    assert.equal(exported.body.tables.follow_up_review_snapshots.length, 1);
   } finally {
     await app.close();
   }
@@ -146,7 +180,7 @@ test('evidence API and page expose the same scoped receipts without rendering st
     assert.deepEqual(themed.body.report.themeGroups.map((group) => [group.label, group.responseIncidence]),
       [['Pricing & <review>', 1]]);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 6);
+    assert.equal(exported.body.exportFormatVersion, 7);
     assert.equal(exported.body.tables.query_themes.length, 1);
     assert.equal(exported.body.tables.query_theme_assignments.length, 1);
 
@@ -499,7 +533,7 @@ test('draft review rejects placeholders and duplicates, then approves a keyless 
     assert.deepEqual((await api(app.base, 'GET', '/api/prompts')).body.map((row) => row.source_note),
       ['From buyer email', 'From sales call']);
     const exported = await api(app.base, 'GET', '/api/export');
-    assert.equal(exported.body.exportFormatVersion, 6);
+    assert.equal(exported.body.exportFormatVersion, 7);
     assert.equal(exported.body.tables.benchmark_drafts.length, 1);
     assert.ok(JSON.stringify(exported.body.tables.benchmark_drafts).includes('From buyer email'));
     assert.ok(!String(get(app.db, 'SELECT snapshot_json FROM benchmark_revisions ORDER BY created_at DESC LIMIT 1')?.snapshot_json)
