@@ -30,7 +30,10 @@ test('e2e: seeded demo instance tells the full story', async () => {
       assert.ok(key in summary.body, `summary missing ${key}`); // §10.4 key-shape
     }
     assert.equal(summary.body.demo, true);
-    assert.ok(summary.body.openAlerts >= 2, 'seed storylines must produce alerts (§12)');
+    assert.equal(summary.body.openAlerts, 0, 'complete demo series should not invent business-change alerts');
+    const series = await api(app.base, 'GET', '/api/series?days=30');
+    assert.equal(series.body.series.length, 4);
+    assert.ok(series.body.series.every((item) => item.comparableAnswers > 0));
 
     assert.equal((await api(app.base, 'POST', '/api/run', { confirm: true })).status, 400); // demo blocks runs
     assert.equal((await api(app.base, 'POST', '/api/setup', { brand: { name: 'X' } })).status, 400);

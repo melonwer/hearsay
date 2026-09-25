@@ -377,7 +377,7 @@ function seriesSelector(view) {
       <input type="hidden" name="days" value="${view.days}" />
       <button type="submit" class="btn">Show series</button>
     </form>
-    ${view.series ? html`<p class="muted small">${surfaceLabel(view.series.surface)} · ${view.series.searchPolicy ?? 'legacy'}
+    ${view.series ? html`<p class="muted small series-description">${surfaceLabel(view.series.surface)} · ${view.series.searchPolicy ?? 'legacy'}
       · profile ${view.series.executionProfileId ?? 'legacy'} · benchmark ${view.series.benchmarkRevisionId ?? 'legacy'}
       · analysis ${view.series.analysisRevision ?? 'legacy'} · ${view.series.start} to ${view.series.end} UTC (end exclusive)
       · attempted ${view.series.attemptedTargets}, complete ${view.series.completeAnswers}, comparable ${view.series.comparableAnswers},

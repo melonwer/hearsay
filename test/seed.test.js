@@ -4,6 +4,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { all, get, openDb, run } from '../core/db.js';
+import { listMeasurementSeries } from '../core/metrics.js';
 import {
   DEMO_DAYS,
   DEMO_ENTITIES,
@@ -223,6 +224,22 @@ test('seeded responses carry no tokens and no cost (§12)', () => {
   assert.equal(Number(get(db, "SELECT COUNT(*) AS n FROM responses WHERE text IS NULL OR text = ''")?.n), 0);
 });
 
+test('fictional demo answers appear in separate exact API series', () => {
+  const series = listMeasurementSeries(demo.db, {
+    start: '2026-06-26T00:00:00Z', end: '2026-07-26T00:00:00Z',
+  });
+  assert.equal(series.length, DEMO_PROVIDERS.length);
+  for (const provider of DEMO_PROVIDERS) {
+    const selected = series.find((item) => item.surface === `${provider.id}-api`);
+    assert.ok(selected);
+    assert.ok(selected.executionProfileId);
+    assert.ok(selected.benchmarkRevisionId);
+    assert.equal(selected.searchPolicy, provider.id === 'perplexity' ? 'legacy' : 'off');
+    assert.equal(selected.attemptedTargets, DEMO_DAYS * 12 * DEMO_SAMPLES);
+    assert.equal(selected.comparableAnswers, selected.attemptedTargets);
+  }
+});
+
 test('answers come from several template families, and the hedging ones never recommend', () => {
   const { db } = demo;
 
@@ -257,26 +274,12 @@ test('answers come from several template families, and the hedging ones never re
   assert.ok(openings.size >= 6, `only ${openings.size} distinct answer openings`);
 });
 
-test('the demo storylines retain mention alerts and suppress heuristic recommendation alerts', () => {
+test('demo series suppress business-change alerts while retaining rate storylines', () => {
   const { db, summary } = demo;
 
-  for (const type of ['MENTION_DROP', 'OVERTAKEN']) {
-    assert.ok((summary.alertTypes[type] ?? 0) >= 1, `the demo universe produced no ${type} alert`);
+  for (const type of ['MENTION_DROP', 'OVERTAKEN', 'LOST_RECOMMENDATION', 'GAINED_RECOMMENDATION']) {
+    assert.equal(summary.alertTypes[type] ?? 0, 0);
   }
-  assert.equal(summary.alertTypes.LOST_RECOMMENDATION ?? 0, 0);
-  assert.equal(summary.alertTypes.GAINED_RECOMMENDATION ?? 0, 0);
-
-  // The Gemini cliff: the brand's mention rate falls in the last week (§12).
-  const drop = get(
-    db,
-    "SELECT provider, detail FROM alerts WHERE type = 'MENTION_DROP' AND provider = 'gemini' ORDER BY created_at DESC LIMIT 1",
-  );
-  assert.ok(drop, 'no MENTION_DROP on Gemini — the scripted cliff did not land');
-  assert.match(String(drop?.detail), /Notewell was mentioned in \d+\/\d+ valid answers/);
-
-  // Jotta crossing the brand in share of voice (§12).
-  const overtaken = get(db, "SELECT e.name AS name FROM alerts a JOIN entities e ON e.id = a.entity_id WHERE a.type = 'OVERTAKEN' ORDER BY a.created_at DESC LIMIT 1");
-  assert.equal(String(overtaken?.name), 'Jotta');
 
   // Every alert is a real row of the §3 shape: severities in range, titles inside the cap,
   // details carrying numbers (§9, §19.6 #4).
@@ -288,8 +291,8 @@ test('the demo storylines retain mention alerts and suppress heuristic recommend
     assert.ok(Number(alert.run_id) > 0, 'alerts point at the run that produced them');
   }
 
-  // The brand's Gemini mention rate really does collapse in the last week, and really does
-  // climb on Perplexity — the alerts above are downstream of the data, not hand-written.
+  // The brand's Gemini mention rate falls in the last week and climbs on Perplexity.
+  // These data patterns remain inspectable without treating them as new-series alerts.
   const rate = (/** @type {string} */ provider, /** @type {string} */ from, /** @type {string} */ to) => {
     const row = get(
       db,

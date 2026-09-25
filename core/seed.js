@@ -3,8 +3,8 @@
  *
  * Phase 1 Lane D implements it: mulberry32 seeded with 1337, the invented Notewell /
  * Jotta / EchoPad / Quillo universe, 5 intents × 2–3 paraphrases, 30 days × 4 providers
- * × 12 prompts × 3 samples, scripted storylines that produce MENTION_DROP and
- * OVERTAKEN alerts. Template answers go through the real
+ * × 12 prompts × 3 samples, scripted storylines that change observed rates.
+ * Template answers go through the real
  * analyzeResponse() and the same DB writes as a live run, with runs.trigger='seed'.
  * No real brand names, ever (§19.5 #8).
  *
@@ -16,14 +16,15 @@
  *
  * Storylines are *scripted probabilities*, not scripted rows: mention probabilities per
  * (provider, entity) drift over the window, answers are template-assembled from those
- * draws, and the alerts fall out of the real `core/alerts.js` rules evaluated after each
- * seeded run — the same code path a live panel takes (§9, §12).
+ * draws, and the real `core/alerts.js` rules run after each seeded panel. New-series
+ * business-change alerts are suppressed; collection-health alerts remain available.
  */
 
 import { analyzeResponse as defaultAnalyze, containsAlias, STANCE_REVISION } from './analyze.js';
 import { storeInterpretation } from './interpretations.js';
 import { evaluate as defaultEvaluateAlerts } from './alerts.js';
 import { SETTING_KEYS, all, get, isoNow, run as exec, setSetting, transaction } from './db.js';
+import { benchmarkRevision, executionProfile } from './measurement-contract.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('./analyze.js').AnalyzeEntity} AnalyzeEntity */
@@ -331,6 +332,7 @@ export function baseProbability(provider, entity, dayIndex, days) {
 /**
  * @typedef {Object} SeedPrompt
  * @property {number} id
+ * @property {number} intentId
  * @property {string} text
  * @property {string} category
  * @property {string} topic
@@ -657,9 +659,38 @@ export function seed(db, opts = {}) {
         intent.category,
         createdAt,
       ]).lastInsertRowid;
-      prompts.push({ id, text, category: intent.category, topic: intent.topic, want: intent.want, axis: intent.axis });
+      prompts.push({ id, intentId, text, category: intent.category,
+        topic: intent.topic, want: intent.want, axis: intent.axis });
     }
   }
+
+  const benchmark = benchmarkRevision({
+    questions: prompts.map((prompt) => ({ id: prompt.id, intentId: prompt.intentId,
+      category: prompt.category, text: prompt.text })),
+    entities: entities.map((entity) => ({ id: entity.id,
+      role: /** @type {'brand'|'competitor'} */ (entity.isSelf ? 'brand' : 'competitor'),
+      name: entity.name, aliases: entity.aliases, domains: entity.domains })),
+    weighting: 'equal',
+    scope: 'main',
+  });
+  exec(db, 'INSERT OR IGNORE INTO benchmark_revisions(id,snapshot_json,created_at) VALUES(?,?,?)',
+    [benchmark.id, JSON.stringify(benchmark.snapshot), createdAt]);
+  const routes = {
+    openai: 'openai-chat-completions-v1',
+    anthropic: 'anthropic-messages-v1',
+    gemini: 'gemini-generate-content-v1',
+    perplexity: 'perplexity-sonar-v1',
+  };
+  const profiles = new Map(DEMO_PROVIDERS.map((provider) => {
+    const surface = provider.id + '-api';
+    const profile = executionProfile({ surface,
+      route: routes[/** @type {keyof typeof routes} */ (provider.id)],
+      model: provider.model, searchPolicy: provider.id === 'perplexity' ? 'legacy' : 'off',
+      envelopeVersion: 'demo-api-v1', limits: { fictional: true } });
+    exec(db, 'INSERT OR IGNORE INTO execution_profiles(id,surface,snapshot_json,created_at) VALUES(?,?,?,?)',
+      [profile.id, surface, JSON.stringify(profile.snapshot), createdAt]);
+    return [provider.id, profile.id];
+  }));
 
   // Prompt affinity (§12): a fixed per-(prompt, entity) offset, plus a structural bonus
   // for entities the prompt names outright — "Notewell vs Jotta" drags both into the
@@ -755,13 +786,25 @@ export function seed(db, opts = {}) {
             const latencyMs = Math.round(LATENCY_MIN + rand() * (LATENCY_MAX - LATENCY_MIN));
             const analysis = analyze(text, analyzeEntities, citations);
 
-            // Same columns, same order as the live path (§8.1); tokens and cost stay null
-            // because nothing was billed (§12).
+            // Demo answers form explicit fictional API series. Tokens and cost stay null
+            // because no provider was called.
+            const profileId = profiles.get(provider.id);
+            if (!profileId) throw new Error('Missing demo execution profile');
             const responseId = exec(
               db,
-              `INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, latency_ms, tokens_in, tokens_out, cost_usd, created_at, analysis_revision)
-               VALUES(?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)`,
-              [runId, prompt.id, provider.id, provider.model, sampleIdx, text, latencyMs, createdAtCall, STANCE_REVISION],
+              `INSERT INTO responses(run_id, prompt_id, provider, model, sample_idx, text, latency_ms,
+                tokens_in, tokens_out, cost_usd, created_at, analysis_revision, surface, lane,
+                target_status, comparability_status, web_status, query_metadata_status,
+                search_policy, prompt_text_snapshot, prompt_origin, prompt_envelope_version,
+                comparison_key, execution_profile_id, benchmark_revision_id)
+               VALUES(?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, 'tracking',
+                 'completed', 'comparable', ?, 'unavailable', ?, ?, 'seed', 'demo-api-v1', ?, ?, ?)`,
+              [runId, prompt.id, provider.id, provider.model, sampleIdx, text, latencyMs,
+                createdAtCall, STANCE_REVISION, `${provider.id}-api`,
+                provider.id === 'perplexity' ? 'unverified' : 'not_used',
+                provider.id === 'perplexity' ? 'legacy' : 'off', prompt.text,
+                `demo:${provider.id}:${provider.model}:v1`, profileId,
+                benchmark.id],
             ).lastInsertRowid;
 
             for (const mention of analysis.mentions) {

@@ -15,6 +15,7 @@
  */
 
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,7 +70,12 @@ async function capture(browser, origin, shot) {
   `);
   await page.goto(origin + shot.pagePath, { waitUntil: 'networkidle' });
   await page.waitForTimeout(250); // let SVG charts and fonts settle
-  await page.screenshot({ path: shot.path, clip: shot.clip });
+  if (shot.width < 500) {
+    await page.screenshot({ path: shot.path, fullPage: true });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  } else {
+    await page.screenshot({ path: shot.path, clip: shot.clip });
+  }
   await context.close();
 }
 
@@ -88,6 +94,8 @@ async function main() {
       { pagePath: '/', path: join(DOCS_DIR, 'screenshot-dark.png'), theme: 'dark', width: 1440, height: 900 },
       { pagePath: '/answers', path: join(DOCS_DIR, 'screenshot-answers.png'), theme: 'light', width: 1440, height: 900 },
       { pagePath: '/settings', path: join(DOCS_DIR, 'screenshot-cost.png'), theme: 'light', width: 1440, height: 900 },
+      { pagePath: '/', path: '/tmp/hearsay-c17-demo-narrow-light.png', theme: 'light', width: 390, height: 844 },
+      { pagePath: '/', path: '/tmp/hearsay-c17-demo-narrow-dark.png', theme: 'dark', width: 390, height: 844 },
       // Repo social preview: the dashboard KPI row at GitHub's 1280×640 card size.
       { pagePath: '/', path: join(DOCS_DIR, 'social-preview.png'), theme: 'light', width: 1280, height: 640 },
     ];
