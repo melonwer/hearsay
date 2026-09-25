@@ -607,6 +607,88 @@ export const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'intervention reviews are immutable'); END;
     `,
   },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE outcome_imports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        import_id TEXT NOT NULL,
+        raw_csv TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        author TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(source, import_id)
+      );
+      CREATE TABLE outcome_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        record_key TEXT NOT NULL,
+        import_row_id INTEGER REFERENCES outcome_imports(id),
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        metric_name TEXT NOT NULL,
+        value_text TEXT NOT NULL,
+        unit TEXT NOT NULL,
+        currency TEXT,
+        attribution_method TEXT NOT NULL,
+        landing_page TEXT,
+        notes TEXT,
+        author TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        supersedes_id INTEGER UNIQUE REFERENCES outcome_records(id),
+        content_hash TEXT NOT NULL,
+        UNIQUE(source, record_key),
+        CHECK (period_start < period_end)
+      );
+      CREATE INDEX idx_outcome_records_period ON outcome_records(period_start, period_end);
+      CREATE INDEX idx_outcome_records_supersedes ON outcome_records(supersedes_id);
+      CREATE TABLE outcome_import_items (
+        import_row_id INTEGER NOT NULL REFERENCES outcome_imports(id),
+        ordinal INTEGER NOT NULL,
+        outcome_id INTEGER NOT NULL REFERENCES outcome_records(id),
+        PRIMARY KEY (import_row_id, ordinal)
+      );
+      CREATE TABLE ledger_entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source TEXT NOT NULL,
+        entry_key TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('time','expense')),
+        activity TEXT NOT NULL,
+        period_start TEXT NOT NULL,
+        period_end TEXT NOT NULL,
+        minutes INTEGER CHECK (minutes IS NULL OR minutes >= 0),
+        amount_text TEXT,
+        currency TEXT,
+        notes TEXT,
+        author TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        opportunity_id INTEGER REFERENCES opportunities(id),
+        content_hash TEXT NOT NULL,
+        UNIQUE(source, entry_key),
+        CHECK (period_start < period_end),
+        CHECK ((kind = 'time' AND amount_text IS NULL AND currency IS NULL)
+          OR (kind = 'expense' AND minutes IS NULL))
+      );
+      CREATE INDEX idx_ledger_entries_period ON ledger_entries(period_start, period_end);
+      CREATE TRIGGER outcome_imports_no_update BEFORE UPDATE ON outcome_imports
+        BEGIN SELECT RAISE(ABORT, 'outcome imports are immutable'); END;
+      CREATE TRIGGER outcome_imports_no_delete BEFORE DELETE ON outcome_imports
+        BEGIN SELECT RAISE(ABORT, 'outcome imports are immutable'); END;
+      CREATE TRIGGER outcome_records_no_update BEFORE UPDATE ON outcome_records
+        BEGIN SELECT RAISE(ABORT, 'outcome records are immutable'); END;
+      CREATE TRIGGER outcome_records_no_delete BEFORE DELETE ON outcome_records
+        BEGIN SELECT RAISE(ABORT, 'outcome records are immutable'); END;
+      CREATE TRIGGER outcome_import_items_no_update BEFORE UPDATE ON outcome_import_items
+        BEGIN SELECT RAISE(ABORT, 'outcome import items are immutable'); END;
+      CREATE TRIGGER outcome_import_items_no_delete BEFORE DELETE ON outcome_import_items
+        BEGIN SELECT RAISE(ABORT, 'outcome import items are immutable'); END;
+      CREATE TRIGGER ledger_entries_no_update BEFORE UPDATE ON ledger_entries
+        BEGIN SELECT RAISE(ABORT, 'ledger entries are immutable'); END;
+      CREATE TRIGGER ledger_entries_no_delete BEFORE DELETE ON ledger_entries
+        BEGIN SELECT RAISE(ABORT, 'ledger entries are immutable'); END;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */
