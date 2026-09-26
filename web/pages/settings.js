@@ -395,6 +395,7 @@ export function render(ctx, view) {
           ${rows}
         </tbody>
       </table></div>
+      <p class="muted small">Gemini API answers use the search-off profile. Grounded search is unavailable while its data terms are under review.</p>
     </section>
     <section class="card">
       <h2>API sampling &amp; schedule</h2>

@@ -267,6 +267,7 @@ function stepGo(view) {
         API keys are optional. These direct API providers add expanded coverage for OpenAI, Anthropic, Gemini and
         Perplexity. API dollar estimates and computed usage costs below apply only to API usage.
       </p>
+      <p class="muted small">Gemini API answers use the search-off profile. Grounded search is unavailable while its data terms are under review.</p>
       <table class="table">
         <thead>
           <tr>
