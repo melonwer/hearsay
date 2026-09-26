@@ -9,7 +9,8 @@ import { assessObservation, normalizeObservedQuery, sourceGroupingUrl, stableIde
 /** @typedef {import('./measurement-contract.js').SearchPolicy} SearchPolicy */
 /** @typedef {import('./measurement-contract.js').AnswerStatus} AnswerStatus */
 
-export const EVIDENCE_LIMITS = Object.freeze({ actions: 100, queries: 200, sources: 400, citations: 200, usage: 100, excerptBytes: 4096, answerBytes: 256 * 1024 });
+export const EVIDENCE_LIMITS = Object.freeze({ actions: 100, queries: 200, sources: 400, citations: 200,
+  usage: 100, excerptBytes: 4096, answerBytes: 256 * 1024, groundingReceiptBytes: 256 * 1024 });
 
 /** @param {Db} db @param {() => void} write */
 function atomic(db, write) {
@@ -78,7 +79,9 @@ export function storeTargetDefinition(db, responseId, input) {
  * @param {number} responseId
  * @param {{policy:SearchPolicy, answerStatus:AnswerStatus, answer:string|null, actions:SearchAction[],
  *   sources:SourceObservation[], citations:AnswerCitation[], usage:UsageComponent[],
- *   noSearchConfirmed?:boolean, at:string}} evidence
+ *   noSearchConfirmed?:boolean,
+ *   groundingReceipt?:ReturnType<typeof import('./providers/gemini-grounding.js').parseGeminiGrounding>['receipt'],
+ *   at:string}} evidence
  */
 export function storeMeasurementEvidence(db, responseId, evidence) {
   if (evidence.answerStatus === 'complete' && (!evidence.answer || evidence.answer.trim() === '')) {
@@ -90,6 +93,11 @@ export function storeMeasurementEvidence(db, responseId, evidence) {
   within(evidence.sources.length, EVIDENCE_LIMITS.sources, 'source count');
   within(evidence.citations.length, EVIDENCE_LIMITS.citations, 'citation count');
   within(evidence.usage.length, EVIDENCE_LIMITS.usage, 'usage component count');
+  const groundingJson = evidence.groundingReceipt === undefined ? null : JSON.stringify(evidence.groundingReceipt);
+  if (groundingJson !== null) {
+    if (evidence.groundingReceipt?.version !== 1) throw new TypeError('Unknown Gemini grounding receipt version');
+    within(Buffer.byteLength(groundingJson), EVIDENCE_LIMITS.groundingReceiptBytes, 'grounding receipt size');
+  }
   const assessment = assessObservation(evidence);
   atomic(db, () => {
     const target = get(db, 'SELECT id, search_policy, answer_status FROM responses WHERE id = ?', [responseId]);
@@ -159,6 +167,10 @@ export function storeMeasurementEvidence(db, responseId, evidence) {
         responseId, usage.attempt, usage.continuation, usage.component, usage.quantity,
         usage.unit, usage.costUsd, usage.costStatus, usage.priceVersion,
       ]);
+    }
+    if (groundingJson !== null) {
+      run(db, `INSERT INTO gemini_grounding_receipts(response_id, metadata_json, created_at)
+        VALUES(?, ?, ?)`, [responseId, groundingJson, evidence.at]);
     }
     const queryMetadata = evidence.actions.some((action) => action.queryMetadata === 'available')
       ? 'available' : evidence.policy === 'off' || assessment.searchState === 'not_used' ? 'not_applicable' : 'unavailable';

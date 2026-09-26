@@ -267,7 +267,7 @@ function stepGo(view) {
         API keys are optional. These direct API providers add expanded coverage for OpenAI, Anthropic, Gemini and
         Perplexity. API dollar estimates and computed usage costs below apply only to API usage.
       </p>
-      <p class="muted small">Gemini API answers use the search-off profile. Grounded search is unavailable while its data terms are under review.</p>
+      <p class="muted small">Gemini API search is off by default. Set <code>HEARSAY_GEMINI_SEARCH_POLICY=auto</code> to use Google Search grounding with the validated Gemini model. Grounded runs use a separate profile and require a run quote.</p>
       <table class="table">
         <thead>
           <tr>
@@ -296,7 +296,7 @@ function stepGo(view) {
         </dd>
       </dl>
       <p class="muted small">For a first paid measurement, start with three reviewed buyer questions and one API provider. This preview uses ${view.samples} sample(s) per question.</p>
-      ${view.hasSearch ? html`<p class="muted">This forecast assumes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' OpenAI does not enforce a search-call ceiling.' : ''}</p>` : ''}
+      ${view.hasSearch ? html`<p class="muted">This forecast assumes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' An enabled search route has no enforceable internal call ceiling.' : ''}</p>` : ''}
       ${view.demo
         ? html`<p class="muted">Demo mode is on, so live API runs are disabled. Turn it off with <code>HEARSAY_DEMO=0</code>.</p>`
         : view.hasKey

@@ -34,6 +34,9 @@ export function apiExecutionBudget(config, providerId) {
     : providerId === 'anthropic' && searchPolicy === 'auto'
       ? { route: 'anthropic-messages-web-search-v1', policy: searchPolicy,
         endpoint: anthropicEndpoint, answerTokenLimit: anthropicMaxTokens }
+    : providerId === 'gemini' && searchPolicy === 'auto'
+      ? { route: 'gemini-generate-content-google-search-v1', policy: searchPolicy,
+        endpoint: null, answerTokenLimit: null }
     : API_ROUTES[providerId];
   const provider = config.providers[providerId];
   if (providerId === 'openai' && searchPolicy !== 'off' && provider.model !== 'gpt-5.6-luna') {
@@ -42,6 +45,9 @@ export function apiExecutionBudget(config, providerId) {
   if (providerId === 'anthropic' && searchPolicy === 'auto' && provider.model !== 'claude-sonnet-5') {
     throw new RangeError(`Anthropic web search is not validated for ${provider.model}`);
   }
+  if (providerId === 'gemini' && searchPolicy === 'auto' && provider.model !== 'gemini-3.6-flash') {
+    throw new RangeError(`Gemini Google Search grounding is not validated for ${provider.model}`);
+  }
   assertRoutePolicy(definition.route, `${providerId}-api`, /** @type {import('./measurement-contract.js').SearchPolicy} */ (definition.policy));
   return {
     surface: `${providerId}-api`, route: definition.route, model: provider.model,
@@ -49,17 +55,18 @@ export function apiExecutionBudget(config, providerId) {
     searchPolicy: definition.policy,
     enabledTools: providerId === 'perplexity' ? ['Sonar internal retrieval']
       : providerId === 'openai' && searchPolicy !== 'off' ? ['web_search']
-        : providerId === 'anthropic' && searchPolicy === 'auto' ? ['web_search_20250305'] : [],
+        : providerId === 'anthropic' && searchPolicy === 'auto' ? ['web_search_20250305']
+          : providerId === 'gemini' && searchPolicy === 'auto' ? ['google_search'] : [],
     searchUsageAssumption: providerId === 'perplexity' ? 'one_sonar_request'
-      : (providerId === 'openai' && searchPolicy !== 'off' || providerId === 'anthropic' && searchPolicy === 'auto')
+      : (providerId === 'openai' && searchPolicy !== 'off' || providerId === 'anthropic' && searchPolicy === 'auto' || providerId === 'gemini' && searchPolicy === 'auto')
         ? 'one_web_search_call_per_target_forecast' : 'none',
     maxSearchCalls: providerId === 'anthropic' && searchPolicy === 'auto' ? 3
-      : providerId === 'perplexity' || providerId === 'openai' && searchPolicy !== 'off' ? null : 0,
-    searchCallLimitEnforced: providerId !== 'perplexity' && !(providerId === 'openai' && searchPolicy !== 'off'),
+      : providerId === 'perplexity' || providerId === 'openai' && searchPolicy !== 'off' || providerId === 'gemini' && searchPolicy === 'auto' ? null : 0,
+    searchCallLimitEnforced: providerId !== 'perplexity' && !(providerId === 'openai' && searchPolicy !== 'off') && !(providerId === 'gemini' && searchPolicy === 'auto'),
     maxContinuations: providerId === 'anthropic' && searchPolicy === 'auto' ? 1 : 0,
     timeoutMs: config.timeoutMs,
     answerTokenLimit: definition.answerTokenLimit,
-    maxOutputBytes: (providerId === 'openai' && searchPolicy !== 'off' || providerId === 'anthropic' && searchPolicy === 'auto' || providerId === 'perplexity')
+    maxOutputBytes: (providerId === 'openai' && searchPolicy !== 'off' || providerId === 'anthropic' && searchPolicy === 'auto' || providerId === 'gemini' && searchPolicy === 'auto' || providerId === 'perplexity')
       ? 2 * 1024 * 1024 : null,
   };
 }

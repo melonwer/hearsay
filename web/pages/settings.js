@@ -242,7 +242,7 @@ function costPanel(view) {
       <thead><tr><th>Surface</th><th>Endpoint profile / model</th><th>Search policy</th><th>Time limit</th><th>Answer limit</th></tr></thead>
       <tbody>${budgets}</tbody>
     </table></div>`}
-    ${view.hasSearch ? html`<p class="muted small">The estimate includes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' OpenAI hosted search has no enforceable internal call ceiling, so this forecast is not a spending cap.' : ''} Daily API search: ${view.recurringSearchApproved ? 'approved for the current profile and target ceiling' : 'off until separately confirmed at /api/search-schedule'}.</p>` : ''}
+    ${view.hasSearch ? html`<p class="muted small">The estimate includes one web-search call per search-enabled target.${view.hasUnboundedSearch ? ' An enabled search route has no enforceable internal call ceiling, so this forecast is not a spending cap.' : ''} Daily API search: ${view.recurringSearchApproved ? 'approved for the current profile and target ceiling' : 'off until separately confirmed at /api/search-schedule'}.</p>` : ''}
     <p class="muted small">
       Estimates and computed usage costs cover direct API usage only. Estimates use the token medians documented in the
       methodology, priced from the table in core/cost.js. Computed usage cost is not an invoice and can omit
@@ -395,7 +395,7 @@ export function render(ctx, view) {
           ${rows}
         </tbody>
       </table></div>
-      <p class="muted small">Gemini API answers use the search-off profile. Grounded search is unavailable while its data terms are under review.</p>
+      <p class="muted small">Gemini API search is off by default. Set <code>HEARSAY_GEMINI_SEARCH_POLICY=auto</code> to use Google Search grounding with the validated Gemini model. The grounded route has no enforceable search-call ceiling.</p>
     </section>
     <section class="card">
       <h2>API sampling &amp; schedule</h2>

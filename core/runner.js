@@ -382,7 +382,7 @@ async function executeRun(options) {
           answer_status = 'failed', evidence_completeness = 'unavailable',
           cost_status = 'unavailable',
           query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
-        [SKIPPED_CIRCUIT, isoNow(now()), task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
+        [SKIPPED_CIRCUIT, isoNow(now()), budgets.get(task.provider)?.searchPolicy === 'off' ? 'not_applicable' : 'unavailable',
           'skipped_circuit', task.responseId],
       );
       tally.skipped += 1;
@@ -435,6 +435,7 @@ async function executeRun(options) {
             answerStatus: 'failed', answer: partial?.text ?? null,
             actions: partial?.searchActions ?? [], sources: partial?.sources ?? [],
             citations: partial?.answerCitations ?? [],
+            groundingReceipt: partial?.groundingReceipt,
             usage: pricedUsage?.components ?? [], at: failedAt,
           });
         }
@@ -455,7 +456,7 @@ async function executeRun(options) {
             partial?.providerReportedChargeUsd ?? null,
             partial?.providerReportedChargeUsd == null ? null : 'provider_reported',
             partial ? (partial.searchActions?.some((action) => action.queryMetadata === 'available') ? 'available' : 'unavailable')
-              : task.provider === 'perplexity' ? 'unavailable' : 'not_applicable',
+              : budget.searchPolicy === 'off' ? 'not_applicable' : 'unavailable',
             failure.kind, task.responseId],
         );
       });
@@ -538,6 +539,7 @@ async function executeRun(options) {
           actions: answer.searchActions ?? [],
           sources: answer.sources ?? [],
           citations: normalizedCitations,
+          groundingReceipt: answer.groundingReceipt,
           usage: pricedUsage.components,
           noSearchConfirmed: answer.noSearchConfirmed,
           at: createdAt,

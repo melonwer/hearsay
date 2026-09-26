@@ -119,10 +119,10 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 - Evidence: sanitized fixtures cover multiple actions, absent query wording, empty results, distinct and matching citations, HTTP 200 tool error, auto no-search, pause then finish, repeated pause, failed continuation, retry usage, timeout, cancellation, unsupported model/policy, and missing credentials. API previews and the old scheduler route are tested. Full suite, typecheck, and diff check are recorded at the commit boundary.
 - Limit: no live provider or account capability check was made. `required` is not exposed because the basic tool definition alone does not force a search. C03 remains open for Gemini, continuation monetary provenance, and broader cross-provider accounting.
 
-## C06 Gemini grounding: legal review hold
+## C06 Gemini grounding: legal review and resolution
 
 - The current [Gemini API Additional Terms](https://ai.google.dev/gemini-api/terms) restrict storing and analyzing Grounded Results. Hearsay stores answers and evidence for later analytics, so the planned grounding route needs legal review before it can be enabled.
-- The user chose to hold C06 for legal review on 2026-09-24. Gemini remains on its search-off route; C06 stays unchecked. This hold does not affect independent plan items.
+- The user chose to hold C06 for legal review on 2026-09-24. On 2026-09-26, the user confirmed that written Google permission covers the intended analytics use and cleared implementation.
 
 ## C07 Perplexity and subscription evidence provenance
 
@@ -215,3 +215,12 @@ The implementation follows the Hearsay plan dated 2026-09-24. These notes descri
 
 - Setup and Settings now state that Gemini API answers use search off and grounded search is unavailable while its data terms are under review. The config still rejects a non-off Gemini policy, and the Gemini adapter sends no grounding tool.
 - A local server check loaded both pages and verified the message and policy rejection. The Downloads plan now has matching copies of its four linked companion documents, and all local links resolve. This does not enable C06 or clear either release gate.
+
+## C06 Gemini grounding implementation
+
+- The route uses the documented GenerateContent `google_search` tool on `gemini-3.6-flash` when `HEARSAY_GEMINI_SEARCH_POLICY=auto`. Search off remains the default. The search route has a distinct execution profile and participates in on-demand quotes and separate recurring search consent.
+- A bounded schema v15 `gemini_grounding_receipts` row retains the original queries, chunks, supports, and Search Suggestions. Export format v11 includes that row. Valid chunks become source observations, and valid support indices become native citations with UTF-8 byte offsets converted to JavaScript string indices. Source chunks alone do not become citations.
+- Google's Search Suggestions render beside the answer in a sandboxed iframe with an opaque origin. Provider markup never passes through `raw()`. A searched response without Suggestions fails without exposing grounded content; Hearsay retains its usage. Refusal and truncation states cannot enter comparable metrics.
+- Gemini's API response does not supply a reliable billable search count for this route. The computed cost therefore keeps a known token subtotal and an unknown search component. The one-call quote is a forecast, and the route has no enforceable internal search-call ceiling.
+- Focused fixtures cover Unicode and multi-part offsets, multiple support indices, invalid associations, chunk-only evidence, no grounding, empty answers, no candidates, missing credentials, model and capability rejection, refusal, truncation, missing Suggestions, and original-receipt export. A runner fixture verifies persisted evidence, separate search-on and search-off series, and suppression of a grounded answer that lacked Suggestions. A local browser check loads both answer views at 375 px and 1280 px in light and dark themes, confirms the Suggestions frame cannot run a script in the parent page, and follows its link directly to a local destination. The full repository suite passed 497/497 tests; typecheck and diff check passed.
+- Compatibility: schema v15 is append-only and uses the existing migration backup process. Existing Gemini runs remain search off unless the operator explicitly sets `HEARSAY_GEMINI_SEARCH_POLICY=auto`; old profiles retain their identity. No live Gemini request or account capability check was made. Provider widget appearance and account access still need an opt-in live smoke check before claiming live compatibility.

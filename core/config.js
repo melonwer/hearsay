@@ -43,7 +43,7 @@ export { parseEnvFile, withEnvFile } from './env-file.js';
  * @property {boolean} demo demo mode: no live calls, no scheduler, banner shown
  * @property {number} confirmUsd Run-cost confirm threshold in USD (SPEC §3.3); 0 = every run quotes first.
  * @property {Record<string, string|undefined>} pricingEnv resolved nonsecret price overrides
- * @property {{openai:'off'|'auto'|'required',anthropic:'off'|'auto',gemini:'off',perplexity:'legacy'}} apiSearchPolicies
+ * @property {{openai:'off'|'auto'|'required',anthropic:'off'|'auto',gemini:'off'|'auto',perplexity:'legacy'}} apiSearchPolicies
  * @property {Record<ProviderId, ProviderConfig>} providers
  * @property {ProviderConfig[]} enabledProviders
  * @property {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} subscription
@@ -175,10 +175,11 @@ export function buildConfig(env) {
   if (!['off', 'auto'].includes(anthropicSearchPolicy)) {
     throw new RangeError('HEARSAY_ANTHROPIC_SEARCH_POLICY must be off or auto');
   }
-  for (const [key, policy] of [
-    ['HEARSAY_GEMINI_SEARCH_POLICY', 'off'],
-    ['HEARSAY_PERPLEXITY_SEARCH_POLICY', 'legacy'],
-  ]) {
+  const geminiSearchPolicy = String(env.HEARSAY_GEMINI_SEARCH_POLICY ?? 'off').trim() || 'off';
+  if (!['off', 'auto'].includes(geminiSearchPolicy)) {
+    throw new RangeError('HEARSAY_GEMINI_SEARCH_POLICY must be off or auto');
+  }
+  for (const [key, policy] of [['HEARSAY_PERPLEXITY_SEARCH_POLICY', 'legacy']]) {
     const value = String(env[key] ?? policy).trim() || policy;
     if (value !== policy) throw new RangeError(`${key} does not support ${value} in this build`);
   }
@@ -259,7 +260,8 @@ export function buildConfig(env) {
     pricingEnv,
     apiSearchPolicies: {
       openai: /** @type {'off'|'auto'|'required'} */ (openaiSearchPolicy),
-      anthropic: /** @type {'off'|'auto'} */ (anthropicSearchPolicy), gemini: 'off', perplexity: 'legacy',
+      anthropic: /** @type {'off'|'auto'} */ (anthropicSearchPolicy),
+      gemini: /** @type {'off'|'auto'} */ (geminiSearchPolicy), perplexity: 'legacy',
     },
     providers: registry,
     enabledProviders: PROVIDER_IDS.map((id) => registry[id]).filter((p) => p.enabled),

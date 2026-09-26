@@ -44,6 +44,7 @@ const ROUTE_CAPABILITIES = /** @type {const} */ ({
   'anthropic-messages-v1': { surface: 'anthropic-api', policies: ['off'] },
   'anthropic-messages-web-search-v1': { surface: 'anthropic-api', policies: ['auto'] },
   'gemini-generate-content-v1': { surface: 'gemini-api', policies: ['off'] },
+  'gemini-generate-content-google-search-v1': { surface: 'gemini-api', policies: ['auto'] },
   'perplexity-sonar-v1': { surface: 'perplexity-api', policies: ['legacy'] },
   'codex-search-v1': { surface: 'codex-agent', policies: ['required'] },
   'claude-code-search-v1': { surface: 'claude-code-agent', policies: ['required'] },

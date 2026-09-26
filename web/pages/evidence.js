@@ -2,6 +2,7 @@ import { answerEvidence, intentEvidenceReport, listEvidenceIntents,
   listQueryThemes } from '../../core/evidence-report.js';
 import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metrics.js';
 import { emptyState, html, layout, raw, SURFACE_LABEL } from '../layout.js';
+import { searchSuggestions, originalGrounding } from '../gemini-grounding.js';
 
 const LAYERS = [
   ['all', 'All layers'], ['questions', 'Buyer questions'], ['queries', 'Observed search queries'],
@@ -245,8 +246,13 @@ function receiptCard(view, answer) {
     ${answer.answerCitations.length ? html`<ul>${answer.answerCitations.map((citation) => html`<li>
       Citation #${citation.id} · ${citation.provenance} · ${safeLink(citation.url, citation.url)}
       <span class="muted">· source ${citation.sourceObservationId === null ? 'association unknown' : `#${citation.sourceObservationId}`}</span>
+      ${citation.answerStart !== null && citation.answerEnd !== null && citation.answerStart >= 0
+        && citation.answerEnd <= answer.text.length && citation.answerEnd > citation.answerStart
+        ? html`<span class="muted">· answer span ${citation.answerStart}–${citation.answerEnd}: "${answer.text.slice(citation.answerStart, citation.answerEnd)}"</span>` : ''}
     </li>`)}</ul>` : html`<p class="muted">No final-answer citation stored.</p>`}
     <h4>Answer and interpretation</h4><p class="evidence-answer-text">${answer.text ?? 'No final answer stored.'}</p>
+    ${searchSuggestions(answer.groundingReceipt)}
+    ${originalGrounding(answer.groundingReceipt)}
     ${answer.mentions.length ? html`<ul>${answer.mentions.map((mention) => html`<li>
       ${mention.entityName ?? `Entity #${mention.entityId}`} · ${mention.method} · ${mention.analysisRevision}
       · original stance ${mention.originalStance ?? 'unclassified'}

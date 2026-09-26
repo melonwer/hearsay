@@ -700,6 +700,17 @@ export const MIGRATIONS = [
             AND reported_charge_usd IS NOT NULL));
     `,
   },
+  {
+    version: 15,
+    sql: `
+      CREATE TABLE gemini_grounding_receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        response_id INTEGER NOT NULL UNIQUE REFERENCES responses(id) ON DELETE CASCADE,
+        metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
+        created_at TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

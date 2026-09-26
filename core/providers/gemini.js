@@ -13,15 +13,18 @@
  * - Default model `gemini-3.6-flash` (stable) — https://ai.google.dev/gemini-api/docs/models
  *   — override with `GEMINI_MODEL`.
  *
- * Gemini exposes no native citation array on `generateContent`, so `citations` is left
- * undefined and the analyzer picks up markdown/bare links in the answer text (§6.3).
+ * Search-off answers have no native citation array. Grounded responses expose
+ * chunk and support metadata, which is parsed separately from answer text.
  *
  * No system prompt (`systemInstruction` is never sent), no temperature override (§5.1).
  * Unit-tested against test/fixtures/gemini.json; never calls the live API.
  */
 
 import { config } from '../config.js';
-import { ProviderError, billableAttempts, fetchWithRetry, requireKey, tokensOrUndefined, usageNumber } from './shared.js';
+import { ProviderError, billableAttempts, fetchWithRetry, normalizeCitations, requireKey,
+  tokensOrUndefined, usageNumber } from './shared.js';
+import { parseGeminiGrounding } from './gemini-grounding.js';
+import { EVIDENCE_LIMITS } from '../measurement-storage.js';
 
 /** @typedef {import('./shared.js').ProviderResult} ProviderResult */
 
@@ -48,7 +51,8 @@ function reportedUsage(json) {
 
 /**
  * @param {string} text the prompt, sent verbatim as the single user turn
- * @param {{model?: string, timeoutMs?: number, apiKey?: string}} [opts]
+ * @param {{model?: string, timeoutMs?: number, apiKey?: string,
+ *   searchPolicy?:'off'|'auto'|'required'|'legacy', maxResponseBytes?:number|null}} [opts]
  * @returns {Promise<ProviderResult>}
  */
 export async function runPrompt(text, opts = {}) {
@@ -56,42 +60,99 @@ export async function runPrompt(text, opts = {}) {
   const model = opts.model ?? provider.model;
   const timeoutMs = opts.timeoutMs ?? config.timeoutMs;
   const apiKey = opts.apiKey ?? provider.apiKey;
+  const searchPolicy = opts.searchPolicy ?? 'off';
+  if (searchPolicy !== 'off' && searchPolicy !== 'auto') {
+    throw new RangeError(`Gemini search policy ${searchPolicy} is unsupported`);
+  }
+  if (searchPolicy === 'auto' && model !== 'gemini-3.6-flash') {
+    throw new RangeError(`Gemini Google Search grounding is not validated for ${model}`);
+  }
   requireKey(apiKey, provider.keyEnv);
 
   const startedAt = Date.now();
-  const res = await fetchWithRetry(
-    endpointFor(model),
-    {
-      method: 'POST',
-      headers: {
-        'x-goog-api-key': apiKey,
-        'content-type': 'application/json',
+  /** @type {Awaited<ReturnType<typeof fetchWithRetry>>} */
+  let res;
+  try {
+    res = await fetchWithRetry(
+      endpointFor(model),
+      {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': apiKey,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text }] }],
+          ...(searchPolicy === 'auto' ? { tools: [{ google_search: {} }] } : {}) }),
       },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text }] }] }),
-    },
-    { timeoutMs, usageFromResponse: reportedUsage },
-  );
+      { timeoutMs, usageFromResponse: reportedUsage,
+        ...(opts.maxResponseBytes ? { maxResponseBytes: opts.maxResponseBytes } : {}) },
+    );
+  } catch (error) {
+    if (searchPolicy === 'auto' && error instanceof ProviderError &&
+        /HTTP (400|403)/.test(error.message)) {
+      throw new ProviderError(error.kind, 'Gemini Google Search request was rejected',
+        `Check grounding access for gemini-3.6-flash, or set HEARSAY_GEMINI_SEARCH_POLICY=off. ${error.detail}`.trim(),
+        error.billableAttempts);
+    }
+    throw error;
+  }
   const latencyMs = Date.now() - startedAt;
 
-  const data = /** @type {{modelVersion?: unknown, candidates?: {content?: {parts?: {text?: unknown}[]}}[], usageMetadata?: {promptTokenCount?: unknown, candidatesTokenCount?: unknown, thoughtsTokenCount?: unknown}}|null} */ (
+  const data = /** @type {{modelVersion?: unknown, candidates?: {content?: {parts?: {text?: unknown}[]},
+    finishReason?:unknown, groundingMetadata?:unknown}[], promptFeedback?:{blockReason?:unknown},
+    usageMetadata?: {promptTokenCount?: unknown, candidatesTokenCount?: unknown, thoughtsTokenCount?: unknown}}|null} */ (
     res.json
   );
   const { inputTokens: input, outputTokens: output } = reportedUsage(res.json);
+  const attempts = billableAttempts(res, input, output, searchPolicy === 'auto' ? null : undefined);
   if (!data || !Array.isArray(data.candidates) || data.candidates.length === 0) {
+    if (typeof data?.promptFeedback?.blockReason === 'string') {
+      return { text: '', model: typeof data.modelVersion === 'string' ? data.modelVersion : model,
+        latencyMs, tokens: tokensOrUndefined(input, output), billableAttempts: attempts,
+        answerStatus: 'refused',
+        ...(searchPolicy === 'auto' ? { groundingReceipt: parseGeminiGrounding(null, []).receipt } : {}) };
+    }
     throw new ProviderError('other', 'Response had no candidates', 'unexpected Gemini response shape',
-      billableAttempts(res, input, output));
+      attempts);
   }
 
-  const parts = data.candidates[0]?.content?.parts;
-  const answer = Array.isArray(parts)
-    ? parts.map((part) => (part && typeof part.text === 'string' ? part.text : '')).join('')
-    : '';
+  const candidate = data.candidates[0];
+  const parts = candidate?.content?.parts;
+  const partTexts = Array.isArray(parts)
+    ? parts.map((part) => (part && typeof part.text === 'string' ? part.text : '')) : [];
+  const answer = partTexts.join('');
+  if (Buffer.byteLength(answer) > EVIDENCE_LIMITS.answerBytes) {
+    throw new ProviderError('other', 'Gemini answer exceeds evidence storage limit', '', attempts);
+  }
+  const finishReason = candidate?.finishReason;
+  const answerStatus = finishReason === 'MAX_TOKENS' ? 'truncated'
+    : ['SAFETY', 'PROHIBITED_CONTENT', 'SPII', 'BLOCKLIST', 'RECITATION'].includes(String(finishReason)) ? 'refused'
+      : finishReason !== 'STOP' && (searchPolicy === 'auto' || Boolean(finishReason)) ? 'incomplete'
+        : answer.trim() ? 'complete' : 'empty';
+  let grounding;
+  if (searchPolicy === 'auto') {
+    try {
+      grounding = parseGeminiGrounding(candidate?.groundingMetadata, partTexts);
+    } catch (error) {
+      throw new ProviderError('other', 'Invalid Gemini grounding metadata',
+        error instanceof Error ? error.message : String(error), attempts);
+    }
+  }
 
-  return {
+  const result = /** @type {ProviderResult} */ ({
     text: answer,
     model: typeof data.modelVersion === 'string' ? data.modelVersion : model,
     latencyMs,
     tokens: tokensOrUndefined(input, output),
-    billableAttempts: billableAttempts(res, input, output),
-  };
+    answerStatus,
+    billableAttempts: attempts,
+    ...(grounding ? { searchActions: grounding.searchActions, sources: grounding.sources,
+      answerCitations: grounding.answerCitations, citations: normalizeCitations(grounding.answerCitations),
+      groundingReceipt: grounding.receipt } : {}),
+  });
+  if (grounding?.observedSearch && !grounding.suggestions?.trim()) {
+    throw new ProviderError('other', 'Grounded Gemini answer lacks Search Suggestions',
+      'The response cannot be presented under the grounding contract', attempts);
+  }
+  return result;
 }

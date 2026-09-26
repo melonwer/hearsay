@@ -18,6 +18,7 @@ import { answerReview } from './interpretations.js';
  *     urlHost:string|null,publisherDomain:null}[],
  *   answerCitations:{id:number,sourceObservationId:number|null,url:string,provenance:string,
  *     answerStart:number|null,answerEnd:number|null,ordinal:number}[],
+ *   groundingReceipt:ReturnType<typeof import('./providers/gemini-grounding.js').parseGeminiGrounding>['receipt']|null,
  *   mentions:(ReturnType<typeof answerReview>['mentions'][number] & {entityName:string|null})[]}} EvidenceAnswer */
 /** @typedef {{normalizedKey:string,originalTexts:string[],responseIncidence:number,rawOccurrences:number,
  *   responseIds:number[],queryIds:number[],themeLabels:string[]}} EvidenceQueryGroup */
@@ -158,13 +159,15 @@ export function intentEvidenceReport(db, input) {
     answerStatus: stringOrNull(row.answer_status), webStatus: stringOrNull(row.web_status),
     queryMetadataStatus: stringOrNull(row.query_metadata_status),
     evidenceCompleteness: stringOrNull(row.evidence_completeness),
-    searchActions: [], searchQueries: [], sourceObservations: [], answerCitations: [], mentions: [],
+    searchActions: [], searchQueries: [], sourceObservations: [], answerCitations: [],
+    groundingReceipt: null, mentions: [],
   }]));
 
   const actions = childRows(db, ids, 'search_events');
   const queries = childRows(db, ids, 'search_queries');
   const sources = childRows(db, ids, 'source_observations');
   const citations = childRows(db, ids, 'answer_citations');
+  const groundingReceipts = childRows(db, ids, 'gemini_grounding_receipts');
   const mentions = childRows(db, ids, 'mentions');
   for (const item of actions) answers.get(Number(item.response_id))?.searchActions.push({
     id: Number(item.id), eventType: String(item.event_type), status: String(item.status),
@@ -190,6 +193,10 @@ export function intentEvidenceReport(db, input) {
     answerStart: numberOrNull(item.answer_start), answerEnd: numberOrNull(item.answer_end),
     ordinal: Number(item.ordinal),
   });
+  for (const item of groundingReceipts) {
+    const answer = answers.get(Number(item.response_id));
+    if (answer) answer.groundingReceipt = JSON.parse(String(item.metadata_json));
+  }
   for (const responseId of new Set(mentions.map((mention) => Number(mention.response_id)))) {
     const answer = answers.get(responseId);
     if (answer) answer.mentions = answerReview(db, responseId).mentions.map((mention) => ({

@@ -642,3 +642,17 @@ p {
     flex-wrap: wrap;
   }
 }
+.gemini-suggestions iframe {
+  width: 100%;
+  min-height: 300px;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+.gemini-grounding-original pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 28rem;
+  overflow: auto;
+}

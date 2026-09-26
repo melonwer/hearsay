@@ -385,6 +385,7 @@ export function activePromptCount(db) {
  * @property {{id:number,event_type:string, status:string, query:string|null, queries:string[], url:string|null, title:string|null, domain:string|null, observed_at:string, rank:number|null}[]} search_events
  * @property {{url:string,title:string|null,provenance:string,search_event_id:number|null}[]} source_observations
  * @property {{url:string,provenance:string,start:number|null,end:number|null}[]} answer_citations
+ * @property {ReturnType<typeof import('../core/providers/gemini-grounding.js').parseGeminiGrounding>['receipt']|null} grounding_receipt
  */
 
 /**
@@ -507,6 +508,7 @@ export function queryAnswers(db, filters = {}) {
     search_events: [],
     source_observations: [],
     answer_citations: [],
+    grounding_receipt: null,
     };
   });
 
@@ -586,6 +588,12 @@ export function queryAnswers(db, filters = {}) {
     });
   }
 
+  for (const row of all(db, `SELECT response_id, metadata_json FROM gemini_grounding_receipts
+      WHERE response_id IN (${placeholders}) ORDER BY response_id`, ids)) {
+    const item = byId.get(Number(row.response_id));
+    if (item) item.grounding_receipt = JSON.parse(String(row.metadata_json));
+  }
+
   for (const row of all(
     db,
     `SELECT response_id, url, domain, rank, entity_id FROM citations
@@ -640,7 +648,7 @@ export function exportAll(db) {
   const tables = [
     'settings', 'entities', 'intents', 'prompts', 'runs', 'responses', 'mentions',
     'citations', 'search_events', 'search_queries', 'source_observations',
-    'answer_citations', 'usage_components', 'execution_profiles',
+    'answer_citations', 'gemini_grounding_receipts', 'usage_components', 'execution_profiles',
     'benchmark_revisions', 'benchmark_drafts', 'mention_interpretations', 'mention_corrections',
     'query_themes', 'query_theme_assignments', 'opportunities', 'opportunity_support',
     'opportunity_events', 'opportunity_page_evidence', 'follow_up_plans',
@@ -649,7 +657,7 @@ export function exportAll(db) {
   ];
   /** @type {Record<string, unknown>} */
   const out = {
-    exportFormatVersion: 10,
+    exportFormatVersion: 11,
     databaseSchemaVersion: userVersion(db),
     exportedAt: `${new Date().toISOString().slice(0, 19)}Z`,
     tables: {},

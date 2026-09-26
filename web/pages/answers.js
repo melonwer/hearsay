@@ -8,6 +8,7 @@
  */
 
 import { emptyState, html, layout, PROVIDER_LABEL, providerBadge, raw, relTime, SURFACE_LABEL, truncate } from '../layout.js';
+import { searchSuggestions, originalGrounding } from '../gemini-grounding.js';
 import { randomUUID } from 'node:crypto';
 import { formatUsd } from '../../core/cost.js';
 import { highlightAnswer } from '../highlight.js';
@@ -355,10 +356,12 @@ function answerCard(view, item) {
     <p class="answer-prompt">${item.prompt}</p>
     ${view.series ? html`<p><a href="/evidence?days=${view.filters.days}&amp;series_id=${encodeURIComponent(view.series.id)}&amp;receipt_id=${item.id}&amp;layer=answers">View the five evidence layers for receipt #${item.id}</a></p>` : ''}
     <div class="answer-text">${raw(highlightAnswer(item.text ?? '', view.entities, view.colorIndex))}</div>
+    ${searchSuggestions(item.grounding_receipt)}
     ${recommended ? html`<p><span class="pill pill-good">recommended</span></p>` : ''}
     ${labels.length ? html`<details class="answer-evidence"><summary>Review brand stance (${review.revision}, corrections through #${review.correctionCutoff})</summary><ul>${labels}</ul></details>` : ''}
     ${citations.length > 0 ? html`<p class="cite-row">${citations}</p>` : ''}
     ${evidence}
+    ${originalGrounding(item.grounding_receipt)}
   </article>`;
 }
 

@@ -142,7 +142,8 @@ export function startScheduler(options) {
         try {
           const cronConfig = !hasEnabledApiSearch(config) || apiSearchScheduleApproved(db, config) ? config : {
             ...config, apiSearchPolicies: { ...config.apiSearchPolicies,
-              openai: /** @type {const} */ ('off'), anthropic: /** @type {const} */ ('off') },
+              openai: /** @type {const} */ ('off'), anthropic: /** @type {const} */ ('off'),
+              gemini: /** @type {const} */ ('off') },
           };
           await runPanel(cronConfig === config ? { db, trigger: 'cron' } : { db, trigger: 'cron', config: cronConfig });
           started = true;

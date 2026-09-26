@@ -1,0 +1,33 @@
+{
+  "modelVersion": "gemini-3.6-flash",
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          { "text": "Café 😀 wins." },
+          { "text": " More." }
+        ]
+      },
+      "finishReason": "STOP",
+      "groundingMetadata": {
+        "webSearchQueries": ["Café awards", "emoji award winners"],
+        "groundingChunks": [
+          { "web": { "uri": "https://example.org/cafe", "title": "Café report" } },
+          { "web": { "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/fixture", "title": "Awards" } }
+        ],
+        "groundingSupports": [
+          { "segment": { "partIndex": 0, "startIndex": 6, "endIndex": 15, "text": "😀 wins" }, "groundingChunkIndices": [0, 1] },
+          { "segment": { "partIndex": 1, "startIndex": 1, "endIndex": 5, "text": "More" }, "groundingChunkIndices": [1] }
+        ],
+        "searchEntryPoint": {
+          "renderedContent": "<style>.gsc{color:blue}</style><div class=\"gsc\"><a href=\"https://www.google.com/search?q=Cafe\" target=\"_blank\">Search Café</a></div>"
+        }
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 22,
+    "candidatesTokenCount": 12,
+    "thoughtsTokenCount": 3
+  }
+}

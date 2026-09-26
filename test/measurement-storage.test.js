@@ -299,7 +299,7 @@ test('queued target keeps its original definitions and stores provider evidence 
 
   const exported = exportAll(db);
   const tables = /** @type {Record<string, Record<string, unknown>[]>} */ (exported.tables);
-  assert.equal(exported.exportFormatVersion, 10);
+  assert.equal(exported.exportFormatVersion, 11);
   assert.equal(exported.databaseSchemaVersion, SCHEMA_VERSION);
   assert.equal(tables.execution_profiles.length, 1);
   assert.equal(tables.benchmark_revisions.length, 1);

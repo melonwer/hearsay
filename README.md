@@ -56,9 +56,15 @@ The same on-demand quote and separate daily-schedule consent apply.
 An `auto` answer without search is comparable only when the provider response confirms
 that no search ran. A `required` answer needs a completed search event. A missing query
 string is shown as unavailable, never reconstructed from an answer or source URL.
-Gemini API and Perplexity API remain available on their existing routes. Gemini
-grounded search is disabled pending legal review; Perplexity Sonar's historical
-built-in search is labeled as a legacy profile without verified query wording.
+Gemini API search is off by default. Set `HEARSAY_GEMINI_SEARCH_POLICY=auto` on
+`gemini-3.6-flash` to enable Google Search grounding through GenerateContent. The
+grounded route has its own execution profile, needs the same run quote and schedule
+consent, and has no enforceable internal search-call ceiling. Hearsay retains the
+original grounding metadata and shows Google's Search Suggestions in an isolated
+frame beside a grounded answer. If Gemini omits the Suggestions after a search,
+Hearsay records a failed target without displaying its grounded content. Search billing remains partial when the API does
+not report the number of billable calls. Perplexity Sonar's historical built-in
+search remains a legacy profile without verified query wording.
 
 ## Install it by asking
 

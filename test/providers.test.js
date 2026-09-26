@@ -39,6 +39,7 @@ import { localDate, localHm, shouldRun, startScheduler } from '../core/scheduler
 import { saveApiSearchSchedule } from '../core/api-search-schedule.js';
 import { reviewTrackingPrompt } from '../core/benchmark-draft.js';
 import { queryAnswers } from '../web/queries.js';
+import { listMeasurementSeries } from '../core/metrics.js';
 
 /**
  * @param {string} name
@@ -606,6 +607,51 @@ describe('runner (§8.1)', () => {
 
   afterEach(() => {
     db.close();
+  });
+
+  it('runs grounded Gemini and stores the original receipt with normalized citation edges', async (t) => {
+    t.after(() => _setFetch());
+    dbRun(db, 'UPDATE prompts SET active = 0 WHERE id = 2');
+    stubFetch([{ status: 200, body: fixture('gemini-grounded') }]);
+    const config = buildConfig({ GEMINI_API_KEY: 'fixture-key',
+      HEARSAY_GEMINI_SEARCH_POLICY: 'auto', HEARSAY_SAMPLES: '1' });
+    const summary = await runPanel({ db, config, adapters: { gemini },
+      analyzeResponse: fakeAnalyze, evaluateAlerts: () => {}, env: {}, log: () => {} });
+    assert.equal(summary.okCalls, 1);
+    const response = get(db, `SELECT id, web_status, search_policy, comparability_status,
+      cost_status FROM responses LIMIT 1`);
+    assert.deepEqual([response?.web_status, response?.search_policy,
+      response?.comparability_status, response?.cost_status],
+    ['verified', 'auto', 'comparable', 'partial']);
+    assert.equal(get(db, `SELECT COUNT(*) AS n FROM gemini_grounding_receipts
+      WHERE response_id = ?`, [response?.id])?.n, 1);
+    assert.equal(get(db, `SELECT COUNT(*) AS n FROM answer_citations
+      WHERE response_id = ? AND source_observation_id IS NOT NULL`, [response?.id])?.n, 3);
+    const answer = queryAnswers(db, { days: 3650 }).items.find((item) => item.search_policy === 'auto');
+    assert.equal(answer?.grounding_receipt?.status, 'present');
+    assert.equal(answer?.answer_citations.length, 3);
+
+    stubFetch([{ status: 200, body: fixture('gemini') }]);
+    const offConfig = buildConfig({ GEMINI_API_KEY: 'fixture-key', HEARSAY_SAMPLES: '1' });
+    const offRun = await runPanel({ db, config: offConfig, adapters: { gemini },
+      analyzeResponse: fakeAnalyze, evaluateAlerts: () => {}, env: {}, log: () => {} });
+    assert.equal(offRun.okCalls, 1);
+    const policies = listMeasurementSeries(db, { now: new Date(), days: 30 })
+      .filter((series) => series.surface === 'gemini-api').map((series) => series.searchPolicy);
+    assert.deepEqual(policies.sort(), ['auto', 'off']);
+
+    const missingSuggestions = fixture('gemini-grounded');
+    delete missingSuggestions.candidates[0].groundingMetadata.searchEntryPoint;
+    stubFetch([{ status: 200, body: missingSuggestions }]);
+    const failedRun = await runPanel({ db, config, adapters: { gemini },
+      analyzeResponse: fakeAnalyze, evaluateAlerts: () => {}, env: {}, log: () => {} });
+    assert.equal(failedRun.errorCalls, 1);
+    const failed = get(db, `SELECT id, text, answer_status, query_metadata_status,
+      cost_status FROM responses ORDER BY id DESC LIMIT 1`);
+    assert.deepEqual([failed?.text, failed?.answer_status, failed?.query_metadata_status,
+      failed?.cost_status], [null, 'failed', 'unavailable', 'partial']);
+    assert.equal(get(db, `SELECT COUNT(*) AS n FROM gemini_grounding_receipts
+      WHERE response_id = ?`, [failed?.id])?.n, 0);
   });
 
   it('stores Perplexity result sources and final citations in separate evidence tables', async () => {
@@ -1351,6 +1397,20 @@ describe('scheduler (§8.2)', () => {
     clock = new Date(2026, 6, 26, 7, 0, 0);
     assert.equal(await scheduler.tick(), true);
     assert.equal(receivedConfig?.apiSearchPolicies.anthropic, 'off');
+  });
+
+  it('keeps Gemini grounding off on an old daily schedule', async () => {
+    const config = buildConfig({ GEMINI_API_KEY: 'k', HEARSAY_RUN_AT: '07:00',
+      HEARSAY_GEMINI_SEARCH_POLICY: 'auto' });
+    let clock = new Date(2026, 6, 26, 6, 59, 0);
+    /** @type {import('../core/config.js').Config|null} */
+    let receivedConfig = null;
+    const scheduler = start({ db, config, now: () => clock,
+      runPanel: async (opts) => { receivedConfig = opts.config ?? null; } });
+    clock = new Date(2026, 6, 26, 7, 0, 0);
+    assert.equal(await scheduler.tick(), true);
+    assert.equal(receivedConfig?.apiSearchPolicies.gemini, 'off');
+    assert.equal(config.apiSearchPolicies.gemini, 'auto');
   });
 
   it('uses the search route only after recurring consent with a sufficient target ceiling', async () => {
