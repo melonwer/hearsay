@@ -8,7 +8,7 @@ Reviewed baseline: `d7c9573a8ed045cd5727be4a6cc2e900898a6856` (also the current 
 
 ## Implementation progress (26 September 2026)
 
-The checkboxes track completed commit gates. C03's budget, preview, and usage-accounting checks pass. C06 remains held for legal review, so the release gates stay open. See [implementation-review.md](implementation-review.md) for evidence and limits.
+The checkboxes track completed commit gates. The user confirmed written Google permission for Gemini grounding analytics on 2026-09-26. C06 passed its local provider, storage, browser, and presentation checks. The full suite passed 497/497 tests and typecheck passed. Release A and B are complete as local implementation gates. No live provider or account capability check, push, or deployment was performed. See [implementation-review.md](implementation-review.md) for evidence and limits.
 
 - [x] C00 — provider contracts and baseline (`a66546f`)
 - [x] C01 — versioned measurement and evidence contracts (`d241a31`)
@@ -16,12 +16,12 @@ The checkboxes track completed commit gates. C03's budget, preview, and usage-ac
 - [x] C03 — search budgets and usage accounting (`ae2df79`; earlier slices through `7ae20df`)
 - [x] C04 — OpenAI search evidence adapter (`b647107`)
 - [x] C05 — Anthropic search evidence and bounded continuation (`7ae20df`)
-- [ ] C06 — Gemini grounding evidence adapter (held for legal review; grounding disabled)
+- [x] C06 — Gemini grounding evidence adapter (`313fa1b`; opt-in, search off by default)
 - [x] C07 — Perplexity and subscription evidence provenance
 - [x] C08 — conservative recommendation classification (all 24 fixture labels approved by user 2026-09-25)
 - [x] C09 — exact series metrics and dashboard scope
 - [x] C10 — question, search, source, and answer report
-- [ ] Release A gate — C06 legal review remains open
+- [x] Release A gate — C00–C10 local acceptance complete; live account capability unverified
 - [x] C11 — buyer-focused benchmark setup
 - [x] C12 — reviewable evidence-linked opportunities
 - [x] C13 — interventions and follow-up plans
@@ -30,7 +30,7 @@ The checkboxes track completed commit gates. C03's budget, preview, and usage-ac
 - [x] C16 — demo separation and tracking health (`3422f93`, `285e412`)
 - [x] C17 — workflow documentation and review handoff
 - [x] E01–E16 — deterministic end-to-end acceptance scenarios ([evidence](implementation-acceptance.md))
-- [ ] Release B gate — C06 legal review prevents the full handoff
+- [x] Release B gate — C11–C17 and E01–E16 local acceptance complete; live account capability unverified
 
 ## 1. Objective and authority
 
