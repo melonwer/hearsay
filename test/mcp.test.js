@@ -109,9 +109,10 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
   const list = await rpc(mcp, 'tools/list', {}, 2);
   const tools = list.result.tools;
-  assert.equal(tools.length, 35);
+  assert.equal(tools.length, 38);
   const names = tools.map((/** @type {*} */ t) => t.name);
   for (const name of [
+    'hearsay_research_import', 'hearsay_research_list', 'hearsay_research_get',
     'hearsay_status', 'hearsay_summary', 'hearsay_series_list', 'hearsay_series_summary',
     'hearsay_series_export', 'hearsay_intent_evidence', 'hearsay_answer_evidence',
     'hearsay_opportunities', 'hearsay_opportunity', 'hearsay_intervention_comparison',
@@ -137,6 +138,7 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
     'hearsay_citation_gap', 'hearsay_cost_estimate', 'hearsay_intent_evidence',
     'hearsay_intent_results', 'hearsay_intervention_comparison', 'hearsay_opportunities',
     'hearsay_opportunity', 'hearsay_prompt_results',
+    'hearsay_research_get', 'hearsay_research_list',
     'hearsay_review_benchmark_draft', 'hearsay_run_status', 'hearsay_series_export',
     'hearsay_series_list', 'hearsay_series_summary', 'hearsay_stance_rate',
     'hearsay_status', 'hearsay_subscription_preview', 'hearsay_summary',

@@ -1,3 +1,4 @@
+import { agentRoute } from './agent-routes.js';
 import { assertRoutePolicy } from './measurement-contract.js';
 import { endpoint as openaiEndpoint, responsesEndpoint as openaiResponsesEndpoint } from './providers/openai.js';
 import { endpoint as anthropicEndpoint, MAX_TOKENS as anthropicMaxTokens } from './providers/anthropic.js';
@@ -75,16 +76,16 @@ export function apiExecutionBudget(config, providerId) {
  * The restricted subscription process bounds one invocation but has no reliable
  * internal search-call ceiling or monetary cost cap.
  * @param {Config} config
- * @param {typeof CODEX_SURFACE|typeof CLAUDE_SURFACE} surface
+ * @param {string} surface
  */
 export function subscriptionExecutionBudget(config, surface) {
-  const codex = surface === CODEX_SURFACE;
-  const route = codex ? 'codex-search-v1' : 'claude-code-search-v1';
+  const definition = agentRoute(surface);
+  const route = definition.profile;
   assertRoutePolicy(route, surface, 'required');
   return {
     surface, route, model: 'default', endpoint: null,
-    executable: codex ? config.subscription.codex.executable : config.subscription.claudeCode.executable,
-    profileVersion: codex ? CODEX_PROFILE_VERSION : CLAUDE_PROFILE_VERSION,
+    executable: config.subscription[definition.key].executable,
+    profileVersion: definition.profile,
     envelopeVersion: PROMPT_ENVELOPE_VERSION,
     searchPolicy: 'required', enabledTools: ['web search'],
     searchUsageAssumption: 'unknown',

@@ -41,6 +41,7 @@ export class AgentParseError extends Error {
 /**
  * @typedef {Object} ParsedAgentOutput
  * @property {string|null} text
+ * @property {string|null} [model]
  * @property {SearchEvent[]} searchEvents
  * @property {string[]} citations
  * @property {AgentUsage} usage
@@ -69,7 +70,7 @@ function assertDepth(value, depth, maxDepth) {
  * @param {{maxLineBytes?:number, maxOutputBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
  * @returns {Record<string, unknown>[]}
  */
-function parseLines(input, options = {}) {
+export function parseLines(input, options = {}) {
   if (Buffer.byteLength(input) > (options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES)) {
     throw new AgentParseError('event output limit exceeded');
   }
@@ -257,6 +258,7 @@ export function parseCodexJsonl(input, options = {}) {
   /** @type {SearchEvent[]} */
   const searchEvents = [];
   let text = null;
+  let model = null;
   let errorCode = null;
   /** @type {AgentUsage} */
   let usage = { inputTokens: null, outputTokens: null };
@@ -265,11 +267,15 @@ export function parseCodexJsonl(input, options = {}) {
     const item = event.item && typeof event.item === 'object' ? /** @type {Record<string, unknown>} */ (event.item) : event;
     const itemType = String(item.type ?? '').toLowerCase();
     const action = item.action && typeof item.action === 'object' ? /** @type {Record<string, unknown>} */ (item.action) : item;
-    if (itemType === 'web_search_call' || itemType === 'websearch') {
+    model = optionalString(event.model ?? item.model) ?? model;
+    const searchAction = String(action.type ?? '');
+    if (itemType === 'web_search_call' || itemType === 'websearch' || itemType === 'web_search' && (searchAction === 'search' || searchAction === 'other' || searchAction === '')) {
       const rawStatus = item.status ?? action.status;
-      const status = terminalSearchStatus(eventType, rawStatus);
+      const status = itemType === 'web_search' && searchAction !== 'search' && eventType === 'item.completed'
+        ? 'unavailable' : terminalSearchStatus(eventType, rawStatus);
       errorCode ??= terminalSearchErrorCode(rawStatus, eventType === 'item.failed');
-      const queries = exposedQueries(action.query, action.queries, item.query, item.queries);
+      const queries = exposedQueries(action.query, action.queries);
+      if (!queries.length) queries.push(...exposedQueries(item.query, item.queries));
       const results = exposedResults(item.results ?? action.results);
       const eventRow = evidence('search', status, {
         query: queries[0],
@@ -280,7 +286,7 @@ export function parseCodexJsonl(input, options = {}) {
       eventRow.providerEventType = eventType;
       eventRow.actionId = optionalString(item.id ?? action.id);
       searchEvents.push(eventRow);
-    } else if (itemType === 'web_fetch_call' || itemType === 'webfetch') {
+    } else if (itemType === 'web_fetch_call' || itemType === 'webfetch' || itemType === 'web_search' && ['open', 'find'].includes(searchAction)) {
       const rawStatus = item.status ?? action.status;
       const eventRow = evidence('fetch', terminalSearchStatus(eventType, rawStatus), {
         url: action.url ?? item.url,
@@ -303,7 +309,7 @@ export function parseCodexJsonl(input, options = {}) {
     }
     if (eventType === 'turn.failed') errorCode ??= 'agent_failed';
   }
-  return { text, searchEvents, citations: extractCitations(text), usage, webStatus: webStatus(searchEvents, text), errorCode, rawEvents };
+  return { text, model, searchEvents, citations: extractCitations(text), usage, webStatus: webStatus(searchEvents, text), errorCode, rawEvents };
 }
 
 /**
@@ -327,12 +333,16 @@ export function parseClaudeStreamJsonl(input, options = {}) {
   /** @type {Map<string, number>} */
   const pending = new Map();
   let text = null;
+  let model = null;
   let errorCode = null;
   /** @type {AgentUsage} */
   let usage = { inputTokens: null, outputTokens: null };
   for (const event of rawEvents) {
     const message = event.message && typeof event.message === 'object' ? /** @type {Record<string, unknown>} */ (event.message) : null;
+    model = optionalString(message?.model ?? event.model) ?? model;
     if (String(event.type ?? '') === 'assistant' && message) {
+      const chunks = contentItems(message.content).filter((item) => item.type === 'text' && typeof item.text === 'string');
+      if (chunks.length) text = chunks.map((item) => item.text).join('\n');
       for (const item of contentItems(message.content)) {
         if (item.type === 'tool_use') {
           const name = String(item.name ?? '');
@@ -390,5 +400,5 @@ export function parseClaudeStreamJsonl(input, options = {}) {
       }
     }
   }
-  return { text, searchEvents, citations: extractCitations(text), usage, webStatus: webStatus(searchEvents, text), errorCode, rawEvents };
+  return { text, model, searchEvents, citations: extractCitations(text), usage, webStatus: webStatus(searchEvents, text), errorCode, rawEvents };
 }

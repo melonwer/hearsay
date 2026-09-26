@@ -1,3 +1,4 @@
+import { isAgentSurface, AGENT_SURFACES } from '../../core/agent-routes.js';
 /**
  * GET /answers — the receipts explorer (§11.4).
  *
@@ -324,7 +325,7 @@ function answerCard(view, item) {
     >`;
   });
 
-  const evidence = item.surface === 'codex-agent' || item.surface === 'claude-code-agent' ||
+  const evidence = isAgentSurface(item.surface) ||
       item.search_events.length > 0 || item.source_observations.length > 0 || item.answer_citations.length > 0
     ? html`<details class="answer-evidence">
         <summary>Measurement evidence</summary>

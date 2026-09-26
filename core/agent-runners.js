@@ -6,6 +6,9 @@
  * for the common response-target coordinator.
  */
 
+import { agentRoute } from './agent-routes.js';
+import { AgyCliRunner, parseAgyJsonl, AGY_SETTINGS, AGY_AGENT_DEFINITION } from './agy-agent.js';
+
 import { rmSync } from 'node:fs';
 
 import {
@@ -83,7 +86,7 @@ export class SubscriptionAgentRunner {
     this.spawnBoundedImpl = options.spawnBoundedImpl ?? ((input) => spawnBounded(/** @type {*} */ (input)));
     this.authProbe = options.authProbe ?? (() => probeAuthentication({
       executable: this.executable,
-      args: this.surface === CODEX_SURFACE ? ['login', 'status'] : ['auth', 'status'],
+      args: agentRoute(this.surface).authArgs,
       timeoutMs: 10_000,
       maxOutputBytes: 64 * 1024,
       dataDir: this.dataDir,
@@ -163,10 +166,12 @@ export class SubscriptionAgentRunner {
           maxEvents: 10_000,
         });
       } catch {
-        throw new SubscriptionRunnerError('event_parse_failed', 'Subscription CLI event stream could not be parsed');
+        const error = new AgentProcessError('event_parse_failed', 'Subscription CLI event stream could not be parsed');
+        error.output = processResult;
+        throw error;
       }
       const artifactRef = writeArtifact(this.artifactStore, target.responseId, parsed.rawEvents);
-      const model = target.model === undefined ? null : target.model;
+      const model = parsed.model ?? null;
       return {
         surface: this.surface,
         provider: this.provider,
@@ -178,6 +183,9 @@ export class SubscriptionAgentRunner {
         usage: parsed.usage,
         webStatus: parsed.webStatus,
         errorCode: parsed.errorCode,
+        capturedEvents: parsed.rawEvents,
+        sessionIsolation: true,
+        brandContext: false,
         artifactRef,
         cliVersion: preflight.cliVersion,
         cliExecutable: preflight.cliExecutable,
@@ -232,4 +240,24 @@ export class ClaudeCliRunner extends SubscriptionAgentRunner {
   constructor(options) {
     super({ ...options, surface: CLAUDE_SURFACE, provider: 'anthropic', parser: parseClaudeStreamJsonl, args: () => claudeArgs() });
   }
+}
+
+/** @param {string} surface @param {AgentRunnerOptions} options */
+export function createAgentRunner(surface, options) {
+  const constructors = { 'codex-agent': CodexCliRunner, 'claude-code-agent': ClaudeCliRunner, 'agy-cli': AgyCliRunner };
+  const Constructor = constructors[/** @type {keyof typeof constructors} */ (surface)];
+  if (!Constructor) throw new SubscriptionRunnerError('unsupported_profile', 'This route has no validated isolated measurement profile');
+  return new Constructor(options);
+}
+
+/** @param {string} surface */
+export function agentExecutionProfile(surface) {
+  const profiles = {
+    'codex-agent': { parser: parseCodexJsonl, args: codexArgs('<isolated-working-directory>') },
+    'claude-code-agent': { parser: parseClaudeStreamJsonl, args: claudeArgs() },
+    'agy-cli': { parser: parseAgyJsonl, settings: AGY_SETTINGS, agent: AGY_AGENT_DEFINITION },
+  };
+  const profile = profiles[/** @type {keyof typeof profiles} */ (surface)];
+  const { parser, ...settings } = profile;
+  return { parser, hash: profileHash({ surface, version: agentRoute(surface).profile, ...settings }) };
 }

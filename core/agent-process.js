@@ -41,6 +41,8 @@ export class AgentProcessError extends Error {
     this.code = code;
     /** @type {string} */
     this.safeMessage = message;
+    /** @type {{stdout:string,stderr:string,exitCode:number|null,signal:string|null}|null} */
+    this.output = null;
   }
 }
 
@@ -264,6 +266,7 @@ export function spawnBounded(options) {
         .catch(() => {})
         .then(() => {
           settled = true;
+          error.output = { stdout, stderr, exitCode: child.exitCode, signal: child.signalCode };
           reject(error);
         });
     };
@@ -292,7 +295,9 @@ export function spawnBounded(options) {
       settled = true;
       cleanup();
       if (code !== 0) {
-        reject(new AgentProcessError('nonzero_exit', 'Subscription CLI exited unsuccessfully'));
+        const error = new AgentProcessError('nonzero_exit', 'Subscription CLI exited unsuccessfully');
+        error.output = { stdout, stderr, exitCode: code, signal: signal ?? null };
+        reject(error);
         return;
       }
       resolvePromise({ stdout, stderr, exitCode: Number(code ?? 0), signal: signal ?? null });
@@ -378,7 +383,9 @@ export async function probeAuthentication(options) {
     if (/not\s+(?:logged[ -]?in|authenticated)|logged[ -]?out|login required|authentication required|unauthenticated|expired|invalid (?:oauth|session|credentials?)|no active (?:oauth|subscription|session)|subscription unavailable/i.test(output)) {
       return { authenticated: false, authKind: 'unknown' };
     }
-    const authenticated = /logged[ -]?in|authenticated|oauth|subscription|active session/i.test(output);
+    if (/(?:using|with)\s+(?:an?\s+)?api[ _-]?key|"authMethod"\s*:\s*"(?:api[_-]?key|console)"|"apiKeySource"\s*:\s*"[^"]+"/i.test(output)) return { authenticated: false, authKind: 'api_key' };
+    if (/"loggedIn"\s*:\s*false/i.test(output)) return { authenticated: false, authKind: 'unknown' };
+    const authenticated = /chatgpt|claude\.ai|\boauth\b|subscription/i.test(output);
     return { authenticated, authKind: authenticated ? 'subscription' : 'unknown' };
   } catch {
     return { authenticated: false, authKind: 'unknown' };
@@ -397,6 +404,6 @@ export async function preflightCli(options) {
   if (missing.length > 0) throw new AgentProcessError('unsupported_cli_version', 'Subscription CLI does not expose the required restricted profile');
   if (!options.authProbe) throw new AgentProcessError('authentication_missing', 'Subscription CLI authentication is not available');
   const auth = await options.authProbe();
-  if (!auth || auth.authenticated !== true) throw new AgentProcessError('authentication_missing', 'Subscription CLI authentication is not available');
+  if (!auth || auth.authenticated !== true || auth.authKind !== 'subscription') throw new AgentProcessError('authentication_missing', 'Subscription account authentication is not available; API-key billing is not allowed for this route');
   return { authenticated: true, authKind: String(auth.authKind ?? 'unknown') };
 }

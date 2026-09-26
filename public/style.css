@@ -656,3 +656,9 @@ p {
   max-height: 28rem;
   overflow: auto;
 }
+
+.research-grid { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 3fr); gap: 1.25rem; }
+.research-grid > section { min-width: 0; }
+.research-pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; background: var(--surface); padding: 1rem; border-radius: .5rem; max-height: 60rem; overflow: auto; }
+.research-actions input { max-width: 100%; }
+@media (max-width: 700px) { .research-grid { grid-template-columns: minmax(0, 1fr); } }

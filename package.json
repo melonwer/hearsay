@@ -2,9 +2,12 @@
   "name": "hearsay",
   "version": "0.1.0",
   "private": true,
-  "description": "AI visibility tracker with Codex agent and Claude Code agent subscription measurements plus optional OpenAI, Anthropic, Gemini and Perplexity API measurements — self-hosted, zero dependencies, MCP built in.",
+  "description": "App visibility research in your current agent, with optional account measurements, scheduling and dashboard imports.",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "hearsay": "./bin/hearsay.js"
+  },
   "engines": {
     "node": ">=22.13"
   },
@@ -14,6 +17,8 @@
     "seed": "node scripts/seed.js",
     "run-panel": "node scripts/run-panel.js",
     "suggest-prompts": "node scripts/suggest-prompts.js",
-    "typecheck": "tsc -p jsconfig.json --noEmit"
+    "typecheck": "tsc -p jsconfig.json --noEmit",
+    "build:bundles": "node scripts/build-bundles.js",
+    "verify:bundles": "node scripts/verify-skill-discovery.js"
   }
 }

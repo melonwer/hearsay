@@ -8,6 +8,7 @@
  * (§4.3, §19.6 #13).
  */
 
+import { AGENT_SURFACES_SQL, AGENT_SURFACES } from '../../core/agent-routes.js';
 import { statSync } from 'node:fs';
 
 import { html, layout, raw, SURFACE_LABEL, usd } from '../layout.js';
@@ -115,7 +116,7 @@ export function buildView({ db, config }) {
        AND EXISTS (
          SELECT 1 FROM responses
           WHERE responses.run_id = runs.id
-            AND responses.surface IN ('codex-agent', 'claude-code-agent')
+            AND responses.surface IN (${AGENT_SURFACES_SQL})
        )
      ORDER BY id DESC
      LIMIT 1
@@ -256,7 +257,7 @@ function costPanel(view) {
 function subscriptionPanel(view) {
   const surfaces = view.subscriptionSurfaces.map((surface) => html`<tr>
     <td>${surface.label}</td>
-    <td>${surface.enabled ? 'Available' : 'Disabled'}</td>
+    <td>${surface.id === 'agy-cli' ? 'Profile unverified; execution disabled' : surface.enabled ? 'Configured; checked before execution' : 'Disabled'}</td>
     <td>${surface.optedIn ? 'Allowance consented for on-demand runs' : 'First run asks for allowance consent'}</td>
   </tr>`);
   if (surfaces.length === 0) {

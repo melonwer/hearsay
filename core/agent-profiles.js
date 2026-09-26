@@ -7,6 +7,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { agentRoute } from './agent-routes.js';
 
 export const PROMPT_ENVELOPE_VERSION = 'subscription-search-v1';
 export const CODEX_PROFILE_VERSION = 'codex-search-v1';
@@ -14,26 +15,8 @@ export const CLAUDE_PROFILE_VERSION = 'claude-code-search-v1';
 export const CODEX_SURFACE = 'codex-agent';
 export const CLAUDE_SURFACE = 'claude-code-agent';
 
-export const CODEX_REQUIRED_FLAGS = /** @type {const} */ ([
-  '--search',
-  '--json',
-  '--ephemeral',
-  '--ignore-user-config',
-  '--ignore-rules',
-  '--sandbox',
-  '--skip-git-repo-check',
-]);
-
-export const CLAUDE_REQUIRED_FLAGS = /** @type {const} */ ([
-  '--safe-mode',
-  '--no-session-persistence',
-  '--no-chrome',
-  '--output-format',
-  '--permission-mode',
-  '--tools',
-  '--allowedTools',
-  '--strict-mcp-config',
-]);
+export const CODEX_REQUIRED_FLAGS = agentRoute(CODEX_SURFACE).requiredFlags;
+export const CLAUDE_REQUIRED_FLAGS = agentRoute(CLAUDE_SURFACE).requiredFlags;
 
 /** @param {string} workingDirectory @returns {string[]} */
 export function codexArgs(workingDirectory) {
@@ -128,11 +111,6 @@ export function profileHash(profile) {
  * @returns {{label:string, profileVersion:string, requiredFlags:readonly string[], isSubscription:true}}
  */
 export function profileForSurface(surface) {
-  if (surface === CODEX_SURFACE) {
-    return { label: 'Codex agent', profileVersion: CODEX_PROFILE_VERSION, requiredFlags: CODEX_REQUIRED_FLAGS, isSubscription: true };
-  }
-  if (surface === CLAUDE_SURFACE) {
-    return { label: 'Claude Code agent', profileVersion: CLAUDE_PROFILE_VERSION, requiredFlags: CLAUDE_REQUIRED_FLAGS, isSubscription: true };
-  }
-  throw new TypeError(`Unsupported subscription surface: ${surface}`);
+  const route = agentRoute(surface);
+  return { label: route.label, profileVersion: route.profile, requiredFlags: route.requiredFlags, isSubscription: true };
 }

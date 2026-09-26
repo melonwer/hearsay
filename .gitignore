@@ -1,5 +1,7 @@
 # Local data and secrets
 data/
+.hearsay/
+.audit/
 .env
 .env.local
 *.log

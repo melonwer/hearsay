@@ -1,3 +1,4 @@
+import { isAgentSurface, AGENT_SURFACES } from '../core/agent-routes.js';
 /**
  * Plain-SQL reads owned by the web lane (§10.3, §11).
  *
@@ -422,7 +423,7 @@ export function queryAnswers(db, filters = {}) {
       "r.text IS NOT NULL", "trim(r.text) <> ''",
       "(r.answer_status IS NULL OR r.answer_status = 'complete')", "p.category <> 'branded'");
     if (filters.series?.searchPolicy === 'required') clauses.push("r.web_status = 'verified'");
-    if (filters.series?.surface === 'codex-agent' || filters.series?.surface === 'claude-code-agent') {
+    if (isAgentSurface(filters.series?.surface)) {
       clauses.push("r.web_status = 'verified'");
     }
   }

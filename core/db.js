@@ -711,6 +711,49 @@ export const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 16,
+    sql: `
+      CREATE TABLE research_runs (
+        id INTEGER PRIMARY KEY,
+        app_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        schema_version INTEGER NOT NULL CHECK(schema_version = 1),
+        bundle_json TEXT NOT NULL CHECK(json_valid(bundle_json)),
+        report_markdown TEXT NOT NULL,
+        imported_at TEXT NOT NULL,
+        UNIQUE(app_id, run_id)
+      );
+      CREATE TABLE research_evidence (
+        research_id INTEGER NOT NULL REFERENCES research_runs(id),
+        evidence_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        capture TEXT NOT NULL,
+        observation_json TEXT NOT NULL CHECK(json_valid(observation_json)),
+        PRIMARY KEY(research_id, evidence_id)
+      );
+      CREATE TABLE research_actions (
+        id INTEGER PRIMARY KEY,
+        research_id INTEGER NOT NULL REFERENCES research_runs(id),
+        action_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('proposed','accepted','dismissed')),
+        review_reason TEXT,
+        created_at TEXT NOT NULL,
+        reviewed_at TEXT,
+        UNIQUE(research_id, action_id)
+      );
+      CREATE TRIGGER research_runs_no_update BEFORE UPDATE ON research_runs
+        BEGIN SELECT RAISE(ABORT, 'research runs are immutable'); END;
+      CREATE TRIGGER research_runs_no_delete BEFORE DELETE ON research_runs
+        BEGIN SELECT RAISE(ABORT, 'research runs are immutable'); END;
+      CREATE TRIGGER research_evidence_no_update BEFORE UPDATE ON research_evidence
+        BEGIN SELECT RAISE(ABORT, 'research evidence is immutable'); END;
+      CREATE TRIGGER research_evidence_no_delete BEFORE DELETE ON research_evidence
+        BEGIN SELECT RAISE(ABORT, 'research evidence is immutable'); END;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

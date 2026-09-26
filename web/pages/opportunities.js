@@ -3,6 +3,8 @@ import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metr
 import { deriveOpportunityCandidates, listOpportunities } from '../../core/opportunities.js';
 import { compareIntervention } from '../../core/intervention-comparison.js';
 import { emptyState, html, layout, raw, SURFACE_LABEL } from '../layout.js';
+import { listResearchActions } from '../../core/research-store.js';
+import { researchActionCards } from './research.js';
 
 /** @param {string|null} value */
 function positiveInt(value) {
@@ -66,6 +68,7 @@ export function buildView({ db }, params) {
     }
   }
   return {
+    researchActions: listResearchActions(db),
     days, seriesOptions, series, intents, intentId, candidates, opportunities: selected,
     comparisons, comparisonPlanId, comparisonSnapshotId,
     prefill: {
@@ -454,7 +457,7 @@ function opportunityCard(view, item) {
 
 /** @param {import('../layout.js').ShellCtx} ctx @param {ReturnType<typeof buildView>} view */
 export function render(ctx, view) {
-  let body = html`<p class="muted">Review observed evidence, choose a next step, and record who owns it. These entries are hypotheses and decisions, not claims about how an engine ranks pages.</p>${selector(view)}`;
+  let body = html`<p class="muted">Review observed evidence, choose a next step, and record who owns it. These entries are hypotheses and decisions, not claims about how an engine ranks pages.</p>${researchActionCards(view.researchActions ?? [])}${selector(view)}`;
   if (!view.series || view.intentId === null) {
     body = html`${body}${emptyState({ title: 'No evidence for this selection',
       line: 'Choose a measurement series and buyer intent with completed comparable answers.',

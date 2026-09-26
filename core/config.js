@@ -5,6 +5,7 @@
  * written to the database, never logged, and never rendered unmasked in the UI.
  */
 
+import { AGENT_ROUTES } from './agent-routes.js';
 import { dirname, resolve } from 'node:path';
 
 import { withEnvFile } from './env-file.js';
@@ -46,8 +47,8 @@ export { parseEnvFile, withEnvFile } from './env-file.js';
  * @property {{openai:'off'|'auto'|'required',anthropic:'off'|'auto',gemini:'off'|'auto',perplexity:'legacy'}} apiSearchPolicies
  * @property {Record<ProviderId, ProviderConfig>} providers
  * @property {ProviderConfig[]} enabledProviders
- * @property {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} subscription
- * @property {('codex-agent'|'claude-code-agent')[]} subscriptionSurfaces
+ * @property {Record<string, SubscriptionConfig>} subscription
+ * @property {string[]} subscriptionSurfaces
  * @property {number} subscriptionSamples
  * @property {number} subscriptionConcurrency
  * @property {number} subscriptionTimeoutMs
@@ -58,7 +59,7 @@ export { parseEnvFile, withEnvFile } from './env-file.js';
 
 /**
  * @typedef {Object} SubscriptionConfig
- * @property {'codex-agent'|'claude-code-agent'} surface
+ * @property {string} surface
  * @property {string} label
  * @property {string} executable
  * @property {boolean} enabled
@@ -223,25 +224,12 @@ export function buildConfig(env) {
   const demoDataDir = String(env.HEARSAY_DEMO_DATA_DIR ?? '').trim() || dirname(resolve(demoDbPath));
   const dbPath = demo ? demoDbPath : realDbPath;
   const subscriptionDataDir = demo ? demoDataDir : realDataDir;
-  const codexEnabled = String(env.HEARSAY_CODEX_ENABLED ?? '').trim() === '1';
-  const claudeEnabled = String(env.HEARSAY_CLAUDE_CODE_ENABLED ?? '').trim() === '1';
-  const subscription = /** @type {{codex: SubscriptionConfig, claudeCode: SubscriptionConfig}} */ ({
-    codex: {
-      surface: 'codex-agent',
-      label: 'Codex agent',
-      executable: String(env.HEARSAY_CODEX_PATH ?? '').trim() || 'codex',
-      enabled: codexEnabled,
-    },
-    claudeCode: {
-      surface: 'claude-code-agent',
-      label: 'Claude Code agent',
-      executable: String(env.HEARSAY_CLAUDE_CODE_PATH ?? '').trim() || 'claude',
-      enabled: claudeEnabled,
-    },
-  });
-  const subscriptionSurfaces = /** @type {('codex-agent'|'claude-code-agent')[]} */ ([]);
-  if (codexEnabled) subscriptionSurfaces.push('codex-agent');
-  if (claudeEnabled) subscriptionSurfaces.push('claude-code-agent');
+  const subscription = Object.fromEntries(AGENT_ROUTES.map((route) => [route.key, {
+    surface: route.id, label: route.label, provider: route.provider, executable: String(env[route.pathEnv] ?? '').trim() || route.executable,
+    enabled: String(env[route.enabledEnv] ?? '').trim() === '1',
+  }]));
+  const subscriptionSurfaces = AGENT_ROUTES.filter((route) => subscription[route.key].enabled).map((route) => route.id);
+
   return {
     port: portIn(env.PORT, 0),
     portFile: resolvePortFilePath(env),

@@ -1,3 +1,4 @@
+import { isAgentSurface, AGENT_SURFACES } from './agent-routes.js';
 /**
  * Alert rules engine (§9).
  *
@@ -70,7 +71,6 @@ const PROVIDER_LABELS = {
 };
 
 const API_SURFACES = ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api'];
-const AGENT_SURFACES = ['codex-agent', 'claude-code-agent'];
 
 /**
  * @param {string} provider

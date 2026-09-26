@@ -1,3 +1,4 @@
+import { AGENT_ROUTES } from './agent-routes.js';
 import { createHash } from 'node:crypto';
 
 export const SEARCH_POLICIES = /** @type {const} */ (['off', 'auto', 'required', 'legacy']);
@@ -46,8 +47,7 @@ const ROUTE_CAPABILITIES = /** @type {const} */ ({
   'gemini-generate-content-v1': { surface: 'gemini-api', policies: ['off'] },
   'gemini-generate-content-google-search-v1': { surface: 'gemini-api', policies: ['auto'] },
   'perplexity-sonar-v1': { surface: 'perplexity-api', policies: ['legacy'] },
-  'codex-search-v1': { surface: 'codex-agent', policies: ['required'] },
-  'claude-code-search-v1': { surface: 'claude-code-agent', policies: ['required'] },
+  ...Object.fromEntries(AGENT_ROUTES.map((route) => [route.profile, { surface: route.id, policies: ['required'] }])),
 });
 
 /**

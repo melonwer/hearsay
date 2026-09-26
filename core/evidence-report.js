@@ -1,3 +1,4 @@
+import { isAgentSurface, AGENT_SURFACES } from './agent-routes.js';
 import { all, get, isoNow, run } from './db.js';
 import { normalizeObservedQuery, sourceGroupingUrl } from './measurement-contract.js';
 import { answerReview } from './interpretations.js';
@@ -83,7 +84,7 @@ function comparable(row) {
     && typeof row.text === 'string' && row.text.trim() !== ''
     && (row.answer_status === 'complete' || row.answer_status === null)
     && (row.search_policy !== 'required' || row.web_status === 'verified')
-    && (!['codex-agent', 'claude-code-agent'].includes(String(row.surface)) || row.web_status === 'verified');
+    && (!isAgentSurface(row.surface) || row.web_status === 'verified');
 }
 
 /** @param {Db} db @param {MeasurementSeries} series */

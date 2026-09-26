@@ -6,6 +6,9 @@
  * the small state transitions used by exploration/promotion and run finalisation.
  */
 
+import { AGENT_SURFACES, isAgentSurface, AGENT_ROUTES } from './agent-routes.js';
+export { AGENT_SURFACES } from './agent-routes.js';
+
 import { createHash } from 'node:crypto';
 
 import { get, isoNow, run, transaction } from './db.js';
@@ -23,17 +26,14 @@ export const SURFACES = /** @type {const} */ ([
   'anthropic-api',
   'gemini-api',
   'perplexity-api',
-  'codex-agent',
-  'claude-code-agent',
+  ...AGENT_SURFACES,
 ]);
-export const AGENT_SURFACES = /** @type {const} */ (['codex-agent', 'claude-code-agent']);
 export const SURFACE_LABELS = /** @type {const} */ ({
   'openai-api': 'OpenAI API',
   'anthropic-api': 'Anthropic API',
   'gemini-api': 'Gemini API',
   'perplexity-api': 'Perplexity API',
-  'codex-agent': 'Codex agent',
-  'claude-code-agent': 'Claude Code agent',
+  ...Object.fromEntries(AGENT_ROUTES.map((route) => [route.id, route.label])),
 });
 
 /** @param {string|null|undefined} surface @returns {string} */
@@ -230,7 +230,7 @@ function targetComparable(target) {
   const comparison = String(target.comparability_status ?? target.comparabilityStatus ?? '');
   if (targetStatus !== 'completed' || comparison !== 'comparable') return false;
   const surface = String(target.surface ?? '');
-  return !['codex-agent', 'claude-code-agent'].includes(surface) || String(target.web_status ?? target.webStatus ?? '') === 'verified';
+  return !isAgentSurface(surface) || String(target.web_status ?? target.webStatus ?? '') === 'verified';
 }
 
 /**

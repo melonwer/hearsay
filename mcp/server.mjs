@@ -4,6 +4,7 @@
  * stdout carries protocol messages ONLY; logs go to stderr. Data comes from a running
  * Hearsay over HTTP at HEARSAY_URL — this process holds no API keys and opens no DB.
  */
+import { AGENT_SURFACES } from '../core/agent-routes.js';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,12 +31,12 @@ const DAYS = { type: 'integer', minimum: 1, maximum: 365, description: 'Reportin
 const UTC_BOUNDARY = { type: 'string', description: 'UTC timestamp YYYY-MM-DDTHH:mm:ssZ; pass start and end together, with end exclusive' };
 const SURFACE = {
   type: 'string',
-  enum: ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api', 'codex-agent', 'claude-code-agent'],
+  enum: ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api', ...AGENT_SURFACES],
   description: 'Exact measurement surface; API and subscription-agent surfaces are never blended',
 };
 const SUBSCRIPTION_SURFACES = {
   type: 'array',
-  items: { type: 'string', enum: ['codex-agent', 'claude-code-agent'] },
+  items: { type: 'string', enum: [...AGENT_SURFACES] },
   minItems: 1,
 };
 const SUBSCRIPTION_LANE = { type: 'string', enum: ['tracking', 'exploration'], default: 'tracking' };
@@ -70,10 +71,28 @@ function query(args, keys, rename = {}) {
 /** @type {Tool[]} */
 const TOOLS = [
   {
+    name: 'hearsay_research_import',
+    description: 'Import a version-one standalone evidence bundle into the connected database. Validates references, sizes and revisions. Idempotent for identical content; external provenance stays separate from native measurements. Does not run providers or apply recommendations.',
+    inputSchema: obj({ bundle: { type: 'object', description: 'Complete version-one evidence.json object' } }, ['bundle']),
+    call: (a) => ({ method: 'POST', path: '/api/research/import', body: a.bundle }),
+  },
+  {
+    name: 'hearsay_research_list', readOnly: true,
+    description: 'List imported standalone research reports with external provenance, optionally filtered by app identity. No provider calls.',
+    inputSchema: obj({ app_id: { type: 'string' } }),
+    call: (a) => ({ method: 'GET', path: `/api/research${query(a, ['app_id'])}` }),
+  },
+  {
+    name: 'hearsay_research_get', readOnly: true,
+    description: 'Read imported evidence, report, competitors, recommendations and captured observations. Host reports cannot claim native runner verification.',
+    inputSchema: obj({ id: { type: 'integer', minimum: 1 } }, ['id']),
+    call: (a) => ({ method: 'GET', path: `/api/research/${encodeURIComponent(a.id)}` }),
+  },
+  {
     name: 'hearsay_status',
     readOnly: true,
     description:
-      'Check whether local Hearsay is running and configured: enabled API and signed-in agent routes, tracked brand/competitor/prompt counts, last measurement run, tracking schedule and collection health, and 30-day computed API usage cost or known subtotal. Call this first for AI visibility questions.',
+      'Check the optional connected Hearsay dashboard: enabled routes, tracked entities, latest run, schedules and API costs. Standalone skill research does not require this server or this tool.',
     inputSchema: obj({}),
     call: () => ({ method: 'GET', path: '/api/status' }),
   },

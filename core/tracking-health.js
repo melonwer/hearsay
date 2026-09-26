@@ -1,3 +1,4 @@
+import { AGENT_SURFACES_SQL, AGENT_SURFACES } from './agent-routes.js';
 import { all, get } from './db.js';
 import { subscriptionExecutionBudget } from './execution-budget.js';
 import { stableIdentity } from './measurement-contract.js';
@@ -33,14 +34,14 @@ function nextSubscriptionOccurrence(now, schedule) {
 
 /** @param {Db} db @param {'api'|'subscription'} kind */
 function lastObservation(db, kind) {
-  const condition = kind === 'api' ? "r.surface LIKE '%-api'" : "r.surface IN ('codex-agent','claude-code-agent')";
+  const condition = kind === 'api' ? "r.surface LIKE '%-api'" : `r.surface IN (${AGENT_SURFACES_SQL})`;
   const row = get(db, `SELECT MAX(r.created_at) AS observed_at
     FROM responses r JOIN runs ru ON ru.id = r.run_id
     WHERE ${condition} AND r.lane = 'tracking' AND r.target_status = 'completed'
       AND r.comparability_status = 'comparable' AND r.error IS NULL
       AND r.text IS NOT NULL AND trim(r.text) <> ''
       AND (r.answer_status IS NULL OR r.answer_status = 'complete')
-      AND (r.surface NOT IN ('codex-agent','claude-code-agent') OR r.web_status = 'verified')
+      AND (r.surface NOT IN (${AGENT_SURFACES_SQL}) OR r.web_status = 'verified')
       AND (r.search_policy IS NULL OR r.search_policy <> 'required' OR r.web_status = 'verified')
       AND ru.status IN ('done','partial')`);
   return row?.observed_at ? String(row.observed_at) : null;
@@ -86,14 +87,14 @@ export function trackingHealth({ db, config, now = new Date() }) {
   const schedule = getSubscriptionSchedule(db);
   const subscriptionEnabled = !config.demo && schedule !== null && config.subscriptionSurfaces.length > 0;
   const surfacesAvailable = schedule === null || schedule.surfaces.every((surface) => config.subscriptionSurfaces.includes(
-      /** @type {'codex-agent'|'claude-code-agent'} */ (surface)));
+      /** @type {string} */ (surface)));
   const subscriptionIssues = recentIssues(db, 'subscription');
   const apiIssues = recentIssues(db, 'api');
   const apiLast = lastObservation(db, 'api');
   const subscriptionLast = lastObservation(db, 'subscription');
   const profileCurrent = schedule === null || schedule.executionBudgetHash !== null &&
     stableIdentity(schedule.surfaces.map((surface) => subscriptionExecutionBudget(config,
-      /** @type {'codex-agent'|'claude-code-agent'} */ (surface)))) === schedule.executionBudgetHash;
+      /** @type {string} */ (surface)))) === schedule.executionBudgetHash;
   const apiFreshness = freshness(apiLast, apiIssues, now);
   const subscriptionFreshness = freshness(subscriptionLast, subscriptionIssues, now);
   const demoGuidance = 'Demo measurements are examples. Live providers and schedules are disabled in demo mode.';

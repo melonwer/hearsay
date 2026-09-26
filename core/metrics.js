@@ -19,6 +19,7 @@
  * different from the API?" bugs start.
  */
 
+import { AGENT_SURFACES_SQL, AGENT_SURFACES } from './agent-routes.js';
 import { all, get } from './db.js';
 import { summarizeComputedCosts } from './cost.js';
 import { stableIdentity } from './measurement-contract.js';
@@ -57,7 +58,7 @@ const DAY_MS = 86_400_000;
  */
 const PROVIDER_ORDER = ['openai', 'anthropic', 'gemini', 'perplexity'];
 const API_SURFACES = ['openai-api', 'anthropic-api', 'gemini-api', 'perplexity-api'];
-const SUBSCRIPTION_SURFACES = ['codex-agent', 'claude-code-agent'];
+const SUBSCRIPTION_SURFACES = AGENT_SURFACES;
 
 /**
  * Wilson 95% score interval (§7, embedded exactly).
@@ -238,7 +239,7 @@ export function listMeasurementSeries(dbOrOpts, maybeOpts) {
         AND r.text IS NOT NULL AND trim(r.text) <> ''
         AND (r.answer_status = 'complete' OR r.answer_status IS NULL)
         AND (COALESCE(r.search_policy, 'legacy') <> 'required' OR r.web_status = 'verified')
-        AND (r.surface NOT IN ('codex-agent','claude-code-agent') OR r.web_status = 'verified')
+        AND (r.surface NOT IN (${AGENT_SURFACES_SQL}) OR r.web_status = 'verified')
         THEN 1 ELSE 0 END) AS comparable_answers,
       SUM(CASE WHEN r.error IS NULL AND r.target_status = 'completed'
         AND r.text IS NOT NULL AND trim(r.text) <> ''
@@ -249,7 +250,7 @@ export function listMeasurementSeries(dbOrOpts, maybeOpts) {
         AND r.text IS NOT NULL AND trim(r.text) <> ''
         AND (r.answer_status = 'complete' OR r.answer_status IS NULL)
         AND (COALESCE(r.search_policy, 'legacy') <> 'required' OR r.web_status = 'verified')
-        AND (r.surface NOT IN ('codex-agent','claude-code-agent') OR r.web_status = 'verified')
+        AND (r.surface NOT IN (${AGENT_SURFACES_SQL}) OR r.web_status = 'verified')
         AND r.query_metadata_status = 'available'
         THEN 1 ELSE 0 END) AS query_metadata_answers,
       MAX(r.created_at) AS last_at

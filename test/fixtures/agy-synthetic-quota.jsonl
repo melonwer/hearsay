@@ -1,0 +1,3 @@
+{"event":"init","conversation_id":"synthetic-quota","init":{"cwd":"/synthetic/workspace","tools":["search_web"],"permission_mode":"request-review"},"_fixture":"Synthetic Antigravity 1.2.11 quota failure; not a live provider capture."}
+{"event":"step_update","step_update":{"conversation_id":"synthetic-quota","step_index":0,"state":"DONE","step_type":"tool","tool_name":"search_web","tool_info":{"name":"search_web","parameters":{"query":"project trackers for small teams"},"error":{"type":"RESOURCE_EXHAUSTED","message":"Quota exhausted"}}}}
+{"event":"result","result":{"conversation_id":"synthetic-quota","status":"ERROR","response":"","error":"RESOURCE_EXHAUSTED: quota exhausted","duration_seconds":0.5,"num_turns":1}}

@@ -25,7 +25,7 @@ import { activePromptCount, brandEntity, listEntities } from '../queries.js';
  * @property {boolean} hasKey at least one provider key is configured
  * @property {SetupProviderRow[]} providers
  * @property {number} samples
- * @property {('codex-agent'|'claude-code-agent')[]} subscriptionSurfaces configured subscription measurement surfaces
+ * @property {string[]} subscriptionSurfaces configured subscription measurement surfaces
  * @property {number} subscriptionSamples allowance-safe subscription samples per prompt
  * @property {number} calls calls the first run would make (§4.2)
  * @property {number} subscriptionCalls subscription targets in the first run
@@ -328,7 +328,11 @@ export function render(ctx, view) {
     return layout({ title: 'Setup', active: '/setup', ctx, body });
   }
   const panel = view.step === 1 ? stepBrand(view) : view.step === 2 ? stepPrompts(view) : stepGo(view);
-  const body = html`${steps(view.step)}${panel}
+  const body = html`<section class="card">
+    <h2>Start with your agent</h2>
+    <p>The standalone Hearsay skill can research an app and save a sourced report with your current agent's web access. It needs no server, API key or extra account.</p>
+    <p>Already have a saved report? <a href="/research">Import it into Research</a>. This wizard configures optional dashboard measurements.</p>
+  </section>${steps(view.step)}${panel}
     <p><a href="/">Skip setup</a></p>`;
   return layout({ title: 'Setup', active: '/setup', ctx, body });
 }

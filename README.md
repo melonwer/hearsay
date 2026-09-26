@@ -1,10 +1,37 @@
 # Hearsay
 
-**AI visibility tracker for humans and agents.** Start with the separately labeled
-**Codex agent** and **Claude Code agent** subscription runners when you already have a
-supported signed-in CLI. See how those agents talk about your brand versus competitors,
-with honest statistics, on your own machine. Optional direct API keys add OpenAI,
-Anthropic, Gemini and Perplexity coverage.
+Track an app, discover its competitors, investigate its visibility, and recommend improvements inside the agent you already use.
+
+Start with the [standalone skill](skill/SKILL.md) and a host agent with web access. The first sourced report needs no Hearsay server, Node installation, API credits or extra provider account. Save reports and drafts under `.hearsay/<app-id>/` in your workspace. Each app keeps its own history.
+
+## Start with the skill
+
+Copy the complete `skill/` directory into your host's skill directory, for example `.agents/skills/hearsay` for Codex or `.claude/skills/hearsay` for Claude Code. Keep the references, templates and schemas. Then ask:
+
+> Use Hearsay to track https://my-app.example, discover its competitors, investigate its visibility, and recommend improvements.
+
+Hearsay researches the product and discovers direct and adjacent competitors with supporting links. It proposes evidence-linked improvements and separate drafts. Applying a patch or publishing content requires your request.
+
+Independent trials start with six neutral buyer questions and one answer per selected route. Fresh measurement sessions receive only neutral questions. Without fresh sessions, the report is a research audit with no independent visibility rate. Repeats preserve questions and revisions, show exact sample counts, and explain comparison eligibility.
+
+See [installation, upgrades and removal](skill/references/installation.md). Build the portable archive, Codex plugin, Claude Code plugin and Gemini CLI extension from one canonical skill:
+
+```sh
+node scripts/build-bundles.js
+node scripts/verify-skill-discovery.js
+```
+
+The second command checks installation and discovery in isolated host configurations without inference. Archives live in `dist/` and contain no local database, credentials or reports.
+
+## Optional runtime and dashboard
+
+With Node 22.13 or newer, `node bin/hearsay.js --help` exposes agent discovery, bounded panel execution, saved report rendering, comparisons, schedules and import. `npm link` installs the local `hearsay` executable. These commands need no HTTP server. See the [CLI guide](skill/references/cli.md).
+
+Codex and Claude Code account routes use existing logins and keep results separate. Extra routes are selected explicitly; API keys are removed from account invocation environments. Costs and remaining allowance stay unknown unless reported. Antigravity `agy-cli` replaces the planned Gemini CLI measurement route. Its adapter extracts observed web searches from the event stream and preserves other tool activity in the trace. Tool inventories may differ between installations. The Gemini extension still installs the portable skill. Gemini API grounding remains a separate option.
+
+Import saved evidence through `hearsay import <evidence.json> --database /absolute/path/hearsay.db`, the dashboard's **Research** page, `POST /api/research/import`, or `hearsay_research_import`. List/detail operations are `GET /api/research`, `GET /api/research/:id`, `hearsay_research_list` and `hearsay_research_get`. Imports retain external provenance and never enter native measurement series. Research recommendations can be proposed in Opportunities, where acceptance requires a separate review.
+
+The dashboard and API workflows are optional. Their setup follows below.
 
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -66,7 +93,7 @@ Hearsay records a failed target without displaying its grounded content. Search 
 not report the number of billable calls. Perplexity Sonar's historical built-in
 search remains a legacy profile without verified query wording.
 
-## Install it by asking
+## Set up the optional dashboard by asking
 
 If you use a supported paid [Claude Code](https://claude.com/claude-code) account, paste
 this into Claude Code and it can do the whole setup:
@@ -149,7 +176,7 @@ fictional demo instead, set `HEARSAY_DEMO=1` in `.env` and restart. Demo data li
 without deleting either database.
 </details>
 
-## Or install it yourself
+## Run the optional dashboard yourself
 
 **First, install Node.js 22.13 or newer** from [nodejs.org](https://nodejs.org). Pick
 the installer for Mac or Windows and click through it. Hearsay needs that version
@@ -292,10 +319,7 @@ assistant uses its own model to talk to you. Reading results does not trigger a 
 Hearsay measurement run or optional provider-API spend; the assistant interaction
 follows that assistant client's own plan/usage.
 
-There is an optional skill that teaches an assistant the full playbook, including how to
-read the numbers honestly. Install it with
-`mkdir -p ~/.claude/skills && cp -r skill ~/.claude/skills/hearsay-ai-visibility`, where
-`~` means your home folder, or just ask your assistant to install `skill/SKILL.md`.
+The standalone [skill](skill/SKILL.md) is the default entry point. Load its [dashboard reference](skill/references/dashboard.md) when working with a connected instance.
 
 <p>
   <img src="docs/screenshot-light.png" alt="Hearsay demo dashboard, light theme, with tracking health, an exact series, and share of AI voice" width="49%">
@@ -342,12 +366,9 @@ not estimate their dollar cost here.
 ### What Hearsay refuses to build
 
 It will not give you a single blended "AI visibility score", because one number hides
-the uncertainty the tool exists to show you. It will not claim rank positions, because
-AI answers change between identical runs, so there is no stable "position 3" to report.
+the uncertainty the tool exists to show you. It records explicit ordered recommendation positions only within individual answers. These are not stable search rankings.
 It will not estimate how many people ask a given question, because nobody has that data,
-and a made-up figure would corrupt every number sitting next to it. And it will not
-write your content, because a measuring instrument that also produces the thing it
-measures cannot be trusted about either.
+and a made-up figure would corrupt every number sitting next to it. Research can produce proposed content or patches, separate from independent measurements. Applying or publishing them requires a user request.
 
 ## What it costs to run
 

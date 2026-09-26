@@ -19,6 +19,7 @@ import * as weeklyReviewPage from './weekly-review.js';
 import * as promptsPage from './prompts.js';
 import * as settingsPage from './settings.js';
 import * as setupPage from './setup.js';
+import * as researchPage from './research.js';
 import { listEntities, openAlertCount, latestRun } from '../queries.js';
 
 /**
@@ -58,6 +59,10 @@ export function shellCtx({ db, config, version }) {
  */
 export function registerPageRoutes(router, deps) {
   const { db, config } = deps;
+
+  router.add('GET', '/research', (ctx) => {
+    sendHtml(ctx.res, 200, researchPage.render(shellCtx(deps), researchPage.buildView(deps, ctx.url.searchParams)));
+  });
 
   router.add('GET', '/', (ctx) => {
     // First-run redirect (§11.8): no entities and demo mode off → the wizard.

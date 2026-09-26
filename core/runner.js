@@ -11,6 +11,7 @@
  * line on the dashboard honest. Only a run where *every* call failed is marked `failed`.
  */
 
+import { AGENT_SURFACES_SQL, AGENT_SURFACES } from './agent-routes.js';
 import { config as processConfig } from './config.js';
 import { all, get, isoNow, run as dbRun, transaction } from './db.js';
 import { priceUsage, summarizeComputedCosts } from './cost.js';
@@ -106,12 +107,12 @@ export function recoverStaleRuns(db, opts = {}) {
                 query_metadata_status = 'unavailable',
                 cost_status = 'unavailable',
                 web_status = CASE
-                  WHEN surface IN ('codex-agent', 'claude-code-agent') THEN 'failed'
+                  WHEN surface IN (${AGENT_SURFACES_SQL}) THEN 'failed'
                   ELSE COALESCE(web_status, 'not_applicable')
                 END,
                 safe_error_code = 'abandoned',
                 error = CASE
-                  WHEN surface IN ('codex-agent', 'claude-code-agent') THEN 'subscription:abandoned'
+                  WHEN surface IN (${AGENT_SURFACES_SQL}) THEN 'subscription:abandoned'
                   ELSE 'api:abandoned'
                 END
           WHERE run_id = ? AND target_status IN ('queued', 'running')`,

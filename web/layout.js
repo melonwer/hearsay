@@ -1,3 +1,4 @@
+import { AGENT_ROUTES, isAgentSurface } from '../core/agent-routes.js';
 /**
  * Page shell — nav, theme, and the `esc()` / `html` helpers (§10.1, §11.2).
  *
@@ -84,6 +85,7 @@ const NAV = [
   { href: '/evidence', label: 'Evidence' },
   { href: '/opportunities', label: 'Opportunities' },
   { href: '/weekly-review', label: 'Weekly review' },
+  { href: '/research', label: 'Research' },
   { href: '/prompts', label: 'Prompts' },
   { href: '/entities', label: 'Entities' },
   { href: '/alerts', label: 'Alerts' },
@@ -350,8 +352,7 @@ export const SURFACE_LABEL = /** @type {Record<string, string>} */ ({
   'anthropic-api': 'Anthropic API',
   'gemini-api': 'Gemini API',
   'perplexity-api': 'Perplexity API',
-  'codex-agent': 'Codex agent',
-  'claude-code-agent': 'Claude Code agent',
+  ...Object.fromEntries(AGENT_ROUTES.map((route) => [route.id, route.label])),
 });
 
 /** Consumer-product names, so the UI never shows a bare API slug. */
@@ -368,7 +369,7 @@ export const PROVIDER_LABEL = /** @type {Record<string, string>} */ ({
  * @returns {RawHtml}
  */
 export function providerBadge(provider, surface = null) {
-  const label = surface && (surface === 'codex-agent' || surface === 'claude-code-agent')
+  const label = surface && isAgentSurface(surface)
     ? SURFACE_LABEL[surface]
     : PROVIDER_LABEL[provider] ?? provider;
   return html`<span class="pbadge"

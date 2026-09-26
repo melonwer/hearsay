@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "app": {
+    "id": "example-app",
+    "name": "Example app",
+    "url": null,
+    "aliases": [],
+    "audience": "Describe the audience",
+    "useCases": [
+      "Describe a buyer job"
+    ]
+  },
+  "discoveryEvidence": [],
+  "panels": [
+    {
+      "id": "panel-1",
+      "createdAt": "2026-01-01T00:00:00Z",
+      "reviewedAt": null,
+      "questions": [],
+      "competitors": []
+    }
+  ],
+  "executions": [
+    {
+      "id": "execution-1",
+      "routes": [],
+      "samples": 1,
+      "timeoutMs": null,
+      "idleTimeoutMs": null,
+      "maxOutputBytes": null,
+      "envelope": "subscription-search-v1",
+      "language": "uncontrolled",
+      "location": "uncontrolled"
+    }
+  ],
+  "analyses": [
+    {
+      "id": "analysis-1",
+      "method": "hearsay-evidence-v1"
+    }
+  ],
+  "current": {
+    "panel": "panel-1",
+    "execution": "execution-1",
+    "analysis": "analysis-1"
+  },
+  "selectedRoutes": [],
+  "tracking": {
+    "timezone": null,
+    "schedule": null,
+    "targetCeiling": null
+  }
+}

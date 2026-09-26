@@ -11,8 +11,8 @@ import { DemoModeError } from './runner.js';
 import { analyzeResponse as defaultAnalyzeResponse, STANCE_REVISION } from './analyze.js';
 import { storeInterpretation } from './interpretations.js';
 import { discardArtifact } from './artifacts.js';
-import { CodexCliRunner, ClaudeCliRunner, SubscriptionAgentRunner } from './agent-runners.js';
-import { CLAUDE_SURFACE, CODEX_SURFACE } from './agent-profiles.js';
+import { createAgentRunner } from './agent-runners.js';
+import { AGENT_SURFACES, agentRoute } from './agent-routes.js';
 import { subscriptionExecutionBudget } from './execution-budget.js';
 import { benchmarkRevision, executionProfile, stableIdentity } from './measurement-contract.js';
 import { assertReviewedSelection } from './benchmark-draft.js';
@@ -24,7 +24,7 @@ import * as alertsModule from './alerts.js';
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('./config.js').Config} Config */
 
-const SURFACES = [CODEX_SURFACE, CLAUDE_SURFACE];
+const SURFACES = AGENT_SURFACES;
 const SURFACE_IDS = /** @type {string[]} */ (SURFACES);
 
 export class SubscriptionConfirmationError extends Error {
@@ -154,7 +154,7 @@ export function subscriptionPreview(options) {
   const prompts = selectPrompts(options.db, lane, options.promptIds);
   const perSurface = surfaces.map((surface) => ({ surface, prompts: prompts.length, samples, invocations: prompts.length * samples }));
   const executionBudgets = surfaces.map((surface) => subscriptionExecutionBudget(
-    options.config, /** @type {typeof CODEX_SURFACE|typeof CLAUDE_SURFACE} */ (surface),
+    options.config, /** @type {string} */ (surface),
   ));
   const quoteId = stableIdentity({
     kind: 'subscription-run-v1', lane, surfaces, prompts, samples,
@@ -274,7 +274,7 @@ function queueRun(options) {
       );
     }
     for (const surface of preview.surfaces) {
-      const provider = surface === CODEX_SURFACE ? 'openai' : 'anthropic';
+      const provider = agentRoute(surface).provider;
       for (const prompt of preview.prompts) {
         for (let sampleIdx = 0; sampleIdx < preview.samples; sampleIdx += 1) {
           const responseId = dbRun(
@@ -296,7 +296,7 @@ function queueRun(options) {
               prompt.promptOrigin,
             ],
           ).lastInsertRowid;
-          const profile = profiles.get(/** @type {typeof CODEX_SURFACE|typeof CLAUDE_SURFACE} */ (surface));
+          const profile = profiles.get(/** @type {string} */ (surface));
           if (!profile) throw new TypeError('Missing subscription execution profile');
           storeTargetDefinition(db, responseId, {
             profile, benchmark, analysisRevision: STANCE_REVISION,
@@ -566,10 +566,12 @@ export async function runSubscriptionPanel(options) {
     const processSurface = async (surface) => {
       const surfaceTargets = queued.targets.filter((target) => target.surface === surface);
       bySurface[surface] = { ok: 0, errors: 0, verified: 0, nonComparable: 0, cancelled: 0 };
-      const runner = runners[surface] ?? (surface === CODEX_SURFACE
-        ? new CodexCliRunner({ executable: options.config.subscription.codex.executable, dataDir: options.config.subscriptionDataDir, timeoutMs: options.config.subscriptionTimeoutMs, idleTimeoutMs: options.config.subscriptionIdleTimeoutMs, maxOutputBytes: options.config.subscriptionMaxOutputBytes })
-        : new ClaudeCliRunner({ executable: options.config.subscription.claudeCode.executable, dataDir: options.config.subscriptionDataDir, timeoutMs: options.config.subscriptionTimeoutMs, idleTimeoutMs: options.config.subscriptionIdleTimeoutMs, maxOutputBytes: options.config.subscriptionMaxOutputBytes }));
-      const artifactStore = runner instanceof SubscriptionAgentRunner ? runner.artifactStore : null;
+      const runner = runners[surface] ?? createAgentRunner(surface, {
+        executable: options.config.subscription[agentRoute(surface).key].executable,
+        dataDir: options.config.subscriptionDataDir, timeoutMs: options.config.subscriptionTimeoutMs,
+        idleTimeoutMs: options.config.subscriptionIdleTimeoutMs, maxOutputBytes: options.config.subscriptionMaxOutputBytes,
+      });
+      const artifactStore = 'artifactStore' in runner ? /** @type {import('./artifacts.js').ArtifactStore} */ (runner.artifactStore) : null;
       const onAbort = () => {
         cancellationRequested = true;
         runner.cancel?.();

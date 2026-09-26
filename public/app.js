@@ -865,3 +865,38 @@ initApiForms();
 initRowActions();
 initPromptPanelReview();
 initSuggest();
+
+function initResearch() {
+  for (const form of document.querySelectorAll('[data-research-import], [data-research-review]')) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = form.querySelector('[role="status"]');
+      const button = form.querySelector('button');
+      button.disabled = true;
+      try {
+        let result;
+        if (form.hasAttribute('data-research-import')) {
+          const file = form.querySelector('input[type="file"]').files[0];
+          if (!file || file.size > 8 * 1024 * 1024) throw new Error('Select an evidence.json file up to 8 MiB.');
+          const bundle = JSON.parse(await file.text());
+          result = await api('/api/research/import', 'POST', bundle);
+        } else {
+          const fields = new FormData(form);
+          result = await api(`/api/research/actions/${form.dataset.researchReview}/review`, 'POST', Object.fromEntries(fields));
+        }
+        if (!result.ok) throw new Error(result.data?.error?.message ?? 'Research request failed');
+        location.reload();
+      } catch (error) { status.textContent = error.message; button.disabled = false; }
+    });
+  }
+  for (const button of document.querySelectorAll('[data-research-propose]')) {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      const result = await api(`/api/research/${button.dataset.researchPropose}/propose`, 'POST', { action_id: button.dataset.actionId });
+      const status = button.parentElement.querySelector('[role="status"]');
+      status.textContent = result.ok ? 'Proposal saved. Review it in Opportunities before accepting.' : result.data?.error?.message ?? 'Proposal failed';
+      if (!result.ok) button.disabled = false;
+    });
+  }
+}
+initResearch();

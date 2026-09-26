@@ -83,9 +83,18 @@ function sensitiveKey(key) {
  */
 function redactString(value) {
   return String(value)
+    .replace(/(["']?(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|secret|authorization)["']?\s*[:=]\s*)["']?[^\s,"'\r\n}]+["']?/gi, '$1"[REDACTED]"')
     .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
     .replace(/\b(?:sk|pk|rk|m0)-[A-Za-z0-9_-]{8,}/g, '[REDACTED_TOKEN]')
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED_EMAIL]');
+}
+
+/** @param {string} text */
+export function redactCapturedOutput(text) {
+  return text.split(/\r?\n/).map((line) => {
+    try { return JSON.stringify(redactEvent(JSON.parse(line))); }
+    catch { return redactString(line); }
+  }).join('\n');
 }
 
 /**
@@ -103,7 +112,9 @@ export function redactEvent(value, depth = 0) {
   /** @type {Record<string, unknown>} */
   const out = {};
   for (const [key, item] of Object.entries(value)) {
-    out[key] = sensitiveKey(key) ? '[REDACTED]' : redactEvent(item, depth + 1);
+    const usageCount = /^(?:input_tokens|output_tokens|cached_input_tokens|cache_write_input_tokens|reasoning_output_tokens|cache_read_input_tokens|cache_creation_input_tokens|inputTokens|outputTokens)$/.test(key)
+      && typeof item === 'number' && Number.isFinite(item) && item >= 0;
+    out[key] = sensitiveKey(key) && !usageCount ? '[REDACTED]' : redactEvent(item, depth + 1);
   }
   return out;
 }

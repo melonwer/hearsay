@@ -11,6 +11,7 @@
  * endpoint answers 503 rather than 200 with an invented shape.
  */
 
+import { AGENT_SURFACES_SQL, AGENT_SURFACES } from '../../core/agent-routes.js';
 import { all, get, isoNow, run, transaction, getSetting, setSetting, SETTING_KEYS } from '../../core/db.js';
 import { estimateRunCost, PRICE_TABLE_VERSION } from '../../core/cost.js';
 import { apiExecutionBudget } from '../../core/execution-budget.js';
@@ -48,6 +49,8 @@ import { OutcomeError, recordOutcome, importOutcomeCsv, recordLedgerEntry,
   exportOutcomeCsv } from '../../core/outcomes.js';
 import { renderWeeklyReviewExport } from './weekly-review.js';
 import { trackingHealth } from '../../core/tracking-health.js';
+import { ResearchError } from '../../core/research-contract.js';
+import { importResearch, listResearch, getResearch, compareImportedResearch, proposeResearchAction, reviewResearchAction } from '../../core/research-store.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
 import {
@@ -816,7 +819,7 @@ function cancelSubscription({ db, config }, ctx) {
        FROM runs r
       WHERE r.id = ?
         AND r.trigger = 'manual'
-        AND EXISTS (SELECT 1 FROM responses s WHERE s.run_id = r.id AND s.surface IN ('codex-agent', 'claude-code-agent'))`,
+        AND EXISTS (SELECT 1 FROM responses s WHERE s.run_id = r.id AND s.surface IN (${AGENT_SURFACES_SQL}))`,
     [runId],
   );
   if (!row) throw new ApiError(404, 'not_found', 'No such subscription run');
@@ -1448,7 +1451,7 @@ function statusReport({ db, config, version }) {
         kind: isAgent ? 'subscription' : 'api',
         enabled: isAgent
           ? config.subscriptionSurfaces.includes(
-              /** @type {'codex-agent'|'claude-code-agent'} */ (surface),
+              /** @type {string} */ (surface),
             )
           : Boolean(provider?.enabled),
       };
@@ -1707,6 +1710,10 @@ function json(handler, okStatus = 200) {
       }
       sendJson(ctx.res, okStatus, data);
     } catch (err) {
+      if (err instanceof ResearchError) {
+        sendError(ctx, err.code.includes('conflict') ? 409 : err.code === 'not_found' ? 404 : 422, err.message, {}, err.code);
+        return;
+      }
       if (err instanceof ApiError) {
         sendError(ctx, err.status, err.message, {}, err.code);
         return;
@@ -1739,6 +1746,16 @@ function json(handler, okStatus = 200) {
  */
 export function registerApiRoutes(router, deps) {
   const { db } = deps;
+
+  router.add('POST', '/api/research/import', json((ctx) => importResearch(db, ctx.body)));
+  router.add('GET', '/api/research', json((ctx) => ({ runs: listResearch(db, ctx.url.searchParams.get('app_id')) })));
+  router.add('GET', '/api/research/:id', json((ctx) => getResearch(db, Number(ctx.params.id))));
+  router.add('GET', '/api/research/:id/compare', json((ctx) => compareImportedResearch(db, Number(ctx.url.searchParams.get('baseline')), Number(ctx.params.id))));
+  router.add('POST', '/api/research/:id/propose', json((ctx) => proposeResearchAction(db, Number(ctx.params.id), String(asObject(ctx.body).action_id ?? ''))));
+  router.add('POST', '/api/research/actions/:id/review', json((ctx) => {
+    const body = asObject(ctx.body);
+    return reviewResearchAction(db, Number(ctx.params.id), String(body.status ?? ''), String(body.reason ?? ''));
+  }));
 
   /** @param {import('../router.js').Ctx} ctx */
   const weeklySelection = (ctx) => buildWeeklyReview(db, {

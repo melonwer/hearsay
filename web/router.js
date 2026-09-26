@@ -198,6 +198,7 @@ function prefersJson(req, url) {
  * @returns {Promise<{ok: true, body: unknown}|{ok: false, status: number, message: string}>}
  */
 async function readBody(req) {
+  const maxBytes = String(req.url).split('?')[0] === '/api/research/import' ? 8 * MAX_BODY_BYTES : MAX_BODY_BYTES;
   const hasBody = req.headers['transfer-encoding'] !== undefined || Number(req.headers['content-length'] ?? 0) > 0;
   if (!hasBody) return { ok: true, body: {} };
 
@@ -216,17 +217,17 @@ async function readBody(req) {
   for await (const chunk of req) {
     const buf = /** @type {Buffer} */ (chunk);
     total += buf.length;
-    if (total > MAX_BODY_BYTES) {
+    if (total > maxBytes) {
       // Keep draining, but stop buffering. Destroying the request here would take the
       // socket with it and the client would see a hang-up instead of the 413.
       tooLarge = true;
       chunks.length = 0;
-      if (total > MAX_BODY_BYTES * 8) break;
+      if (total > maxBytes * 8) break;
       continue;
     }
     chunks.push(buf);
   }
-  if (tooLarge) return { ok: false, status: 413, message: 'Request body exceeds the 1 MB limit' };
+  if (tooLarge) return { ok: false, status: 413, message: `Request body exceeds the ${maxBytes / MAX_BODY_BYTES} MB limit` };
   const text = Buffer.concat(chunks).toString('utf8');
   if (text.trim() === '') return { ok: true, body: {} };
   try {
