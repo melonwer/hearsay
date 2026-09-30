@@ -18,6 +18,7 @@
     "run-panel": "node scripts/run-panel.js",
     "suggest-prompts": "node scripts/suggest-prompts.js",
     "typecheck": "tsc -p jsconfig.json --noEmit",
+    "check:runtime-deps": "node scripts/check-runtime-deps.js",
     "build:bundles": "node scripts/build-bundles.js",
     "verify:bundles": "node scripts/verify-skill-discovery.js"
   }

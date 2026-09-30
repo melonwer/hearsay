@@ -41,7 +41,7 @@ jobs:
       # zero-dependency guarantee (§19.6 #1). @types/node is what makes `node:` imports
       # resolvable for checkJs.
       - name: Install dev tooling
-        run: npm install --no-save typescript@^5 @types/node@^24
+        run: npm install --no-save --package-lock=false typescript@5.9.3 @types/node@24.19.0 playwright@1.62.0
       - name: Typecheck
         run: npx tsc -p jsconfig.json --noEmit
 
@@ -62,13 +62,9 @@ jobs:
             }
             console.log("no dependency fields declared");
           '
-      - name: 'every import is a node: builtin or a relative path'
-        run: |
-          if grep -rnE "(from|import|require\()[[:space:]]*['\"]" \
-               --include='*.js' --include='*.mjs' \
-               core web mcp scripts test server.js \
-             | grep -vE "['\"](node:|\./|\.\./)"; then
-            echo "::error::found a non-builtin, non-relative import"
-            exit 1
-          fi
-          echo "all imports are node: builtins or relative paths"
+      - name: Install source parser for development checks
+        run: npm install --no-save --package-lock=false typescript@5.9.3
+      - name: Verify the dependency checker
+        run: node --test scripts/check-runtime-deps.cases.mjs
+      - name: Runtime imports use builtins or repository files
+        run: npm run check:runtime-deps

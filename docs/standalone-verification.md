@@ -4,6 +4,8 @@ Verified locally on 2026-09-26. The canonical skill, four bundle generators, opt
 
 ## Reproduce the checks
 
+Install the pinned development tools from [Development checks](development.md) before type checking. The application and unit tests need no package installation.
+
 ```sh
 npm test
 npm run typecheck
