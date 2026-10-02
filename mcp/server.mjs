@@ -89,6 +89,24 @@ const TOOLS = [
     call: (a) => ({ method: 'GET', path: `/api/research/${encodeURIComponent(a.id)}` }),
   },
   {
+    name: 'hearsay_study_import',
+    description: 'Import an agent-led website study snapshot as immutable external provenance. No provider calls, page changes, or native measurement series are created.',
+    inputSchema: obj({ snapshot: { type: 'object', description: 'Complete saved study snapshot' } }, ['snapshot']),
+    call: (a) => ({ method: 'POST', path: '/api/studies/import', body: a.snapshot }),
+  },
+  {
+    name: 'hearsay_study_list', readOnly: true,
+    description: 'List immutable externally imported website studies, optionally filtered by app identity.',
+    inputSchema: obj({ app_id: { type: 'string' } }),
+    call: (a) => ({ method: 'GET', path: `/api/studies${query(a, ['app_id'])}` }),
+  },
+  {
+    name: 'hearsay_study_get', readOnly: true,
+    description: 'Read one imported study snapshot and its deterministic factual report. Search presence, revision exposure, recommendations and business outcomes remain separate.',
+    inputSchema: obj({ id: { type: 'integer', minimum: 1 } }, ['id']),
+    call: (a) => ({ method: 'GET', path: `/api/studies/${encodeURIComponent(a.id)}` }),
+  },
+  {
     name: 'hearsay_status',
     readOnly: true,
     description:

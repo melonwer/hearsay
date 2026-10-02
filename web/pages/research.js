@@ -1,4 +1,5 @@
 import { listResearch, getResearch, compareImportedResearch, listResearchActions } from '../../core/research-store.js';
+import { listStudySnapshots, getStudySnapshot } from '../../core/study-store.js';
 import { html, layout } from '../layout.js';
 /** @typedef {import('../../core/research-contract.js').ResearchRecord} Record */
 
@@ -24,9 +25,12 @@ export function buildView({ db }, params) {
   const id = Number(params.get('id'));
   const baseline = Number(params.get('baseline'));
   const runs = listResearch(db, params.get('app_id'));
+  const studies = listStudySnapshots(db, params.get('app_id'));
+  const studyId = Number(params.get('study_id'));
+  const study = Number.isInteger(studyId) && studies.some((item) => item.id === studyId) ? getStudySnapshot(db, studyId) : null;
   const selected = runs.some((row) => Number(row.id) === id) ? getResearch(db, id) : null;
   const comparison = selected && runs.some((row) => Number(row.id) === baseline) ? compareImportedResearch(db, baseline, id) : null;
-  return { runs, selected, comparison, actions: listResearchActions(db) };
+  return { runs, selected, comparison, actions: listResearchActions(db), studies, study };
 }
 /** @param {ReturnType<typeof listResearchActions>} actions */
 export function researchActionCards(actions) {
@@ -45,6 +49,9 @@ export function render(ctx, view) {
   return layout({ title: 'Research', active: '/research', ctx, body: html`
     <p>Standalone reports retain their original evidence and external provenance. Importing them does not add native provider measurements.</p>
     <form data-research-import class="card"><label>Import evidence.json <input type="file" name="bundle" accept="application/json,.json" required></label><button type="submit">Import report</button><p role="status"></p></form>
+    <form data-study-import class="card"><label>Import saved study snapshot <input type="file" name="snapshot" accept="application/json,.json" required></label><button type="submit">Import study</button><p role="status"></p></form>
+    <section class="card"><h2>Standalone studies</h2>${view.studies.length ? view.studies.map((study) => html`<p><a href="/research?study_id=${study.id}">${study.studyId}</a> · ${study.appId} · external provenance · ${study.importedAt}</p>`) : html`<p>No imported standalone studies.</p>`}</section>
+    ${view.study ? html`<section class="card"><h2>Study ${view.study.studyId}</h2><p>External provenance · immutable snapshot · ${view.study.importedAt}</p><p>${view.study.report.summary.searchRequests} search requests · ${view.study.report.summary.recommendationObservations} independent recommendation observations · ${view.study.report.summary.businessComparisons} business comparisons.</p><details><summary>Report</summary><pre class="research-pre">${view.study.report.markdown}</pre></details></section>` : ''}
     <div class="research-grid"><section><h2>Saved reports</h2>${view.runs.length ? view.runs.map((run) => html`<article class="card"><a href="/research?id=${run.id}">${run.name} · ${run.run_id}</a><p>${run.mode} · ${run.observed_at}</p></article>`) : html`<p>No imported reports. Use the standalone skill to research your app, then import its evidence.json.</p>`}</section>
     ${selected ? html`<section><h2>${selected.bundle.app.name}</h2><p>External provenance · ${selected.bundle.mode} · imported ${selected.importedAt}</p>
       <form method="get" action="/research"><input type="hidden" name="id" value="${selected.id}"><label>Compare baseline <select name="baseline">${view.runs.filter((run) => run.app_id === selected.bundle.app.id && Number(run.id) !== selected.id).map((run) => html`<option value="${run.id}">${run.run_id}</option>`)}</select></label><button>Compare</button></form>

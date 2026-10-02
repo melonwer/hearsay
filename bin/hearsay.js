@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { discoverAgents, previewResearchRun, runResearchPanel, renderSavedReport, compareSavedRuns, readJson } from '../core/research-workspace.js';
 import { previewResearchSchedule, enableResearchSchedule, disableResearchSchedule, readResearchSchedule, researchScheduleTick } from '../core/research-schedule.js';
 import { ResearchError } from '../core/research-contract.js';
+import { studyCommand, STUDY_HELP } from '../core/study-cli.js';
 
 const HELP = `Hearsay: standalone research helpers and optional account measurements
 
@@ -25,17 +26,19 @@ Use the host's native scheduler when available. --install-cron explicitly instal
 the reviewed fallback on Linux/macOS. No new providers are added automatically.
 Exit codes: 0 success; 2 invalid input; 3 consent/selection; 4 auth/profile;
 5 execution or partial failure; 6 lock/conflict; 7 unavailable scheduler.
-`;
+` + STUDY_HELP;
 
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' }, project: { type: 'string' }, execute: { type: 'boolean' }, confirm: { type: 'string' },
     run: { type: 'string' }, baseline: { type: 'string' }, database: { type: 'string' }, at: { type: 'string' }, timezone: { type: 'string' }, ceiling: { type: 'string' }, 'install-cron': { type: 'boolean' },
+    study: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' }, author: { type: 'string' }, url: { type: 'string' }, source: { type: 'string' }, change: { type: 'string' }, reason: { type: 'string' }, 'account-directory': { type: 'string' },
   } });
   if (values.help || !positionals.length) { process.stdout.write(HELP); return; }
   const [command, action] = positionals;
   let result;
-  if (command === 'agents' && action === 'list') result = { agents: await discoverAgents() };
+  if (command === 'study') result = await studyCommand(action, values);
+  else if (command === 'agents' && action === 'list') result = { agents: await discoverAgents() };
   else if (command === 'import') {
     if (!action || !values.database || resolve(values.database) !== values.database) throw new ResearchError('invalid_arguments', 'Import requires an evidence file and explicit absolute --database path');
     const { openDb } = await import('../core/db.js');

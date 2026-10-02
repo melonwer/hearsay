@@ -103,16 +103,18 @@ test('mcp: initialize handshake, ping, unknown method, notification silence', as
   await backend.close();
 });
 
-test('mcp tools/list: subscription surfaces and exploration tools have schemas and read-only annotations', async () => {
+test('mcp tools/list: subscription surfaces and exploration tools have schemas and read-only annotations', async (t) => {
   const backend = await stubBackend({});
   const mcp = startMcp(backend.url);
+  t.after(async () => { mcp.kill(); await backend.close(); });
   await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
   const list = await rpc(mcp, 'tools/list', {}, 2);
   const tools = list.result.tools;
-  assert.equal(tools.length, 38);
+  assert.equal(tools.length, 41);
   const names = tools.map((/** @type {*} */ t) => t.name);
   for (const name of [
     'hearsay_research_import', 'hearsay_research_list', 'hearsay_research_get',
+    'hearsay_study_import', 'hearsay_study_list', 'hearsay_study_get',
     'hearsay_status', 'hearsay_summary', 'hearsay_series_list', 'hearsay_series_summary',
     'hearsay_series_export', 'hearsay_intent_evidence', 'hearsay_answer_evidence',
     'hearsay_opportunities', 'hearsay_opportunity', 'hearsay_intervention_comparison',
@@ -141,12 +143,10 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
     'hearsay_research_get', 'hearsay_research_list',
     'hearsay_review_benchmark_draft', 'hearsay_run_status', 'hearsay_series_export',
     'hearsay_series_list', 'hearsay_series_summary', 'hearsay_stance_rate',
-    'hearsay_status', 'hearsay_subscription_preview', 'hearsay_summary',
+    'hearsay_status', 'hearsay_study_get', 'hearsay_study_list', 'hearsay_subscription_preview', 'hearsay_summary',
     'hearsay_weekly_review',
   ]);
   assert.equal(tools.find((/** @type {*} */ t) => t.name === 'hearsay_ack_alert').inputSchema.required?.includes('id'), true);
-  mcp.kill();
-  await backend.close();
 });
 
 test('mcp tools/call: happy path, param mapping, error mapping, unreachable', async () => {

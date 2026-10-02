@@ -90,6 +90,7 @@ function nextDate(date) { const value = new Date(`${date}T12:00:00Z`); value.set
 export async function researchScheduleTick(directory, options = {}) {
   const root = resolve(directory);
   const schedule = readResearchSchedule(root);
+  if (schedule?.studyManaged) return { status: 'study_managed', studyId: schedule.studyId, command: 'Use study tick to enforce its occurrence, duration and credit limits' };
   if (!schedule?.enabled) return { status: 'disabled' };
   const now = options.now ?? new Date();
   const today = localDateInZone(now, schedule.timezone);

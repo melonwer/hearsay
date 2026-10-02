@@ -1,14 +1,18 @@
 # Hearsay
 
-Track an app, discover its competitors, investigate its visibility, and recommend improvements inside the agent you already use.
+A free AI visibility checker, run by the agent you already use.
 
-Start with the [standalone skill](skill/SKILL.md) and a host agent with web access. The first sourced report needs no Hearsay server, Node installation, API credits or extra provider account. Save reports and drafts under `.hearsay/<app-id>/` in your workspace. Each app keeps its own history.
+Give Hearsay your website. Your agent proposes buyer angles, saves a baseline, suggests a page change, and follows the results. Approve its plan or adjust the questions, schedule, and limits yourself. Page versions, answers, decisions, and reports stay in `.hearsay/<app-id>/` so your agent can resume later.
 
-## Start with the skill
+Optional [Tavily search](https://docs.tavily.com/documentation/api-credits) can use its 1,000 free monthly credits. Six basic searches a day use 180 credits over 30 days, including the baseline, with a proposed 20-credit diagnostic allowance. Your AI assistant's usage follows its own plan. Hearsay reports selected search and AI-agent observations; lead or sales comparisons use the business records you supply. Pricing checked October 2, 2026.
 
-Copy the complete `skill/` directory into your host's skill directory, for example `.agents/skills/hearsay` for Codex or `.claude/skills/hearsay` for Claude Code. Keep the references, templates and schemas. Then ask:
+## Start with your assistant
 
-> Use Hearsay to track https://my-app.example, discover its competitors, investigate its visibility, and recommend improvements.
+> Install the Hearsay skill from https://github.com/melonwer/hearsay. Research https://my-app.example and propose a website study to improve qualified leads. Recommend buyer angles, an unchanged comparison page, questions, daily collection, a review date, and usage limits. Offer optional Tavily basic search within 200 credits for 30 collection days. Save page version 1 and show me the actual plan before enabling collection. Keep an evidence-linked history, analyze each collection, and propose one focused change for my approval.
+
+The agent chooses defaults and you can edit them. The first review can happen after one day; judging leads or sales depends on exposure, traffic, and supplied outcomes. Changing a page does not make new text immediately available to search-backed agents. See [the study workflow](skill/references/studies.md).
+
+For manual installation, copy the complete `skill/` directory into your host's skill directory, for example `.agents/skills/hearsay` for Codex or `.claude/skills/hearsay` for Claude Code. Keep the references, templates, and schemas. Initial host research needs no Hearsay server, Node installation, API credits, or extra account.
 
 Hearsay researches the product and discovers direct and adjacent competitors with supporting links. It proposes evidence-linked improvements and separate drafts. Applying a patch or publishing content requires your request.
 
@@ -25,7 +29,7 @@ The second command checks installation and discovery in isolated host configurat
 
 ## Optional runtime and dashboard
 
-With Node 22.13 or newer, `node bin/hearsay.js --help` exposes agent discovery, bounded panel execution, saved report rendering, comparisons, schedules and import. `npm link` installs the local `hearsay` executable. These commands need no HTTP server. See the [CLI guide](skill/references/cli.md).
+With Node 22.13 or newer, `node bin/hearsay.js --help` exposes agent discovery, bounded panel execution, website study history, optional Tavily collection, outcome imports, saved reports, and schedules. `npm link` installs the local `hearsay` executable. These commands need no HTTP server. See the [CLI guide](skill/references/cli.md) and [study commands](skill/references/studies.md). Runtime collection marks assistant analysis due. Automatic analysis requires a connected host agent task; an approved configuration alone does not install one. Tavily strict free mode also requires a provider limit that prevents paid overage.
 
 Codex and Claude Code account routes use existing logins and keep results separate. Extra routes are selected explicitly; API keys are removed from account invocation environments. Costs and remaining allowance stay unknown unless reported. Antigravity `agy-cli` replaces the planned Gemini CLI measurement route. Its adapter extracts observed web searches from the event stream and preserves other tool activity in the trace. Tool inventories may differ between installations. The Gemini extension still installs the portable skill. Gemini API grounding remains a separate option.
 
