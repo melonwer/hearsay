@@ -754,6 +754,26 @@ export const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'research evidence is immutable'); END;
     `,
   },
+  {
+    version: 17,
+    sql: `
+      CREATE TABLE study_imports (
+        id INTEGER PRIMARY KEY,
+        study_id TEXT NOT NULL,
+        app_id TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
+        imported_at TEXT NOT NULL,
+        provenance TEXT NOT NULL DEFAULT 'external',
+        UNIQUE(study_id, content_hash)
+      );
+      CREATE INDEX idx_study_imports_app ON study_imports(app_id, imported_at);
+      CREATE TRIGGER study_imports_no_update BEFORE UPDATE ON study_imports
+        BEGIN SELECT RAISE(ABORT, 'study imports are immutable'); END;
+      CREATE TRIGGER study_imports_no_delete BEFORE DELETE ON study_imports
+        BEGIN SELECT RAISE(ABORT, 'study imports are immutable'); END;
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */

@@ -15,6 +15,17 @@ for (let index = 0; index < argv.length; index += 2) {
   assert.ok(['--dist', '--host'].includes(argv[index]) && argv[index + 1] && !argv[index + 1].startsWith('--'), 'Expected --dist <directory> or --host <host>. Use --help for usage.');
 }
 const distribution = resolve(argv.includes('--dist') ? argv[argv.indexOf('--dist') + 1] : join(repository, 'dist'));
+for (const target of ['portable', 'codex', 'claude', 'gemini']) {
+  const base = join(distribution, target, 'hearsay', ...(target === 'portable' ? [] : ['skills', 'hearsay']));
+  const entry = readFileSync(join(base, 'SKILL.md'), 'utf8');
+  assert.ok(entry.includes('references/studies.md'), `${target} entry does not discover the study workflow`);
+  assert.ok(readFileSync(join(base, 'references', 'studies.md'), 'utf8').includes('Analyze each run'), `${target} study analysis guidance is missing`);
+  const template = JSON.parse(readFileSync(join(base, 'templates', 'study.json'), 'utf8'));
+  assert.equal(template.collection.occurrences, 30);
+  assert.equal(template.tavily.searchDepth, 'basic');
+  assert.equal(template.tavily.enabled, false);
+  assert.equal(template.tavily.allowance, 0);
+}
 const selected = argv.includes('--host') ? [argv[argv.indexOf('--host') + 1]] : ['codex', 'claude', 'gemini'];
 assert.ok(selected.every((host) => ['codex', 'claude', 'gemini'].includes(host)), 'Supported hosts: codex, claude, gemini');
 const temporary = mkdtempSync(join(tmpdir(), 'hearsay-skill-discovery-'));

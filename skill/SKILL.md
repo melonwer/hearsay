@@ -1,11 +1,13 @@
 ---
 name: hearsay
-description: Research an app's visibility in AI recommendations, discover competitors, produce sourced improvement reports, and repeat a saved panel. Uses the current agent's web tools; extra CLIs and the dashboard are optional.
+description: Run an editable website study with the current AI agent. Propose buyer angles, save page versions, collect optional bounded Tavily search and isolated AI recommendations, review business outcomes, and keep evidence-linked history. Extra CLIs and the dashboard are optional.
 ---
 
 # Hearsay
 
 Start with an app URL or repository context. Use the current host agent and available web tools. A request to research the app authorizes initial research. Do not require Node, SQLite, MCP, a server, another account or API credits.
+
+For ongoing website improvement, read [website studies](references/studies.md) first. Inspect the product, generate and rank sourced buyer angles, and propose one editable plan. The founder approves the actual collection scope or suggests changes. Preserve page versions, occurrences, analyses, change proposals, decisions, outcomes, and reviews. Run the approved routine work and report the next action. A collector alone leaves assistant analysis due.
 
 Save work in the workspace at `.hearsay/<app-id>/`. Use a stable app slug and check saved identity before reusing it. Keep apps and histories separate. Read [the evidence contract](references/evidence.md) and copy [project.json](templates/project.json) and [evidence.json](templates/evidence.json). Templates are not research evidence.
 

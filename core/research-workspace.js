@@ -166,7 +166,7 @@ function captureResult(bundle, sample, result) {
   sample.usage.outputTokens = result.usage?.outputTokens ?? null;
 }
 
-/** @param {string} directory @param {{execute?:boolean,confirm?:string,signal?:AbortSignal,preview?:Awaited<ReturnType<typeof previewResearchRun>>,runnerFactory?:(id:string,options:any)=>any,runId?:string}} [options] */
+/** @param {string} directory @param {{execute?:boolean,confirm?:string,signal?:AbortSignal,preview?:Awaited<ReturnType<typeof previewResearchRun>>,runnerFactory?:(id:string,options:any)=>any,runId?:string,studyApprovalId?:string}} [options] */
 export async function runResearchPanel(directory, options = {}) {
   const root = resolve(directory);
   const preview = options.preview ?? await previewResearchRun(root);
@@ -180,6 +180,7 @@ export async function runResearchPanel(directory, options = {}) {
   const consentPath = join(root, 'consent.json');
   if (options.confirm === quoteId) writeJson(consentPath, { quoteId, targetCeiling: preview.targetCount, approvedAt: new Date().toISOString() });
   const consent = existsSync(consentPath) ? readJson(consentPath) : null;
+  if (consent?.studyApprovalId && consent.studyApprovalId !== options.studyApprovalId) throw new ResearchError('study_coordinator_required', 'Run this approved study through its coordinator to enforce collection limits');
   if (consent?.quoteId !== quoteId || consent?.targetCeiling < preview.targetCount) throw new ResearchError('consent_required', `Review the preview and confirm quote ${quoteId}`);
   const release = acquireResearchLock(root, preview.maxDurationMs);
   const controller = new AbortController();

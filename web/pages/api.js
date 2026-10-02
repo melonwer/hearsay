@@ -50,6 +50,7 @@ import { OutcomeError, recordOutcome, importOutcomeCsv, recordLedgerEntry,
 import { renderWeeklyReviewExport } from './weekly-review.js';
 import { trackingHealth } from '../../core/tracking-health.js';
 import { ResearchError } from '../../core/research-contract.js';
+import { StudyStoreError, importStudySnapshot, listStudySnapshots, getStudySnapshot } from '../../core/study-store.js';
 import { importResearch, listResearch, getResearch, compareImportedResearch, proposeResearchAction, reviewResearchAction } from '../../core/research-store.js';
 import { listMeasurementSeries, resolveMeasurementSeries, stanceRecommendationRate } from '../../core/metrics.js';
 import { PROVIDER_IDS } from '../../core/config.js';
@@ -1710,6 +1711,10 @@ function json(handler, okStatus = 200) {
       }
       sendJson(ctx.res, okStatus, data);
     } catch (err) {
+      if (err instanceof StudyStoreError) {
+        sendError(ctx, err.code === 'not_found' ? 404 : err.code.includes('conflict') || err.code.includes('immutable') ? 409 : 422, err.message, {}, err.code);
+        return;
+      }
       if (err instanceof ResearchError) {
         sendError(ctx, err.code.includes('conflict') ? 409 : err.code === 'not_found' ? 404 : 422, err.message, {}, err.code);
         return;
@@ -1748,6 +1753,10 @@ export function registerApiRoutes(router, deps) {
   const { db } = deps;
 
   router.add('POST', '/api/research/import', json((ctx) => importResearch(db, ctx.body)));
+  router.add('POST', '/api/studies/import', json((ctx) => importStudySnapshot(db, ctx.body)));
+  router.add('POST', '/api/study/import', json((ctx) => importStudySnapshot(db, ctx.body)));
+  router.add('GET', '/api/studies', json((ctx) => ({ studies: listStudySnapshots(db, ctx.url.searchParams.get('app_id')) })));
+  router.add('GET', '/api/studies/:id', json((ctx) => getStudySnapshot(db, Number(ctx.params.id))));
   router.add('GET', '/api/research', json((ctx) => ({ runs: listResearch(db, ctx.url.searchParams.get('app_id')) })));
   router.add('GET', '/api/research/:id', json((ctx) => getResearch(db, Number(ctx.params.id))));
   router.add('GET', '/api/research/:id/compare', json((ctx) => compareImportedResearch(db, Number(ctx.url.searchParams.get('baseline')), Number(ctx.params.id))));

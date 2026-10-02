@@ -1,6 +1,6 @@
 # Agent-led website studies
 
-Status: draft for written review. Product implementation has not started.
+Status: approved for implementation on 2026-10-02. Delivery and verification are tracked in `../plans/2026-10-02-agent-led-website-studies.md`.
 
 Source reviewed: Hearsay `390a76f`. GitHub `main` was checked directly and points to the same product revision. The existing question, exploration, provider, and repeat workflows are pushed. This document describes their proposed extension.
 

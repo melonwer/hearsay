@@ -867,7 +867,7 @@ initPromptPanelReview();
 initSuggest();
 
 function initResearch() {
-  for (const form of document.querySelectorAll('[data-research-import], [data-research-review]')) {
+  for (const form of document.querySelectorAll('[data-research-import], [data-study-import], [data-research-review]')) {
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const status = form.querySelector('[role="status"]');
@@ -875,11 +875,11 @@ function initResearch() {
       button.disabled = true;
       try {
         let result;
-        if (form.hasAttribute('data-research-import')) {
+        if (form.hasAttribute('data-research-import') || form.hasAttribute('data-study-import')) {
           const file = form.querySelector('input[type="file"]').files[0];
-          if (!file || file.size > 8 * 1024 * 1024) throw new Error('Select an evidence.json file up to 8 MiB.');
+          if (!file || file.size > 8 * 1024 * 1024) throw new Error('Select a JSON snapshot up to 8 MiB.');
           const bundle = JSON.parse(await file.text());
-          result = await api('/api/research/import', 'POST', bundle);
+          result = await api(form.hasAttribute('data-study-import') ? '/api/studies/import' : '/api/research/import', 'POST', bundle);
         } else {
           const fields = new FormData(form);
           result = await api(`/api/research/actions/${form.dataset.researchReview}/review`, 'POST', Object.fromEntries(fields));

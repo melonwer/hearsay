@@ -46,6 +46,8 @@ test('all four installable bundles contain the canonical skill and self-containe
   const canonicalFiles = files(canonical);
   assert.ok(canonicalFiles.includes('SKILL.md'));
   assert.ok(canonicalFiles.includes(join('schemas', 'evidence.schema.json')));
+  assert.ok(canonicalFiles.includes(join('references', 'studies.md')));
+  assert.ok(canonicalFiles.includes(join('templates', 'study.json')));
   const archives = readdirSync(output).filter((file) => file.endsWith('.tar.gz'));
   assert.equal(archives.length, 4);
 
@@ -58,7 +60,7 @@ test('all four installable bundles contain the canonical skill and self-containe
     }
     checkResources(bundle);
     for (const file of files(bundle)) {
-      assert.doesNotMatch(file, /(^|[/\\])(?:\.hearsay|\.git|node_modules|runs|drafts|credentials)(?:[/\\]|$)/i);
+      assert.doesNotMatch(file, /(^|[/\\])(?:\.hearsay|\.git|node_modules|runs|drafts|credentials|pages|captures|histories|studies|search-runs)(?:[/\\]|$)/i);
       assert.doesNotMatch(file, /(?:\.db(?:-[\w]+)?|\.sqlite(?:3)?|\.env(?:\.[\w]+)?|auth\.json|oauth_creds\.json|trace\.jsonl)$/i);
       assert.doesNotMatch(readFileSync(join(bundle, file), 'utf8'), /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/);
     }
