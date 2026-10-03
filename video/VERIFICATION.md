@@ -28,3 +28,9 @@ All 112 frames decode without errors. A browser check confirmed automatic animat
 On 2026-10-03, the [browser player](https://melonwer.github.io/hearsay/) was published through GitHub Pages from `main`'s `docs/` directory. The README's animated preview and full-film link open this player. It uses the existing MP4 and poster, native video controls, and inline mobile playback.
 
 Fresh public-browser verification confirmed playback advances with unmuted audio and decoded AAC samples, zero download prompts or page errors, and no horizontal overflow at 390px. The page requests no MP4 before Play. GitHub Pages serves the MP4 as `video/mp4` and returns HTTP 206 for byte-range requests, supporting playback and seeking without saving the file. Detailed local and public receipts are retained in `out/qa/browser-player/`.
+
+## Player page overview
+
+The page now presents a short product introduction, the film, and the question → evidence → next-step workflow, with a prominent Return to Repo link and the assistant quickstart. Its design follows the film's light background and blue accents. The new opening poster is a 35 KB WebP extracted from the existing film; the original poster and MP4 remain preserved.
+
+Desktop and mobile screenshots, playback checks, and link verification are retained in `out/qa/page-polish/`. Layout checks cover 320px and 390px widths, and the player retains its native controls, unmuted audio, and no video loading before Play.

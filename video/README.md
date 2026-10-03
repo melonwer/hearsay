@@ -22,7 +22,7 @@ The delivered film is [docs/hearsay-launch.mp4](../docs/hearsay-launch.mp4), wit
 
 GitHub strips HTML video tags from README content. The README instead embeds `docs/hearsay-preview.gif`, a silent 14-second loop of the opening story at 640×360 and 8fps. Clicking it opens the [browser player](https://melonwer.github.io/hearsay/) for the full film with sound. `npm run preview:gif` regenerates the GIF from the delivered MP4. Viewer animation settings can pause it.
 
-The browser player is `docs/index.html`. GitHub Pages serves the `docs/` directory on `main`; `.nojekyll` keeps it a plain static site. The player uses native video controls, supports inline mobile playback, and starts loading the MP4 when the viewer presses Play.
+The browser player is `docs/index.html`. GitHub Pages serves the `docs/` directory on `main`; `.nojekyll` keeps it a plain static site. The page includes a quick workflow overview, a Return to Repo link, and the assistant quickstart. The player uses native video controls, supports inline mobile playback, and starts loading the MP4 when the viewer presses Play. Its lightweight `docs/film-poster.webp` comes from the film's opening; the original poster remains preserved.
 
 ## Captures and accuracy
 
