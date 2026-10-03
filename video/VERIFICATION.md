@@ -16,3 +16,9 @@ An independent review found no blocking product-claim, visual, or artifact fault
 Detailed machine reports, extracted frames, waveform probes, and prior inputs are retained under `out/qa/` and `out/capture-backups/`. The previous launch MP4 and poster are backed up under `out/backups/20261002T214427Z/`. Inputs and output hashes are retained in `out/qa/installed-artifacts.json`.
 
 The requested GitHub source and published Shotcraft Gallery clips returned 404. Shotcraft is installed from the author's AtomGit mirror; the local recipe cards and demo source are available for review. No remote repository push or publishing step was performed.
+
+## README preview compression
+
+On 2026-10-03, the README GIF was reduced from 2,422,476 to 630,532 bytes, a 74% reduction. It retains the complete 14-second opening loop and the full-film link. The generator now exports 640×360 at 8fps with a 96-color palette and ordered Bayer dithering. Frame inspection confirmed readable story text and smoother shadows than the more aggressive no-dither candidate. Running `npm run preview:gif` twice produced the same SHA-256 checksum, `e297312a8797130948548542701a7f7fcc4dadcec513f12ed308118544fab631`.
+
+All 112 frames decode without errors. A browser check confirmed automatic animation and the full-film link. The GIF loops indefinitely; its encoded duration is 14.01 seconds because GIF delays use hundredths of a second. The previous GIF is preserved in `out/backups/20261003T145253118Z/`. Compression comparisons and fresh artifact checks are retained in `out/qa/gif-optimization/`.
