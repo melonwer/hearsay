@@ -22,3 +22,9 @@ The requested GitHub source and published Shotcraft Gallery clips returned 404. 
 On 2026-10-03, the README GIF was reduced from 2,422,476 to 630,532 bytes, a 74% reduction. It retains the complete 14-second opening loop and the full-film link. The generator now exports 640×360 at 8fps with a 96-color palette and ordered Bayer dithering. Frame inspection confirmed readable story text and smoother shadows than the more aggressive no-dither candidate. Running `npm run preview:gif` twice produced the same SHA-256 checksum, `e297312a8797130948548542701a7f7fcc4dadcec513f12ed308118544fab631`.
 
 All 112 frames decode without errors. A browser check confirmed automatic animation and the full-film link. The GIF loops indefinitely; its encoded duration is 14.01 seconds because GIF delays use hundredths of a second. The previous GIF is preserved in `out/backups/20261003T145253118Z/`. Compression comparisons and fresh artifact checks are retained in `out/qa/gif-optimization/`.
+
+## Browser playback
+
+On 2026-10-03, the [browser player](https://melonwer.github.io/hearsay/) was published through GitHub Pages from `main`'s `docs/` directory. The README's animated preview and full-film link open this player. It uses the existing MP4 and poster, native video controls, and inline mobile playback.
+
+Fresh public-browser verification confirmed playback advances with unmuted audio and decoded AAC samples, zero download prompts or page errors, and no horizontal overflow at 390px. The page requests no MP4 before Play. GitHub Pages serves the MP4 as `video/mp4` and returns HTTP 206 for byte-range requests, supporting playback and seeking without saving the file. Detailed local and public receipts are retained in `out/qa/browser-player/`.

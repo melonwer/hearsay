@@ -2,9 +2,9 @@
 
 A free AI visibility checker, run by the agent you already use.
 
-[![Hearsay animated preview: The conversation you never see](docs/hearsay-preview.gif)](docs/hearsay-launch.mp4)
+[![Hearsay animated preview: The conversation you never see](docs/hearsay-preview.gif)](https://melonwer.github.io/hearsay/)
 
-[Watch the full 51-second film with sound.](docs/hearsay-launch.mp4)
+[Watch the full 51-second film with sound.](https://melonwer.github.io/hearsay/)
 
 Give Hearsay your website. Your agent proposes buyer angles, saves a baseline, suggests a page change, and follows the results. Approve its plan or adjust the questions, schedule, and limits yourself. Page versions, answers, decisions, and reports stay in `.hearsay/<app-id>/` so your agent can resume later.
 
