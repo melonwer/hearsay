@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Watch the 51-second Hearsay film about researching what AI says about your product.">
+    <meta name="theme-color" content="#f9f9f7">
+    <title>The conversation you never see · Hearsay</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='Arial,sans-serif' font-size='26' font-weight='700' fill='white'%3Eh%3C/text%3E%3C/svg%3E">
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #f9f9f7;
+        color: #0b0b0b;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+      main { width: min(100% - 40px, 1080px); margin: 36px auto; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+      .brand { display: inline-flex; align-items: center; gap: 9px; font-size: 18px; font-weight: 700; }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        background: #2a78d6;
+        color: white;
+        font-size: 22px;
+        line-height: 1;
+      }
+      a { color: #245fa5; text-underline-offset: 3px; }
+      a:focus-visible, video:focus-visible { outline: 3px solid #2a78d6; outline-offset: 5px; }
+      h1 { margin: 48px 0 8px; font-size: clamp(28px, 4vw, 44px); line-height: 1.15; letter-spacing: -.035em; }
+      p { margin: 0 0 24px; color: #52514e; }
+      video {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border-radius: 14px;
+        background: #0b0b0b;
+        box-shadow: 0 12px 40px #0b0b0b12;
+      }
+      .detail { margin-top: 16px; font-size: 14px; }
+      @media (max-width: 480px) {
+        main { width: calc(100% - 24px); margin: 24px auto; }
+        h1 { margin-top: 36px; }
+        header a { font-size: 14px; }
+        video { border-radius: 9px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="brand"><span class="mark" aria-hidden="true">h</span>Hearsay</span>
+        <a href="https://github.com/melonwer/hearsay">View the project</a>
+      </header>
+      <h1>The conversation you never see</h1>
+      <p>A short film about finding out what AI says about your product.</p>
+      <video controls playsinline preload="none" poster="video-poster.png" aria-label="Hearsay launch film">
+        <source src="hearsay-launch.mp4" type="video/mp4">
+        <a href="hearsay-launch.mp4">Open the Hearsay film.</a>
+      </video>
+      <p class="detail">51 seconds · Music and sound</p>
+    </main>
+  </body>
+</html>
