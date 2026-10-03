@@ -1,0 +1,11 @@
+{
+  "source": "Actual Hearsay pages from temporary fictional demo workspace",
+  "database": "/tmp/hearsay-video-capture-KXU9yz",
+  "liveProviderCalls": 0,
+  "importedProposal": "Synthetic fixture retained as fixture.json",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "deviceScaleFactor": 2
+}

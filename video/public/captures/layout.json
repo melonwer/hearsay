@@ -1,0 +1,159 @@
+{
+  "answers": {
+    "pageH": 1080,
+    "fullDocumentH": 1080,
+    "elements": [
+      {
+        "x": 654,
+        "y": 107,
+        "w": 856,
+        "h": 176,
+        "text": "\n    \n      Measurement series\n      \n    Codex agent · required ·\n    stance-en-v1 · 1/1 comparable\n  \n    Perplexity API · legacy ·\n    stance-en-v1 · 1044/1044 comparable\n  \n    Gemini API · off ·\n    stance-en-v1 · 1044/1044 comparable\n  \n    Anthropic API · off ·\n    stance-en-v1 · 1044/1044 comparable\n  \n    OpenAI API · off ·\n    stance-en-v1 · 1044/1044 comparable\n  \n    \n    \n      Engine\n      \n        All engines\n        ChatGPTClaudeGeminiPerplexity\n      \n    \n    \n      Prompt\n      \n        All prompts\n        \n        What's the best AI meeting notes tool?\n      \n        Which AI tool should I use for meeting notes?\n      \n        top meeting-notes AI for small teams\n      \n        Notewell vs Jotta — which should my sales team use?\n      \n        How does Notewell compare with Jotta for a sales team?\n      \n        Jotta or Notewell for a 20-person sales team?\n      \n        What is the most affordable meeting transcription tool for…\n      \n        cheap meeting transcription for a small startup team\n      \n        What is the best free meeting summarizer?\n      \n        Is there a free AI tool that summarizes meetings?\n      \n        Is Notewell any good?\n      \n        What do people think of Notewell AI?\n      \n        Which meeting-notes tool works for a small team?\n      \n      \n    \n    \n      Surface\n      \n        All surfaces\n        OpenAI APIAnthropic APIGemini APIPerplexity APICodex agentClaude Code agentAntigravity CLI\n      \n    \n    \n      Entity\n      \n        Any entity\n        NotewellJottaEchoPadQuillo\n      \n    \n    \n     Comparable answers only\n    Apply\n    Today7d30d90d\n    Clear\n  "
+      },
+      {
+        "x": 654,
+        "y": 331.5,
+        "w": 856,
+        "h": 189,
+        "text": "\n    \n    ?Codex agent\n    Codex agent\n    demo-model\n    just now\n    sample #1\n  \n    \n    Which meeting-notes tool works for a small team?\n    View the five evidence layers for receipt #4321\n    Notewell is one option for searching past meeting notes. Review its product documentation to check whether it fits your team's needs.\n    \n    \n    \n    \n    \n        Measurement evidence\n        \n          Web search\n          verified\n          Comparable\n          comparable\n          Search/fetch events\n          1\n          Reported sources\n          1\n          Final-answer citations\n          1\n          Redacted event artifact\n          not retained\n        \n        search · completed · meeting notes tool small team · https://notewell.example/product\n        Reported sourcesNotewell product guide · fictional demo\n        Final-answer citationshttps://notewell.example/product\n      \n    \n  "
+      }
+    ]
+  },
+  "evidence": {
+    "pageH": 1080,
+    "fullDocumentH": 1243,
+    "elements": [
+      {
+        "x": 654,
+        "y": 107,
+        "w": 856,
+        "h": 122.5,
+        "text": "\n    Measurement series\n      \n        Codex agent · required · 1 comparable\n      \n        Perplexity API · legacy · 1044 comparable\n      \n        Gemini API · off · 1044 comparable\n      \n        Anthropic API · off · 1044 comparable\n      \n        OpenAI API · off · 1044 comparable\n      \n    \n    Buyer intent\n      Choosing a tool for a small team\n    \n    Window\n      7 days30 days90 days365 days\n    \n    Show evidence\n  "
+      },
+      {
+        "x": 654,
+        "y": 472,
+        "w": 856,
+        "h": 707.28125,
+        "text": "\n    Receipt #4321\n    Use this answer for an opportunity\n    2026-10-02T21:47:50.985Z · codex-agent · demo-model · profile 8f1b55fcbe8fb9eca22979a1cf4c5e9d3c05dfd880ff15fe80e88c8fbd515f23 · benchmark 65260382e08e6fa31a4a54f94f5f1252537f57c4683dfc56b1c52d59c454736c\n    Buyer questionWhich meeting-notes tool works for a small team? (benchmark_snapshot)\n    Search actions and queries\n    \n      Action #1 · search · completed · 2026-10-02T21:47:50.985Z\n      Query #1: meeting notes tool small team\n    \n    \n    Source observations\n    \n      Source #1 · search_result · Notewell product guide · fictional demo\n      · action #1\n    \n    Final-answer citations\n    \n      Citation #1 · explicit_reference · https://notewell.example/product\n      · source #1\n      \n    \n    Answer and interpretationNotewell is one option for searching past meeting notes. Review its product documentation to check whether it fits your team's needs.\n    \n    \n    No tracked entity mention stored.\n  "
+      }
+    ]
+  },
+  "opportunities": {
+    "pageH": 1080,
+    "fullDocumentH": 1823,
+    "elements": [
+      {
+        "x": 654,
+        "y": 249,
+        "w": 856,
+        "h": 247.90625,
+        "text": "Explain the small-team use caseNotewell · proposed · external provenance\n      Hypothesis: A focused page may answer this buyer question more directly. This is a hypothesis to test.Draft a page explaining how a small team can search past meeting notes.\n      Review supporting report\n      Review reason \n        Decision AcceptDismissSave review\n    "
+      },
+      {
+        "x": 654,
+        "y": 512.90625,
+        "w": 856,
+        "h": 79.5,
+        "text": "\n    Measurement series\n      \n        Codex agent · required · 1 comparable\n      \n        Perplexity API · legacy · 1044 comparable\n      \n        Gemini API · off · 1044 comparable\n      \n        Anthropic API · off · 1044 comparable\n      \n        OpenAI API · off · 1044 comparable\n      \n    \n    Buyer intent\n      Choosing a tool for a small team\n    \n    Window\n      7 days30 days90 days365 days\n    \n    Show opportunities\n  "
+      },
+      {
+        "x": 654,
+        "y": 685.90625,
+        "w": 856,
+        "h": 176,
+        "text": "\n    Observed patterns to review\n      Repeated source and query-theme patterns need two comparable answer receipts from two completed runs in this exact selection. Explicit negative or uncertain statements can appear from one completed answer. The threshold helps triage; it does not measure importance. Save only the investigations you want to review.\n    \n    No new pattern qualifies for this selection. You can create an investigation from a single receipt below.\n  "
+      },
+      {
+        "x": 654,
+        "y": 942.40625,
+        "w": 856,
+        "h": 56.5,
+        "text": "No saved opportunities for this intent and window."
+      },
+      {
+        "x": 654,
+        "y": 1014.90625,
+        "w": 856,
+        "h": 744,
+        "text": "Create an investigation from selected evidence\n    Use the links on the evidence report to prefill IDs. Every record must belong to this exact series, intent, and window. A model leaving a capability out does not show that a page lacks it.\n    \n      \n    \n    \n    \n      \n        Answer receipt IDs\n        Observed query IDs\n        Source observation IDs\n        Final-answer citation IDs\n        Buyer relevance\n        Product area\n        Target URL\n        ControllabilityProductOwned pageThird party\n        EffortUnknownLowMediumHigh\n      \n      Interpretation or hypothesis\n      Possible action\n      The answer may contain a false or outdated claim that needs authoritative evidence\n      Save investigation\n      \n    \n  "
+      }
+    ]
+  },
+  "research": {
+    "pageH": 1080,
+    "fullDocumentH": 1856,
+    "elements": [
+      {
+        "x": 654,
+        "y": 162,
+        "w": 856,
+        "h": 66.5,
+        "text": "Import evidence.json Import report"
+      },
+      {
+        "x": 654,
+        "y": 244.5,
+        "w": 856,
+        "h": 66.5,
+        "text": "Import saved study snapshot Import study"
+      },
+      {
+        "x": 654,
+        "y": 327,
+        "w": 856,
+        "h": 98.5,
+        "text": "Standalone studiesNo imported standalone studies."
+      },
+      {
+        "x": 654,
+        "y": 473.5,
+        "w": 209,
+        "h": 134,
+        "text": "Notewell · launch-film-demoresearch_audit · 2026-10-02T21:47:50.985Z"
+      },
+      {
+        "x": 883,
+        "y": 857.15625,
+        "w": 627,
+        "h": 56.5,
+        "text": "Report as Markdown# Notewell: visibility report\n\nRun launch-film-demo, 2026-10-02T21:47:50.985Z. Research audit.\n\nPanel panel-1; execution execution-1; analysis analysis-1. Producer: Hearsay launch film fixture.\n\nHost reports and external runner captures retain their provenance. Neither is a native dashboard measurement.\n\n- Fictional demo. No research, provider call, or website experiment was performed.\n\n## Competitors\n\n| Product | Relationship | Reason | Evidence |\n| --- | --- | --- | --- |\n\n## Sample counts\n\n| Route / model / profile / capture | Planned | Attempted | Completed | Failed | Partial | Skipped | Unrecorded | Eligible | Mentioned / eligible | Recommended / eligible |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n\nFailed and partial answers are not brand absences. Small samples are exploratory. Account costs and remaining allowances are unknown unless reported.\n\n## Observations\n\n\n## Evidence\n\n- demo-page (fetched_page, host_research, host_reported, 2026-10-02T21:47:50.985Z): Fictional Notewell product page [source](https://notewell.example/product)\n\n## Prioritized improvements\n\n### Explain the small-team use case\n\nPriority: high. Effort: small. Evidence: demo-page.\n\nHypothesis: A focused page may answer this buyer question more directly. This is a hypothesis to test.\n\nProposed change: Draft a page explaining how a small team can search past meeting notes.\n\nRepeat questions: q1. Supports: New evidence answers the buyer question.. Rejects: The question remains unanswered..\n\nDraft: drafts/small-team/content.md. Applying or publishing requires a user request.\n\n"
+      },
+      {
+        "x": 883,
+        "y": 975.0625,
+        "w": 627,
+        "h": 248.875,
+        "text": "Explain the small-team use caseHypothesis: A focused page may answer this buyer question more directly. This is a hypothesis to test.Draft a page explaining how a small team can search past meeting notes.Evidence: demo-page · effort small\n        Propose in Opportunities"
+      },
+      {
+        "x": 883,
+        "y": 1239.9375,
+        "w": 627,
+        "h": 56.5,
+        "text": "Normalized observations[\n  {\n    \"capture\": \"host_reported\",\n    \"data\": {\n      \"title\": \"Fictional Notewell product page\",\n      \"url\": \"https://notewell.example/product\"\n    },\n    \"id\": \"demo-page\",\n    \"origin\": \"host_research\",\n    \"sampleId\": null,\n    \"timestamp\": \"2026-10-02T21:47:50.985Z\",\n    \"type\": \"fetched_page\"\n  }\n]"
+      },
+      {
+        "x": 883,
+        "y": 1312.4375,
+        "w": 627,
+        "h": 56.5,
+        "text": "Available trace eventsInternal reasoning and uncaptured events are unavailable.No trace events were included in this bundle."
+      },
+      {
+        "x": 883,
+        "y": 1384.9375,
+        "w": 627,
+        "h": 56.5,
+        "text": "Original imported evidence bundle{\n  \"analysis\": {\n    \"id\": \"analysis-1\",\n    \"method\": \"hearsay-evidence-v1\"\n  },\n  \"app\": {\n    \"aliases\": [],\n    \"audience\": \"Small teams\",\n    \"id\": \"notewell-film-demo\",\n    \"name\": \"Notewell\",\n    \"url\": \"https://notewell.example/\",\n    \"useCases\": [\n      \"Search past meeting notes\"\n    ]\n  },\n  \"createdAt\": \"2026-10-02T21:47:50.985Z\",\n  \"evidence\": [\n    {\n      \"capture\": \"host_reported\",\n      \"data\": {\n        \"title\": \"Fictional Notewell product page\",\n        \"url\": \"https://notewell.example/product\"\n      },\n      \"id\": \"demo-page\",\n      \"origin\": \"host_research\",\n      \"sampleId\": null,\n      \"timestamp\": \"2026-10-02T21:47:50.985Z\",\n      \"type\": \"fetched_page\"\n    }\n  ],\n  \"execution\": {\n    \"envelope\": \"subscription-search-v1\",\n    \"id\": \"execution-1\",\n    \"idleTimeoutMs\": null,\n    \"language\": \"uncontrolled\",\n    \"location\": \"uncontrolled\",\n    \"maxOutputBytes\": null,\n    \"routes\": [],\n    \"samples\": 1,\n    \"timeoutMs\": null\n  },\n  \"mode\": \"research_audit\",\n  \"panel\": {\n    \"competitors\": [],\n    \"createdAt\": \"2026-01-01T00:00:00Z\",\n    \"id\": \"panel-1\",\n    \"questions\": [\n      {\n        \"id\": \"q1\",\n        \"text\": \"Which meeting-notes tool works for a small team?\"\n      }\n    ],\n    \"reviewedAt\": null\n  },\n  \"provenance\": {\n    \"limitations\": [\n      \"Fictional demo. No research, provider call, or website experiment was performed.\"\n    ],\n    \"producer\": \"Hearsay launch film fixture\"\n  },\n  \"recommendations\": [\n    {\n      \"draftPath\": \"drafts/small-team/content.md\",\n      \"effort\": \"small\",\n      \"evidenceIds\": [\n        \"demo-page\"\n      ],\n      \"hypothesis\": \"A focused page may answer this buyer question more directly. This is a hypothesis to test.\",\n      \"id\": \"buyer-page\",\n      \"priority\": \"high\",\n      \"proposedChange\": \"Draft a page explaining how a small team can search past meeting notes.\",\n      \"repeatMeasurement\": {\n        \"questionIds\": [\n          \"q1\"\n        ],\n        \"rejects\": \"The question remains unanswered.\",\n        \"routeIds\": [],\n        \"supports\": \"New evidence answers the buyer question.\"\n      },\n      \"title\": \"Explain the small-team use case\"\n    }\n  ],\n  \"runId\": \"launch-film-demo\",\n  \"samples\": [],\n  \"schemaVersion\": 1\n}"
+      },
+      {
+        "x": 654,
+        "y": 1544.4375,
+        "w": 856,
+        "h": 247.90625,
+        "text": "Explain the small-team use caseNotewell · proposed · external provenance\n      Hypothesis: A focused page may answer this buyer question more directly. This is a hypothesis to test.Draft a page explaining how a small team can search past meeting notes.\n      Review supporting report\n      Review reason \n        Decision AcceptDismissSave review\n    "
+      }
+    ]
+  }
+}

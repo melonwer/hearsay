@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "runId": "launch-film-demo",
+  "createdAt": "2026-10-02T21:47:50.985Z",
+  "mode": "research_audit",
+  "app": {
+    "id": "notewell-film-demo",
+    "name": "Notewell",
+    "url": "https://notewell.example/",
+    "aliases": [],
+    "audience": "Small teams",
+    "useCases": [
+      "Search past meeting notes"
+    ]
+  },
+  "panel": {
+    "id": "panel-1",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "reviewedAt": null,
+    "questions": [
+      {
+        "id": "q1",
+        "text": "Which meeting-notes tool works for a small team?"
+      }
+    ],
+    "competitors": []
+  },
+  "execution": {
+    "id": "execution-1",
+    "routes": [],
+    "samples": 1,
+    "timeoutMs": null,
+    "idleTimeoutMs": null,
+    "maxOutputBytes": null,
+    "envelope": "subscription-search-v1",
+    "language": "uncontrolled",
+    "location": "uncontrolled"
+  },
+  "analysis": {
+    "id": "analysis-1",
+    "method": "hearsay-evidence-v1"
+  },
+  "provenance": {
+    "producer": "Hearsay launch film fixture",
+    "limitations": [
+      "Fictional demo. No research, provider call, or website experiment was performed."
+    ]
+  },
+  "evidence": [
+    {
+      "id": "demo-page",
+      "type": "fetched_page",
+      "timestamp": "2026-10-02T21:47:50.985Z",
+      "origin": "host_research",
+      "capture": "host_reported",
+      "sampleId": null,
+      "data": {
+        "url": "https://notewell.example/product",
+        "title": "Fictional Notewell product page"
+      }
+    }
+  ],
+  "samples": [],
+  "recommendations": [
+    {
+      "id": "buyer-page",
+      "title": "Explain the small-team use case",
+      "evidenceIds": [
+        "demo-page"
+      ],
+      "hypothesis": "A focused page may answer this buyer question more directly. This is a hypothesis to test.",
+      "proposedChange": "Draft a page explaining how a small team can search past meeting notes.",
+      "effort": "small",
+      "priority": "high",
+      "repeatMeasurement": {
+        "questionIds": [
+          "q1"
+        ],
+        "routeIds": [],
+        "supports": "New evidence answers the buyer question.",
+        "rejects": "The question remains unanswered."
+      },
+      "draftPath": "drafts/small-team/content.md"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "question": "Which meeting-notes tool works for a small team?",
+  "measurement": {
+    "policy": "required",
+    "answerStatus": "complete",
+    "at": "2026-10-02T21:47:50.985Z",
+    "answer": "Notewell is one option for searching past meeting notes. Review its product documentation to check whether it fits your team's needs.",
+    "actions": [
+      {
+        "id": "demo-search",
+        "kind": "search",
+        "status": "completed",
+        "queries": [
+          "meeting notes tool small team"
+        ],
+        "queryMetadata": "available",
+        "providerType": "fictional_demo",
+        "observedAt": "2026-10-02T21:47:50.985Z"
+      }
+    ],
+    "sources": [
+      {
+        "id": "demo-source",
+        "actionId": "demo-search",
+        "url": "https://notewell.example/product",
+        "title": "Notewell product guide · fictional demo",
+        "excerpt": "Search past meeting notes as a small team.",
+        "provenance": "search_result",
+        "order": 0
+      }
+    ],
+    "citations": [
+      {
+        "sourceId": "demo-source",
+        "url": "https://notewell.example/product",
+        "provenance": "explicit_reference",
+        "start": null,
+        "end": null
+      }
+    ],
+    "usage": []
+  },
+  "notice": "Entirely scripted fictional demo; no agent, search, or provider was invoked."
+}

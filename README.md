@@ -2,6 +2,10 @@
 
 A free AI visibility checker, run by the agent you already use.
 
+[![Hearsay animated preview: The conversation you never see](docs/hearsay-preview.gif)](docs/hearsay-launch.mp4)
+
+[Watch the full 51-second film with sound.](docs/hearsay-launch.mp4)
+
 Give Hearsay your website. Your agent proposes buyer angles, saves a baseline, suggests a page change, and follows the results. Approve its plan or adjust the questions, schedule, and limits yourself. Page versions, answers, decisions, and reports stay in `.hearsay/<app-id>/` so your agent can resume later.
 
 Optional [Tavily search](https://docs.tavily.com/documentation/api-credits) can use its 1,000 free monthly credits. Six basic searches a day use 180 credits over 30 days, including the baseline, with a proposed 20-credit diagnostic allowance. Your AI assistant's usage follows its own plan. Hearsay reports selected search and AI-agent observations; lead or sales comparisons use the business records you supply. Pricing checked October 2, 2026.
@@ -42,10 +46,6 @@ The dashboard and API workflows are optional. Their setup follows below.
 [![Node ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-brightgreen.svg)](package.json)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-zero-blue.svg)](package.json)
 [![MCP built in](https://img.shields.io/badge/MCP-built%20in-8A2BE2.svg)](mcp/server.mjs)
-
-[![Watch the tour](docs/video-poster.png)](docs/hearsay-launch.mp4)
-
-**[Watch the 64-second tour.](docs/hearsay-launch.mp4)**
 
 ## What it does
 
