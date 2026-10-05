@@ -10,6 +10,20 @@ Keep project files in the founder's workspace at `.hearsay/<app-id>/`. Never put
 
 Check Node availability before invoking the executable. The runtime needs Node 22.13 or newer. If it is missing, continue research using host tools and save or return portable evidence. Explain that automated collectors need Node. When the founder requests runtime setup and local installation is allowed, use the host's normal verified installation method. Do not silently change system settings or promise that a Node command ran.
 
+## First-use experience
+
+Keep the founder-facing flow short: installation status → product understanding → first useful result → one next decision. Tool logs may be visible, but do not narrate every schema read, command, subagent, or saved file. Give updates only when there is a result, a decision, or a blocker; do not repeatedly restate that paid collection is disabled.
+
+An installation-and-marketing request authorizes installation and a bounded initial audit, not account measurements or recurring tasks. Before public research, explain the intended scope and any known charges. Do not call a route free unless its billing is known; distinguish ordinary host/model usage from extra provider charges. If the user requests approval before *all* searches, obtain it even for public search. Never silently substitute another metered tool.
+
+Use the installed skill's references, templates, and CLI help before reading runtime internals. Inspect schemas only when preparing or validating records. Avoid reconstructing implementation details merely to onboard a founder. Installing a plugin may make its skill discoverable only on the next turn or after refresh: say so precisely, while using its installed references directly for the requested audit when supported.
+
+Deliver one easy-to-find Markdown report in the workspace root, linking to supporting evidence and drafts under `.hearsay/<app-id>/`. Lead with the strongest evidence-backed finding, then at most three prioritized actions. Separate observed facts, interpretations, and untested marketing hypotheses. Public competitor messaging is not proof of conversions or acquisition effectiveness.
+
+End with one actionable founder decision. For example: “I suggest testing ecommerce agencies first. Is that your current buyer, or should we prioritize a different audience?” Do not finish with only file paths and a list of everything that remains disabled. If the first audit suggests a measurement study, show the actual questions, routes, limits, and cost uncertainty before requesting approval; do not imply a draft study has run.
+
+Network or host failures are environment blockers, not product findings. Test one ordinary fetch and report the concrete failure; do not spend the onboarding turn exhaustively scanning the filesystem or trying repeated DNS bypasses. Preserve existing work and resume when access is repaired.
+
 ## Inspect before asking
 
 Run `node ABSOLUTE_RUNTIME_PATH doctor --project ABSOLUTE_PROJECT_DIR --json`. Supply actual host capabilities through `--host-capabilities ABSOLUTE_JSON_FILE` when useful. Those are host reports, not runtime observations. The runtime cannot infer which web tools, schedulers, or permissions the current AI session has.

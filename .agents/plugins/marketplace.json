@@ -1,0 +1,14 @@
+{
+  "name": "hearsay-branch",
+  "plugins": [
+    {
+      "name": "hearsay",
+      "source": { "source": "local", "path": "./dist/codex/hearsay" },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

@@ -17,8 +17,8 @@ Maintainers generate every distribution with `node scripts/build-bundles.js` fro
 For a GitHub branch that already contains a generated Codex marketplace directory, install without cloning or building:
 
 ```sh
-codex plugin marketplace add https://github.com/OWNER/REPO --ref BRANCH --sparse dist/codex
-codex plugin add hearsay@hearsay-local
+codex plugin marketplace add https://github.com/OWNER/REPO --ref BRANCH --sparse .agents/plugins --sparse dist/codex
+codex plugin add hearsay@hearsay-branch
 ```
 
 If the branch does not contain `dist/codex`, clone the branch and run the build command above first. A source checkout alone is not an installed plugin. After installation, confirm the host reports Hearsay enabled before beginning conversational setup.
