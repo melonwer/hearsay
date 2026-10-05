@@ -1,6 +1,6 @@
 # Hearsay agent plugin packaging and onboarding
 
-Status: design approved for implementation on 2026-10-05. Codex is the first complete host implementation. Claude Code and Gemini CLI use the same shared design and follow after the Codex flow is verified.
+Status: implemented and verified locally on 2026-10-05 in branch `agent-plugin-packaging`. Codex, Claude Code, and Gemini CLI installation and installed-runtime checks passed. See [the verification receipt](../../plugin-verification.md). Public release remains separate.
 
 ## Problem
 
