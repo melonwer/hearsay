@@ -23,7 +23,7 @@ function files(directory, prefix = '') {
 
 function sourceFixture(temporary) {
   const checkout = join(temporary, 'source'); mkdirSync(join(checkout, 'scripts'), { recursive: true });
-  for (const source of ['skill', 'core', 'bin', 'web', 'public', 'server.js', 'METHODOLOGY.md', 'LICENSE', 'package.json']) cpSync(join(root, source), join(checkout, source), { recursive: true });
+  for (const source of ['skill', 'core', 'bin', 'web', 'public', 'mcp', 'server.js', 'METHODOLOGY.md', 'LICENSE', 'package.json']) cpSync(join(root, source), join(checkout, source), { recursive: true });
   cpSync(join(root, 'scripts', 'build-bundles.js'), join(checkout, 'scripts', 'build-bundles.js'));
   return checkout;
 }
@@ -131,10 +131,10 @@ test('archive-extracted runtimes perform setup and study preview outside the rep
     assert.equal(metadata.type, 'module'); assert.equal(metadata.engines.node, '>=22.13');
     assert.equal(metadata.version, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version);
     assert.deepEqual(metadata.dependencies ?? {}, {});
-    for (const path of ['LICENSE', 'server.js', 'METHODOLOGY.md', 'web/pages/methodology.js', 'public/style.css', 'public/app.js', 'skill/schemas/project.schema.json', 'skill/templates/project.json']) {
+    for (const path of ['LICENSE', 'server.js', 'mcp/server.mjs', 'METHODOLOGY.md', 'web/pages/methodology.js', 'public/style.css', 'public/app.js', 'skill/schemas/project.schema.json', 'skill/templates/project.json']) {
       assert.deepEqual(readFileSync(join(runtime, path)), readFileSync(join(root, path)), `${bundle.target}: runtime source ${path}`);
     }
-    for (const tree of ['bin', 'core', 'web', 'public', join('skill', 'schemas'), join('skill', 'templates')]) {
+    for (const tree of ['bin', 'core', 'web', 'public', 'mcp', join('skill', 'schemas'), join('skill', 'templates')]) {
       assert.deepEqual(files(join(runtime, tree)), files(join(root, tree)), `${bundle.target}: complete runtime tree ${tree}`);
       for (const file of files(join(root, tree))) assert.deepEqual(readFileSync(join(runtime, tree, file)), readFileSync(join(root, tree, file)), `${bundle.target}: source equality ${tree}/${file}`);
     }

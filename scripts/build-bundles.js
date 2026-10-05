@@ -10,6 +10,7 @@ const runtimeTrees = [
   { path: 'core', extensions: /\.js$/ },
   { path: 'web', extensions: /\.js$/ },
   { path: 'public', extensions: /\.(js|css)$/ },
+  { path: 'mcp', extensions: /\.mjs$/ },
   { path: 'skill/schemas', extensions: /\.json$/ },
   { path: 'skill/templates', extensions: /\.(json|md)$/ },
 ];
