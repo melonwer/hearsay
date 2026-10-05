@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "identity": { "status": "confirmed" },
+  "profile": {
+    "appId": "example-app",
+    "name": "Example app",
+    "canonicalUrl": "https://example.com/",
+    "audience": null,
+    "jobs": [],
+    "geography": null,
+    "outcome": null,
+    "aliases": []
+  },
+  "sources": [
+    { "id": "product-source", "kind": "url", "url": "https://example.com/", "summary": "Replace with the actual observed product evidence." }
+  ],
+  "provenance": [
+    { "field": "name", "sourceIds": ["product-source"] },
+    { "field": "canonicalUrl", "sourceIds": ["product-source"] }
+  ]
+}

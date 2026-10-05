@@ -1,0 +1,934 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hearsay.local/schemas/project-v1.json",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "http-url",
+              "maxLength": 8192
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "maxItems": 50
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100000
+        },
+        "useCases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "url",
+        "aliases",
+        "audience",
+        "useCases"
+      ],
+      "additionalProperties": false
+    },
+    "discoveryEvidence": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+              },
+              "type": {
+                "const": "answer"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "origin": {
+                "enum": [
+                  "host_research",
+                  "isolated_host_trial",
+                  "supported_cli_measurement"
+                ]
+              },
+              "capture": {
+                "enum": [
+                  "host_reported",
+                  "runner_captured"
+                ]
+              },
+              "sampleId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 100000
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "timestamp",
+              "origin",
+              "capture",
+              "sampleId",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+              },
+              "type": {
+                "const": "search_query"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "origin": {
+                "enum": [
+                  "host_research",
+                  "isolated_host_trial",
+                  "supported_cli_measurement"
+                ]
+              },
+              "capture": {
+                "enum": [
+                  "host_reported",
+                  "runner_captured"
+                ]
+              },
+              "sampleId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  },
+                  "actionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  }
+                },
+                "required": [
+                  "query"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "timestamp",
+              "origin",
+              "capture",
+              "sampleId",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+              },
+              "type": {
+                "const": "tool_outcome"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "origin": {
+                "enum": [
+                  "host_research",
+                  "isolated_host_trial",
+                  "supported_cli_measurement"
+                ]
+              },
+              "capture": {
+                "enum": [
+                  "host_reported",
+                  "runner_captured"
+                ]
+              },
+              "sampleId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "tool": {
+                    "enum": [
+                      "search",
+                      "fetch"
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "started",
+                      "completed",
+                      "failed",
+                      "denied",
+                      "unavailable"
+                    ]
+                  },
+                  "actionId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  },
+                  "text": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  }
+                },
+                "required": [
+                  "tool",
+                  "status"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "timestamp",
+              "origin",
+              "capture",
+              "sampleId",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+              },
+              "type": {
+                "const": "returned_source"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "origin": {
+                "enum": [
+                  "host_research",
+                  "isolated_host_trial",
+                  "supported_cli_measurement"
+                ]
+              },
+              "capture": {
+                "enum": [
+                  "host_reported",
+                  "runner_captured"
+                ]
+              },
+              "sampleId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "http-url",
+                    "maxLength": 8192
+                  },
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  },
+                  "rank": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "timestamp",
+              "origin",
+              "capture",
+              "sampleId",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+              },
+              "type": {
+                "const": "fetched_page"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "origin": {
+                "enum": [
+                  "host_research",
+                  "isolated_host_trial",
+                  "supported_cli_measurement"
+                ]
+              },
+              "capture": {
+                "enum": [
+                  "host_reported",
+                  "runner_captured"
+                ]
+              },
+              "sampleId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "http-url",
+                    "maxLength": 8192
+                  },
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  },
+                  "text": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "timestamp",
+              "origin",
+              "capture",
+              "sampleId",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+              },
+              "type": {
+                "const": "final_citation"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "origin": {
+                "enum": [
+                  "host_research",
+                  "isolated_host_trial",
+                  "supported_cli_measurement"
+                ]
+              },
+              "capture": {
+                "enum": [
+                  "host_reported",
+                  "runner_captured"
+                ]
+              },
+              "sampleId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "http-url",
+                    "maxLength": 8192
+                  },
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 100000
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "timestamp",
+              "origin",
+              "capture",
+              "sampleId",
+              "data"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+              },
+              "type": {
+                "const": "research_note"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "origin": {
+                "enum": [
+                  "host_research",
+                  "isolated_host_trial",
+                  "supported_cli_measurement"
+                ]
+              },
+              "capture": {
+                "enum": [
+                  "host_reported",
+                  "runner_captured"
+                ]
+              },
+              "sampleId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 100000
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "timestamp",
+              "origin",
+              "capture",
+              "sampleId",
+              "data"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "maxItems": 10000
+    },
+    "panels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reviewedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000
+                }
+              },
+              "required": [
+                "id",
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 100
+          },
+          "competitors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000
+                },
+                "url": {
+                  "type": "string",
+                  "format": "http-url",
+                  "maxLength": 8192
+                },
+                "aliases": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100000
+                  },
+                  "maxItems": 50
+                },
+                "relationship": {
+                  "enum": [
+                    "direct",
+                    "adjacent"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000
+                },
+                "evidenceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                  },
+                  "maxItems": 100
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "url",
+                "aliases",
+                "relationship",
+                "reason",
+                "evidenceIds"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "reviewedAt",
+          "questions",
+          "competitors"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "executions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+          },
+          "routes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+                },
+                "provider": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000
+                },
+                "profile": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100000
+                },
+                "executable": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 100000
+                },
+                "cliVersion": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 256
+                },
+                "profileHash": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "id",
+                "provider",
+                "profile",
+                "executable"
+              ],
+              "additionalProperties": false
+            },
+            "maxItems": 10
+          },
+          "samples": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "timeoutMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1000,
+            "maximum": 600000
+          },
+          "idleTimeoutMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1000,
+            "maximum": 120000
+          },
+          "maxOutputBytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1024,
+            "maximum": 20971520
+          },
+          "envelope": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          }
+        },
+        "required": [
+          "id",
+          "routes",
+          "samples",
+          "timeoutMs",
+          "idleTimeoutMs",
+          "maxOutputBytes",
+          "envelope",
+          "language",
+          "location"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "analyses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+          },
+          "method": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          }
+        },
+        "required": [
+          "id",
+          "method"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 1000
+    },
+    "current": {
+      "type": "object",
+      "properties": {
+        "panel": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+        },
+        "execution": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+        },
+        "analysis": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+        }
+      },
+      "required": [
+        "panel",
+        "execution",
+        "analysis"
+      ],
+      "additionalProperties": false
+    },
+    "selectedRoutes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,95}$"
+      },
+      "maxItems": 10
+    },
+    "tracking": {
+      "type": "object",
+      "properties": {
+        "timezone": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100000
+        },
+        "schedule": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100000
+        },
+        "targetCeiling": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "timezone",
+        "schedule",
+        "targetCeiling"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "app",
+    "discoveryEvidence",
+    "panels",
+    "executions",
+    "analyses",
+    "current",
+    "selectedRoutes",
+    "tracking"
+  ],
+  "additionalProperties": false
+}

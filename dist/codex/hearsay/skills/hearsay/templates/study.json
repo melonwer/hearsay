@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "id": "plan-1",
+  "studyId": "example-study",
+  "app": {
+    "id": "example-app",
+    "name": "Example app",
+    "url": "https://example.com/",
+    "aliases": [],
+    "audience": "Describe the audience after inspecting the product",
+    "useCases": ["Describe a confirmed buyer job"]
+  },
+  "targetUrl": "https://example.com/",
+  "comparison": {
+    "design": "before_after",
+    "referenceUrl": null,
+    "assignment": null,
+    "trafficNotes": "Supply traffic differences and an unchanged reference page when available."
+  },
+  "outcome": {
+    "metric": "qualified_leads",
+    "unit": "count",
+    "minimumDenominator": 100,
+    "minimumObservations": 10,
+    "minimumEffect": 0.1,
+    "lossLimit": 0.1,
+    "reviewPeriodDays": 7,
+    "stopRules": ["Stop at the approved loss limit or usage allowance."]
+  },
+  "angles": [],
+  "questions": [],
+  "collection": {
+    "at": "09:00",
+    "timezone": "UTC",
+    "occurrences": 30,
+    "maxDays": 30,
+    "firstReviewDays": 1,
+    "reviewEveryDays": 7
+  },
+  "tavily": {
+    "enabled": false,
+    "accountId": null,
+    "searchDepth": "basic",
+    "maxResults": 5,
+    "collectionCredits": 0,
+    "diagnosticCredits": 0,
+    "allowance": 0,
+    "strictFreeMode": true
+  },
+  "permissions": {
+    "actions": ["capture", "collect", "draft"],
+    "repository": null,
+    "publishTarget": null
+  },
+  "reportDestination": {"kind": "local", "path": "reviews"},
+  "research": null
+}

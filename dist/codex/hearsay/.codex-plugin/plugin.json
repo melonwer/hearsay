@@ -1,0 +1,23 @@
+{
+  "name": "hearsay",
+  "version": "0.1.0",
+  "description": "Research app visibility and produce sourced improvement reports with your current agent.",
+  "author": {
+    "name": "Hearsay"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Hearsay",
+    "shortDescription": "App visibility research",
+    "longDescription": "Discover competitors, research recommendations, and save evidence-linked reports with your current agent.",
+    "defaultPrompt": [
+      "Track my app and investigate its visibility."
+    ],
+    "developerName": "Hearsay",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}

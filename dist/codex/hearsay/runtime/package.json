@@ -1,0 +1,16 @@
+{
+  "name": "hearsay",
+  "version": "0.1.0",
+  "description": "App visibility research in your current agent, with optional account measurements, scheduling and dashboard imports.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "hearsay": "./bin/hearsay.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

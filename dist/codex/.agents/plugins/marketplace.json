@@ -1,0 +1,20 @@
+{
+  "name": "hearsay-local",
+  "owner": {
+    "name": "Hearsay"
+  },
+  "plugins": [
+    {
+      "name": "hearsay",
+      "source": {
+        "source": "local",
+        "path": "./hearsay"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
