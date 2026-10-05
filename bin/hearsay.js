@@ -6,9 +6,13 @@ import { discoverAgents, previewResearchRun, runResearchPanel, renderSavedReport
 import { previewResearchSchedule, enableResearchSchedule, disableResearchSchedule, readResearchSchedule, researchScheduleTick } from '../core/research-schedule.js';
 import { ResearchError } from '../core/research-contract.js';
 import { studyCommand, STUDY_HELP } from '../core/study-cli.js';
+import { inspectSetup, saveSetup } from '../core/plugin-setup.js';
 
 const HELP = `Hearsay: standalone research helpers and optional account measurements
 
+hearsay doctor [--project DIR] [--host HOST] [--host-capabilities FILE] [--check-tavily]
+hearsay setup [inspect] [--project DIR]           Read-only local inspection, JSON
+hearsay setup save --project DIR --input FILE    Save non-secret inferred profile
 hearsay agents list [--json]                       Discovery only, no inference
 hearsay run --project DIR [--json]                 Preview saved selected panel
 hearsay run --project DIR --execute --confirm HASH Confirm exact preview and execute
@@ -33,11 +37,19 @@ async function main() {
     help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' }, project: { type: 'string' }, execute: { type: 'boolean' }, confirm: { type: 'string' },
     run: { type: 'string' }, baseline: { type: 'string' }, database: { type: 'string' }, at: { type: 'string' }, timezone: { type: 'string' }, ceiling: { type: 'string' }, 'install-cron': { type: 'boolean' },
     study: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' }, author: { type: 'string' }, url: { type: 'string' }, source: { type: 'string' }, change: { type: 'string' }, reason: { type: 'string' }, 'account-directory': { type: 'string' },
+    host: { type: 'string' }, 'host-capabilities': { type: 'string' },
+    'check-tavily': { type: 'boolean' },
   } });
   if (values.help || !positionals.length) { process.stdout.write(HELP); return; }
   const [command, action] = positionals;
   let result;
-  if (command === 'study') result = await studyCommand(action, values);
+  if (command === 'doctor' || (command === 'setup' && (!action || action === 'inspect'))) {
+    if (command === 'doctor' && action) throw new ResearchError('invalid_arguments', 'Doctor takes no action');
+    result = await inspectSetup({ project: values.project, host: values.host, checkTavily: values['check-tavily'], hostCapabilities: values['host-capabilities'] ? readJson(values['host-capabilities']) : undefined });
+  } else if (command === 'setup') {
+    if (action !== 'save' || !values.project || !values.input) throw new ResearchError('invalid_arguments', 'Setup save requires --project DIR --input FILE');
+    result = saveSetup(resolve(values.project), readJson(values.input));
+  } else if (command === 'study') result = await studyCommand(action, values);
   else if (command === 'agents' && action === 'list') result = { agents: await discoverAgents() };
   else if (command === 'import') {
     if (!action || !values.database || resolve(values.database) !== values.database) throw new ResearchError('invalid_arguments', 'Import requires an evidence file and explicit absolute --database path');

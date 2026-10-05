@@ -60,6 +60,15 @@ export function safeEnvironment(env = process.env) {
   return allowed;
 }
 
+/** @param {Record<string, string|undefined>} env @returns {Record<string, string>} */
+function hostProbeEnvironment(env) {
+  const allowed = safeEnvironment(env);
+  for (const key of ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GEMINI_CLI_HOME']) {
+    if (env[key]) allowed[key] = String(env[key]);
+  }
+  return allowed;
+}
+
 /**
  * @param {string} dataDir
  * @returns {string}
@@ -329,7 +338,7 @@ export async function discoverCli(options) {
   const temporaryCwd = options.cwd === undefined ? createInvocationDirectory(options.dataDir ?? tmpdir()) : null;
   const common = {
     shell: false,
-    env: safeEnvironment(env),
+    env: hostProbeEnvironment(env),
     cwd: options.cwd ?? temporaryCwd,
     timeout: options.timeoutMs ?? 10_000,
     maxBuffer: options.maxOutputBytes ?? 256 * 1024,
@@ -374,7 +383,7 @@ export async function probeAuthentication(options) {
   try {
     const result = await run(options.executable, options.args, {
       shell: false,
-      env: safeEnvironment(options.env ?? process.env),
+      env: hostProbeEnvironment(options.env ?? process.env),
       cwd: options.cwd ?? temporaryCwd,
       timeout: options.timeoutMs ?? 10_000,
       maxBuffer: options.maxOutputBytes ?? 64 * 1024,
