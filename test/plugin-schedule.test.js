@@ -3,9 +3,13 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { studyFixture } from '../test-support/study-fixture.js';
 import { approveStudy, previewStudy, loadStudy, proposeStudyPlan } from '../core/study-workspace.js';
-import { previewPluginSchedule, installPluginSchedule, inspectPluginSchedule, removePluginSchedule, pluginScheduleTick } from '../core/plugin-schedule.js';
+import * as scheduling from '../core/plugin-schedule.js';
+import { deriveStudyReport } from '../core/study-report.js';
+import { connectStudySchedule } from '../core/study-schedule.js';
+const { previewPluginSchedule, installPluginSchedule, inspectPluginSchedule, removePluginSchedule, pluginScheduleTick } = scheduling;
 
 const now = new Date('2026-10-02T08:00:00Z');
 function cron(t) {
@@ -101,6 +105,17 @@ test('host preview supplies agent instructions without pretending a task exists'
   assert.equal(loadStudy(f.directory).manifest.schedule.connected, false);
 });
 
+test('the native host command runs the approved study without cron installation state', async (t) => {
+  const f = await approved(t);
+  const preview = previewPluginSchedule(f.directory, { kind: 'host' });
+  const result = JSON.parse(execFileSync('/bin/sh', ['-c', preview.command], {
+    cwd: f.projectDirectory, env: { HOME: f.projectDirectory, PATH: '' }, encoding: 'utf8',
+  }));
+  assert.notEqual(result.status, 'disabled');
+  assert.equal(existsSync(join(f.directory, 'plugin-schedule.json')), false);
+  assert.match(preview.command, /'study' 'tick'/);
+});
+
 
 test('imported runtime modules and the Node binary require fresh scheduler consent after replacement', async (t) => {
   const f = await approved(t); const c = cron(t);
@@ -156,6 +171,41 @@ test('a removed cron job is reported disconnected and ticks cannot collect', asy
   assert.equal((await pluginScheduleTick(f.directory, { ...opts, tick: () => { calls++; } })).status, 'repair_required');
   assert.equal(calls, 0);
 });
+
+test('resumed study and owner report use current cron status while preserving connection history', async (t) => {
+  const f = await approved(t); const c = cron(t);
+  const opts = { author: 'owner', runCron: c.run, cronLockDirectory: c.lock, now };
+  await installPluginSchedule(f.directory, previewPluginSchedule(f.directory).quoteId, opts);
+  c.run(['-'], '15 3 * * * /usr/bin/other-job\n');
+  const before = loadStudy(f.directory).events;
+  assert.equal(typeof scheduling.inspectScheduledStudy, 'function');
+  const resumed = scheduling.inspectScheduledStudy(f.directory, opts);
+  assert.equal(resumed.manifest.schedule.connected, false);
+  assert.equal(resumed.manifest.schedule.status, 'repair_required');
+  const report = deriveStudyReport(resumed);
+  assert.equal(report.scheduling.connected, false);
+  assert.equal(report.scheduling.status, 'repair_required');
+  assert.match(report.markdown, /repair_required; connected: no/);
+  assert.deepEqual(loadStudy(f.directory).events, before);
+});
+
+for (const revised of [false, true]) {
+  test(`removing an old cron job preserves the newer native connection${revised ? ' on a revised plan' : ''}`, async (t) => {
+    const f = await approved(t); const c = cron(t);
+    const opts = { author: 'owner', runCron: c.run, cronLockDirectory: c.lock, now };
+    await installPluginSchedule(f.directory, previewPluginSchedule(f.directory).quoteId, opts);
+    if (revised) {
+      await proposeStudyPlan(f.directory, { ...f.plan, id: 'plan-2' });
+      await approveStudy(f.directory, previewStudy(f.directory).quoteId, { author: 'owner', now });
+    }
+    await connectStudySchedule(f.directory, { kind: 'host', command: 'verified host task', receipt: { jobId: 'native-job', verifiedAt: now.toISOString() }, now });
+    await removePluginSchedule(f.directory, opts);
+    assert.equal(loadStudy(f.directory).manifest.schedule.connected, true);
+    const report = deriveStudyReport(scheduling.inspectScheduledStudy(f.directory, opts));
+    assert.equal(report.scheduling.connected, true);
+    assert.equal(report.scheduling.connectedKind, 'host');
+  });
+}
 
 
 test('reinstalling after removal records a new connection even at the same clock time', async (t) => {

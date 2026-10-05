@@ -3,13 +3,13 @@ import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ResearchError, researchHash } from './research-contract.js';
 import { readJson } from './research-workspace.js';
-import { createStudy, proposeStudyPlan, previewStudy, approveStudy, inspectStudy, loadStudy, captureStudyPage, recordStudyVersion, appendStudyRecord,
+import { createStudy, proposeStudyPlan, previewStudy, approveStudy, loadStudy, captureStudyPage, recordStudyVersion, appendStudyRecord,
   recordStudyDecision, recordStudyAnalysis } from './study-workspace.js';
 import { prepareStudyResearch, collectStudyOccurrence, collectStudyDiagnostic, studyScheduleTick, connectStudySchedule, stopStudyCollection } from './study-schedule.js';
 import { deriveStudyReport } from './study-report.js';
 import { normalizeStudyOutcome, parseStudyOutcomeCsv } from './study-outcomes.js';
 import { previewTavilyReconciliation, reconcileTavilyLedger } from './tavily-search.js';
-import { previewPluginSchedule, installPluginSchedule, inspectPluginSchedule, removePluginSchedule, pluginScheduleTick } from './plugin-schedule.js';
+import { previewPluginSchedule, installPluginSchedule, inspectPluginSchedule, inspectScheduledStudy, removePluginSchedule, pluginScheduleTick } from './plugin-schedule.js';
 
 /** @typedef {import('./research-contract.js').ResearchRecord} Record */
 
@@ -72,7 +72,7 @@ export async function studyCommand(action, values) {
   if (action === 'schedule-remove') return removePluginSchedule(directory);
   if (action === 'schedule-tick') return pluginScheduleTick(directory);
   if (action === 'preview') return previewStudy(directory);
-  if (action === 'inspect') return inspectStudy(directory);
+  if (action === 'inspect') return inspectScheduledStudy(directory);
   if (action === 'propose') return proposeStudyPlan(directory, input());
   if (action === 'prepare-routes') return prepareStudyResearch(directory);
   if (action === 'approve') {
@@ -126,7 +126,7 @@ export async function studyCommand(action, values) {
     return { saved };
   }
   if (action === 'report') {
-    const snapshot = loadStudy(directory);
+    const snapshot = inspectScheduledStudy(directory);
     const report = deriveStudyReport(snapshot);
     const record = { ...report, id: `review-${report.id}`, createdAt: new Date().toISOString(), planId: snapshot.plan.id };
     const existing = snapshot.reviews.find((/** @type {Record} */ item) => item.id === record.id);

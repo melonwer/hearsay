@@ -166,7 +166,7 @@ function captureResult(bundle, sample, result) {
   sample.usage.outputTokens = result.usage?.outputTokens ?? null;
 }
 
-/** @param {string} directory @param {{execute?:boolean,confirm?:string,signal?:AbortSignal,preview?:Awaited<ReturnType<typeof previewResearchRun>>,runnerFactory?:(id:string,options:any)=>any,runId?:string,studyApprovalId?:string}} [options] */
+/** @param {string} directory @param {{execute?:boolean,confirm?:string,signal?:AbortSignal,preview?:Awaited<ReturnType<typeof previewResearchRun>>,runnerFactory?:(id:string,options:any)=>any,runId?:string,studyApprovalId?:string,stopOnProviderFailure?:boolean}} [options] */
 export async function runResearchPanel(directory, options = {}) {
   const root = resolve(directory);
   const preview = options.preview ?? await previewResearchRun(root);
@@ -238,7 +238,7 @@ export async function runResearchPanel(directory, options = {}) {
             if (bundle.traceEvents.length + events.length <= 10000 && Buffer.byteLength(JSON.stringify(bundle)) + Buffer.byteLength(JSON.stringify(events)) < 7 * 1024 * 1024) bundle.traceEvents.push(...events);
             else if (!bundle.provenance.limitations.includes('Full trace retained in local captures only.')) bundle.provenance.limitations.push('Full trace retained in local captures only.');
           }
-          stopped = /auth|quota|rate_limit|unsupported/.test(sample.errorCode ?? '');
+          stopped = /auth|quota|rate_limit|unsupported|execution_mismatch/.test(sample.errorCode ?? '');
         } catch (error) {
           sample.status = 'failed'; sample.errorCode = /** @type {Record} */ (error).code ?? 'execution_failed';
           if (error instanceof AgentProcessError && error.output) {
@@ -251,8 +251,9 @@ export async function runResearchPanel(directory, options = {}) {
               } catch {}
             }
           }
-          stopped = /auth|quota|rate_limit|unsupported/.test(sample.errorCode);
+          stopped = /auth|quota|rate_limit|unsupported|execution_mismatch/.test(sample.errorCode);
         }
+        if (stopped && options.stopOnProviderFailure) controller.abort();
         sample.finishedAt = new Date().toISOString(); sample.usage.durationMs = Date.parse(sample.finishedAt) - Date.parse(sample.startedAt);
         persist();
       }

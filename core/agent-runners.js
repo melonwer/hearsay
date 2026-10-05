@@ -27,7 +27,7 @@ import {
   discoverCli,
   preflightCli,
   probeAuthentication,
-  safeEnvironment,
+  accountEnvironment,
   spawnBounded,
 } from './agent-process.js';
 import { parseClaudeStreamJsonl, parseCodexJsonl } from './agent-parsers.js';
@@ -152,7 +152,7 @@ export class SubscriptionAgentRunner {
         args,
         input: buildMeasurementPrompt(target.promptText),
         cwd,
-        env: safeEnvironment(),
+        env: accountEnvironment(this.surface),
         timeoutMs: this.timeoutMs,
         idleTimeoutMs: this.idleTimeoutMs,
         maxOutputBytes: this.maxOutputBytes,

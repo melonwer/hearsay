@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
 import { ResearchError, researchHash } from './research-contract.js';
 import { readJson, writeJson } from './research-workspace.js';
-import { loadStudy, previewStudy, appendStudyRecord, withStudyLock } from './study-workspace.js';
+import { loadStudy, inspectStudy, previewStudy, appendStudyRecord, withStudyLock } from './study-workspace.js';
 import { connectStudySchedule, studyScheduleTick } from './study-schedule.js';
 
 /** @typedef {import('./research-contract.js').ResearchRecord} Record */
@@ -67,7 +67,7 @@ export function previewPluginSchedule(directory, options = {}) {
   const study = resolve(directory);
   const accountDirectory = options.accountDirectory ? resolve(options.accountDirectory) : null;
   if (/[\r\n%]/.test(study + runtime.entry + runtime.node + (accountDirectory ?? ''))) throw new ResearchError('invalid_path', 'Scheduled paths cannot contain newlines or percent characters');
-  const command = [runtime.node, runtime.entry, 'study', 'schedule-tick', '--study', study, ...(accountDirectory ? ['--account-directory', accountDirectory] : []), '--json'].map(quote).join(' ');
+  const command = [runtime.node, runtime.entry, 'study', kind === 'cron' ? 'schedule-tick' : 'tick', '--study', study, ...(accountDirectory ? ['--account-directory', accountDirectory] : []), '--json'].map(quote).join(' ');
   const marker = `# hearsay-study-${researchHash(study).slice(0, 16)}`;
   const scope = { version: 1, kind, study, planQuote: previewStudy(directory).quoteId, runtime, accountDirectory,
     timezone: plan.collection.timezone, at: plan.collection.at, occurrences: plan.collection.occurrences, maxDays: plan.collection.maxDays,
@@ -75,7 +75,7 @@ export function previewPluginSchedule(directory, options = {}) {
     targetCeiling: plan.research?.targetCount ?? 0, tavily: plan.tavily, command, marker,
     cron: kind === 'cron' ? `* * * * * ${command} >> ${quote(join(study, 'schedule.log'))} 2>&1 ${marker}` : null,
     analysis: kind === 'cron' ? 'due_after_collection' : 'host_task_required',
-    instruction: `Resume the Hearsay study at ${study}. Read the approved plan and pending decisions. Run the due occurrence with the bundled study tick command. Analyze new receipts, save the analysis and local report, and recommend the next action. Respect approved questions, routes, limits and duration. Do not publish or send external messages without their applicable approval.`,
+    instruction: `Resume the Hearsay study at ${study}. Read the approved plan and pending decisions. Before a native repeat, compare a fresh host schedule preview with the approved scheduler quote and runtime identity in the installed task receipt. If the runtime, path or scope changed, request reconnection before collecting. Run the due occurrence with the bundled study tick command. Analyze new receipts, save the analysis and local report, and recommend the next action. Respect approved questions, routes, limits and duration. Do not publish or send external messages without their applicable approval.`,
     credentialRequirements: plan.tavily.enabled ? ['TAVILY_API_KEY must be available in the scheduled process; cron does not inherit the interactive agent environment.'] : [],
   };
   return { ...scope, quoteId: researchHash(scope) };
@@ -101,6 +101,19 @@ export function inspectPluginSchedule(directory, options = {}) {
   } catch { return { ...saved, status: 'repair_required', connected: false, reason: 'The scheduled runtime is unavailable; preview and reconnect the task' }; }
 }
 
+/** @param {string} directory @param {Record} [options] */
+export function inspectScheduledStudy(directory, options = {}) {
+  const snapshot = inspectStudy(directory);
+  const connection = snapshot.events.find((/** @type {Record} */ row) => row.id === snapshot.manifest.schedule.connectionId);
+  if (connection && connection.receipt?.scheduler !== 'cron') return snapshot;
+  if (!existsSync(statePath(directory)) && connection?.receipt?.scheduler !== 'cron') return snapshot;
+  const current = inspectPluginSchedule(directory, options);
+  snapshot.schedulerStatus = { status: current.status, connected: current.connected, reason: current.reason ?? null };
+  snapshot.manifest.schedule = { ...snapshot.manifest.schedule, connectionRecorded: snapshot.manifest.schedule.connected,
+    connected: current.connected, status: current.status, reason: current.reason ?? null };
+  return snapshot;
+}
+
 /** @param {string} directory @param {string} confirm @param {Record} [options] */
 export async function installPluginSchedule(directory, confirm, options = {}) {
   return withCronLock(options, () => withStudyLock(directory, async () => {
@@ -121,7 +134,7 @@ export async function installPluginSchedule(directory, confirm, options = {}) {
     if (!recovering) writeFileSync(backup, previous, { mode: 0o600, flag: 'wx' });
     const verifiedAt = recovering ? prior.verifiedAt : (options.now ?? new Date()).toISOString();
     const installId = recovering ? prior.installId : randomUUID();
-    const saved = { ...preview, enabled: true, phase: 'connected', approvalId: approval.id, author: options.author, verifiedAt, backup, installId };
+    const saved = { ...preview, enabled: true, phase: 'connected', planId: snapshot.plan.id, approvalId: approval.id, author: options.author, verifiedAt, backup, installId, connectionId: '' };
     writeJson(statePath(directory), { ...saved, enabled: false, phase: 'installing' });
     if (!previous.split('\n').includes(preview.cron)) {
       const lines = previous.split('\n').filter((/** @type {string} */ line) => line && !line.trimEnd().endsWith(preview.marker));
@@ -129,7 +142,8 @@ export async function installPluginSchedule(directory, confirm, options = {}) {
       await run(['-'], lines.join('\n') + '\n');
     }
     if (!(await run(['-l'])).split('\n').includes(preview.cron)) throw new ResearchError('schedule_verification_failed', 'Installed cron job could not be verified; inspect the backup before retrying');
-    await (options.connect ?? connectStudySchedule)(directory, { kind: 'runtime', command: preview.command, receipt: { jobId: preview.marker, verifiedAt, scheduler: 'cron', runtime: preview.runtime, installId }, now: new Date(verifiedAt) });
+    const connection = await (options.connect ?? connectStudySchedule)(directory, { kind: 'runtime', command: preview.command, receipt: { jobId: preview.marker, verifiedAt, scheduler: 'cron', runtime: preview.runtime, installId }, now: new Date(verifiedAt) });
+    saved.connectionId = connection.id;
     writeJson(statePath(directory), saved);
     return { ...saved, status: 'connected', connected: true };
   }));
@@ -150,7 +164,12 @@ export async function removePluginSchedule(directory, options = {}) {
     await run(['-'], previous.split('\n').filter((/** @type {string} */ line) => line && !line.trimEnd().endsWith(saved.marker)).join('\n') + '\n');
     if ((await run(['-l'])).split('\n').some((/** @type {string} */ line) => line.trimEnd().endsWith(saved.marker))) throw new ResearchError('schedule_verification_failed', 'Cron removal could not be verified');
     const id = `disconnect-${researchHash({ quote: saved.quoteId, installId: saved.installId, verifiedAt: saved.verifiedAt }).slice(0, 24)}`;
-    if (!loadStudy(directory).events.some((/** @type {Record} */ row) => row.id === id)) await appendStudyRecord(directory, 'event', { id, type: 'schedule_disconnected', planId: loadStudy(directory).plan.id, approvalId: saved.approvalId, reason: 'Founder disabled the cron collector' });
+    const snapshot = loadStudy(directory);
+    const connection = snapshot.events.find((/** @type {Record} */ row) => row.id === snapshot.manifest.schedule.connectionId);
+    const active = connection?.receipt?.scheduler === 'cron' && connection.receipt.installId === saved.installId;
+    if (!snapshot.events.some((/** @type {Record} */ row) => row.id === id)) await appendStudyRecord(directory, 'event', { id,
+      type: active ? 'schedule_disconnected' : 'cron_removed', planId: saved.planId ?? snapshot.approvals.find((/** @type {Record} */ row) => row.id === saved.approvalId)?.planId,
+      approvalId: saved.approvalId, connectionId: saved.connectionId, reason: 'Founder disabled the cron collector' });
     writeJson(path, { ...saved, enabled: false, phase: 'disabled', backup });
     return { status: 'disabled', connected: false, backup };
   }));

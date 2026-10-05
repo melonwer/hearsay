@@ -84,7 +84,7 @@ test('a single study decision binds distinct account quotes and verified baselin
   const bound = await prepareStudyResearch(f.directory, { preview, now: started });
   const approval = await approveStudy(f.directory, bound.quoteId, { author: 'owner', now: started });
   let prompts = [];
-  const options = { now: started, researchPreview: preview, runnerFactory: () => ({ run: async (input) => {
+  const options = { now: started, researchPreview: preview, runnerFactory: () => ({ preflight: async () => ({ authenticated: true, authKind: 'subscription' }), run: async (input) => {
     prompts.push(input);
     return { text: 'Drip Score is a good option for outfit photos.', searchEvents: [{ eventType: 'search', status: 'completed', query: input.promptText, results: [] }], sessionIsolation: true, brandContext: false, cliVersion: 'fixture 1', executionProfileHash: 'fixture-profile' };
   } }) };

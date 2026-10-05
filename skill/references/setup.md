@@ -57,6 +57,8 @@ The collection approval binds exact questions, provider identities, limits, and 
 
 Prefer a host agent task capable of collecting and analyzing in one session. Run `study schedule-preview --study ABSOLUTE_STUDY_DIR --input OPTIONS_JSON` with `{"kind":"host"}` to get its exact scope and repeat instruction. Install through the host only after the founder approves the task. Verify its job ID, time, timezone, and repeat instruction, then save the receipt with `study connect`. Task availability and plugin installation are not proof a task exists.
 
+The host owns a native task's installed path and runtime identity. Save the host preview's runtime identity and quote in the task receipt. Before each native repeat, compare a fresh host schedule preview with that approved quote. A moved or changed runtime requires a fresh scheduler decision and reconnection. The runtime verifies cron identity itself.
+
 For an approved Linux or macOS cron fallback, preview with `{"kind":"cron"}`. Explain that it collects evidence and leaves agent analysis due. Cron does not inherit the agent's current shell environment; its provider credentials must be available through the runner's existing secure environment. If that environment is unavailable, use manual runs or a host task and report the required credential step. Never place a key in a cron command.
 
 ```sh

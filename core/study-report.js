@@ -169,16 +169,19 @@ function businessFacts(snapshot) {
 function scheduling(snapshot) {
   const events = list(snapshot.events).map(object); const plan = object(snapshot.plan); const approvals = list(snapshot.approvals);
   const approved = approvals.some((item) => item.planId === plan.id || item.planRevision === plan.id || item.status === 'approved');
-  const connectionEvent = events.filter((event) => ['schedule_connected', 'schedule_disconnected'].includes(event.type) && (!event.planId || event.planId === plan.id)).at(-1);
+  const connectionEvent = events.filter((event) => ['schedule_connected', 'schedule_disconnected'].includes(event.type) && (!event.planId || event.planId === plan.id)
+    && (!snapshot.manifest?.approvalId || !event.approvalId || event.approvalId === snapshot.manifest.approvalId)).at(-1);
   const connected = connectionEvent?.type === 'schedule_connected' ? connectionEvent : null;
   const stopped = object(snapshot.manifest).status === 'approved' ? null : events.filter((event) => event.type === 'collection_stopped' && (!event.planId || event.planId === plan.id)).at(-1);
   const occurrences = events.filter((event) => ['occurrence_claimed', 'occurrence_completed', 'occurrence_missed'].includes(event.type));
   const last = occurrences.at(-1);
   const latestSuccess = [...occurrences].reverse().find((/** @type {any} */ event) => event.type === 'occurrence_completed' && event.status === 'completed');
-  return { configured: Boolean(plan.collection), approved, connected: Boolean(connected), connectedKind: connected?.kind ?? null,
+  const current = snapshot.schedulerStatus;
+  const isConnected = current ? current.connected : Boolean(connected);
+  return { configured: Boolean(plan.collection), approved, connected: isConnected, connectedKind: isConnected ? connected?.kind ?? null : null,
     lastSuccess: latestSuccess?.finishedAt ?? null,
     lastAttempt: last?.attemptedAt ?? null, missed: occurrences.filter((event) => event.type === 'occurrence_missed' || event.status === 'missed').length,
-    stopped: Boolean(stopped), stoppedAt: stopped?.stoppedAt ?? null, status: stopped ? 'stopped' : !approved ? 'awaiting_approval' : !connected ? 'configured_disconnected' : last?.type === 'occurrence_missed' ? 'missed' : 'connected' };
+    stopped: Boolean(stopped), stoppedAt: stopped?.stoppedAt ?? null, status: stopped ? 'stopped' : !approved ? 'awaiting_approval' : current && !current.connected ? current.status : !connected ? 'configured_disconnected' : last?.type === 'occurrence_missed' ? 'missed' : 'connected' };
 }
 
 /** @param {Record<string, any>} snapshot */

@@ -7,7 +7,8 @@ import { studyIdentifier } from './study-contract.js';
 import { loadProject, previewResearchRun, runResearchPanel, readJson, writeJson } from './research-workspace.js';
 import { previewResearchSchedule, enableResearchSchedule, readResearchSchedule } from './research-schedule.js';
 import { localDateInZone, scheduledInstantForLocalDate } from './subscription-scheduler.js';
-import { collectTavily } from './tavily-search.js';
+import { collectTavily, inspectTavilyUsage } from './tavily-search.js';
+import { createAgentRunner } from './agent-runners.js';
 import { deriveStudyExposure } from './study-report.js';
 
 /** @typedef {import('./research-contract.js').ResearchRecord} Record */
@@ -83,6 +84,35 @@ function event(snapshot, input) {
   return { version: 1, studyId: snapshot.manifest.studyId, appId: snapshot.manifest.appId, planId: snapshot.plan.id, attemptedAt: input.createdAt ?? new Date().toISOString(), evidenceIds: [], ...input };
 }
 
+/** @param {string} directory @param {Record} plan @param {Record|null} preview @param {Record} options */
+async function preflightScheduledProviders(directory, plan, preview, options) {
+  if (preview) {
+    const execution = preview.snapshot.execution;
+    for (const route of execution.routes) {
+      const identity = preview.snapshot.identities.find((/** @type {Record} */ row) => row.id === route.id);
+      const runner = (options.runnerFactory ?? createAgentRunner)(route.id, { executable: identity?.executable ?? route.executable,
+        dataDir: join(directory, '.provider-preflight'), timeoutMs: execution.timeoutMs, idleTimeoutMs: execution.idleTimeoutMs, maxOutputBytes: execution.maxOutputBytes });
+      const auth = await runner.preflight();
+      const version = auth.cliVersion ?? auth.version;
+      const executable = auth.cliExecutable ?? auth.executable;
+      if (version && version !== identity.version || executable && executable !== identity.executable) {
+        throw new ResearchError('execution_mismatch', 'Account executable identity changed after the approved preview');
+      }
+      const ready = route.id === 'agy-cli' ? auth.configuredLogin === 'native_keyring_available' : auth.authenticated && auth.authKind === 'subscription';
+      if (!ready) throw new ResearchError('authentication_missing', 'Selected account route needs its supported login or native keyring');
+    }
+  }
+  if (plan.tavily.enabled) {
+    const checked = await inspectTavilyUsage({ apiKey: options.apiKey, fetch: options.fetch, signal: options.signal, strictFreeMode: plan.tavily.strictFreeMode });
+    if (checked.status !== 'available' || !checked.usage) throw new ResearchError(`tavily_${checked.status}`, 'Selected Tavily route is unavailable for scheduled collection');
+    const needed = plan.questions.length * (plan.tavily.searchDepth === 'advanced' ? 2 : 1);
+    const usage = checked.usage;
+    if (usage.accountLimit !== null && usage.accountLimit - usage.accountUsage < needed || usage.keyLimit !== null && usage.keyLimit - usage.keyUsage < needed) {
+      throw new ResearchError('tavily_quota', 'Tavily capacity cannot cover the approved occurrence');
+    }
+  }
+}
+
 /** @param {string} studyDirectory @param {Record} [options] */
 export async function collectStudyOccurrence(studyDirectory, options = {}) {
   return withStudyLock(studyDirectory, async () => {
@@ -112,12 +142,21 @@ export async function collectStudyOccurrence(studyDirectory, options = {}) {
     if (claimedIds.size >= snapshot.plan.collection.occurrences) throw new ResearchError('study_occurrences_exhausted', 'The approved number of collection occurrences has been reached');
     let researchPreview = null;
     if (snapshot.plan.research) researchPreview = await currentResearch(projectDirectory(studyDirectory), snapshot.plan, approval, options);
+    if (options.scheduled) {
+      try { await preflightScheduledProviders(studyDirectory, snapshot.plan, researchPreview, options); }
+      catch (error) {
+        const code = /** @type {Record} */ (error).code ?? 'provider_unavailable';
+        await stopStudyCollection(studyDirectory, `Selected provider readiness failed (${code}); restore access and approve a new study plan`, { now });
+        return { status: 'stopped', reason: code };
+      }
+    }
     const identity = occurrenceId;
     await appendStudyRecord(studyDirectory, 'event', event(snapshot, { id: `${identity}-start`, type: 'occurrence_claimed', occurrenceId, approvalId: approval.id,
       status: 'claimed', createdAt: now.toISOString(), scheduled: options.scheduled === true, activeVersionId: snapshot.manifest.activeVersionId, analysisDue: true }));
     /** @type {string[]} */ const evidenceIds = [];
     /** @type {string[]} */ const failures = [];
     let successful = false;
+    let providerStop = null;
     if (snapshot.plan.tavily.enabled) {
       try {
         const tavily = snapshot.plan.tavily;
@@ -137,13 +176,20 @@ export async function collectStudyOccurrence(studyDirectory, options = {}) {
         await appendStudyRecord(studyDirectory, 'search-run', searchRun);
         evidenceIds.push(searchRun.id);
         successful ||= receipt.records.some((/** @type {Record} */ item) => item.status === 'completed');
-        if (receipt.status !== 'completed') failures.push(`tavily:${receipt.status}`);
-      } catch (error) { failures.push(`tavily:${/** @type {Record} */ (error).code ?? 'collection_failed'}`); }
+        if (receipt.status !== 'completed') {
+          failures.push(`tavily:${receipt.status}`);
+          if (options.scheduled) providerStop = `tavily:${receipt.creditSummary.stopReason ?? receipt.status}`;
+        }
+      } catch (error) {
+        const code = /** @type {Record} */ (error).code ?? 'collection_failed';
+        failures.push(`tavily:${code}`);
+        if (options.scheduled) providerStop = `tavily:${code}`;
+      }
     }
-    if (researchPreview) {
+    if (researchPreview && !providerStop) {
       try {
         const result = await runResearchPanel(projectDirectory(studyDirectory), { execute: true, preview: researchPreview, runId: `study-${researchHash(snapshot.manifest.studyId).slice(0, 10)}-${identity}`,
-          runnerFactory: options.runnerFactory, signal: options.signal, studyApprovalId: approval.id });
+          runnerFactory: options.runnerFactory, signal: options.signal, studyApprovalId: approval.id, stopOnProviderFailure: options.scheduled === true });
         if (!('evidence' in result)) throw new ResearchError('collection_failed', 'Research execution returned no saved evidence');
         await appendStudyRecord(studyDirectory, 'research-run', event(snapshot, { id: `research-${identity}`, occurrenceId, approvalId: approval.id,
           createdAt: now.toISOString(), runId: result.runId, activeVersionId: snapshot.manifest.activeVersionId,
@@ -154,7 +200,13 @@ export async function collectStudyOccurrence(studyDirectory, options = {}) {
         evidenceIds.push(`research-${identity}`);
         successful ||= result.evidence.samples.some((/** @type {Record} */ item) => item.status === 'completed');
         if (result.evidence.samples.some((/** @type {Record} */ item) => item.status !== 'completed')) failures.push('research:partial_or_failed');
-      } catch (error) { failures.push(`research:${/** @type {Record} */ (error).code ?? 'collection_failed'}`); }
+        const fatal = result.evidence.samples.find((/** @type {Record} */ item) => /auth|quota|rate_limit|unsupported|execution_mismatch/.test(item.errorCode ?? ''));
+        if (options.scheduled && fatal) providerStop = `research:${fatal.errorCode}`;
+      } catch (error) {
+        const code = /** @type {Record} */ (error).code ?? 'collection_failed';
+        failures.push(`research:${code}`);
+        if (options.scheduled && /auth|quota|rate_limit|unsupported|execution_mismatch/.test(code)) providerStop = `research:${code}`;
+      }
     }
     if (!snapshot.plan.tavily.enabled && !snapshot.plan.research) failures.push('host_research_due');
     const result = event(snapshot, { id: `${identity}-result`, type: 'occurrence_completed', occurrenceId, approvalId: approval.id,
@@ -162,6 +214,7 @@ export async function collectStudyOccurrence(studyDirectory, options = {}) {
       createdAt: now.toISOString(), completedAt: now.toISOString(), finishedAt: now.toISOString(), lastSuccessAt: successful ? now.toISOString() : null,
       activeVersionId: snapshot.manifest.activeVersionId, evidenceIds, failures, analysisDue: true });
     await appendStudyRecord(studyDirectory, 'event', result);
+    if (providerStop) await stopStudyCollection(studyDirectory, `Selected provider stopped (${providerStop}); restore access and approve a new study plan`, { now });
     return result;
   });
 }

@@ -69,6 +69,14 @@ function hostProbeEnvironment(env) {
   return allowed;
 }
 
+/** @param {string} surface @param {Record<string, string|undefined>} [env] */
+export function accountEnvironment(surface, env = process.env) {
+  const allowed = safeEnvironment(env);
+  const key = surface === 'codex-agent' ? 'CODEX_HOME' : surface === 'claude-code-agent' ? 'CLAUDE_CONFIG_DIR' : null;
+  if (key && env[key]) allowed[key] = String(env[key]);
+  return allowed;
+}
+
 /**
  * @param {string} dataDir
  * @returns {string}
