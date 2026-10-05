@@ -127,7 +127,8 @@ function derivedManifest(snapshot) {
   const reviewed = new Set(analyses.flatMap((/** @type {Record} */ analysis) => analysis.occurrenceIds));
   manifest.analysisDue = [...new Set(completed.map((/** @type {Record} */ event) => event.occurrenceId).filter((/** @type {string} */ id) => !reviewed.has(id)))];
   const stop = events.filter((/** @type {Record} */ event) => event.type === 'collection_stopped' && event.planId === plan.id).at(-1);
-  const connection = events.filter((/** @type {Record} */ event) => event.type === 'schedule_connected' && event.planId === plan.id && event.approvalId === approval?.id).at(-1);
+  const connectionEvent = events.filter((/** @type {Record} */ event) => ['schedule_connected', 'schedule_disconnected'].includes(event.type) && event.planId === plan.id && event.approvalId === approval?.id).at(-1);
+  const connection = connectionEvent?.type === 'schedule_connected' ? connectionEvent : null;
   manifest.status = stop ? 'stopped' : approval ? 'approved' : 'proposed';
   manifest.schedule = { configured: Boolean(plan.collection), connected: Boolean(connection), connectionId: connection?.id ?? null,
     lastSuccessAt: completed.filter((/** @type {Record} */ event) => ['completed', 'success', 'partial'].includes(event.status)).at(-1)?.lastSuccessAt ?? completed.filter((/** @type {Record} */ event) => ['completed', 'success'].includes(event.status)).at(-1)?.finishedAt ?? completed.filter((/** @type {Record} */ event) => ['completed', 'success'].includes(event.status)).at(-1)?.completedAt ?? null,

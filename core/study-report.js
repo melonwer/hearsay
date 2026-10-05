@@ -169,7 +169,8 @@ function businessFacts(snapshot) {
 function scheduling(snapshot) {
   const events = list(snapshot.events).map(object); const plan = object(snapshot.plan); const approvals = list(snapshot.approvals);
   const approved = approvals.some((item) => item.planId === plan.id || item.planRevision === plan.id || item.status === 'approved');
-  const connected = events.filter((event) => event.type === 'schedule_connected' && (!event.planId || event.planId === plan.id)).at(-1);
+  const connectionEvent = events.filter((event) => ['schedule_connected', 'schedule_disconnected'].includes(event.type) && (!event.planId || event.planId === plan.id)).at(-1);
+  const connected = connectionEvent?.type === 'schedule_connected' ? connectionEvent : null;
   const stopped = object(snapshot.manifest).status === 'approved' ? null : events.filter((event) => event.type === 'collection_stopped' && (!event.planId || event.planId === plan.id)).at(-1);
   const occurrences = events.filter((event) => ['occurrence_claimed', 'occurrence_completed', 'occurrence_missed'].includes(event.type));
   const last = occurrences.at(-1);

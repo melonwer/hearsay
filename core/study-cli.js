@@ -9,6 +9,7 @@ import { prepareStudyResearch, collectStudyOccurrence, collectStudyDiagnostic, s
 import { deriveStudyReport } from './study-report.js';
 import { normalizeStudyOutcome, parseStudyOutcomeCsv } from './study-outcomes.js';
 import { previewTavilyReconciliation, reconcileTavilyLedger } from './tavily-search.js';
+import { previewPluginSchedule, installPluginSchedule, inspectPluginSchedule, removePluginSchedule, pluginScheduleTick } from './plugin-schedule.js';
 
 /** @typedef {import('./research-contract.js').ResearchRecord} Record */
 
@@ -27,6 +28,9 @@ hearsay study tavily-recovery-preview|tavily-recover --input RECOVERY_JSON --acc
 hearsay study outcomes --study DIR --input JSON_OR_CSV --source SOURCE [--change ID]
 hearsay study report|export --study DIR [--output FILE] [--json]
 hearsay study connect --study DIR --input INSTALLED_JOB_RECEIPT_JSON
+hearsay study schedule-preview --study DIR [--input OPTIONS_JSON]
+hearsay study schedule-install --study DIR --confirm HASH --author OWNER [--input OPTIONS_JSON]
+hearsay study schedule-inspect|schedule-remove|schedule-tick --study DIR
 hearsay study stop --study DIR --reason TEXT
 hearsay study import --input SNAPSHOT_JSON --database ABSOLUTE_PATH
 
@@ -60,6 +64,13 @@ export async function studyCommand(action, values) {
   }
   if (!values.study) throw new ResearchError('invalid_arguments', '--study is required');
   const directory = resolve(values.study);
+  if (action === 'schedule-preview' || action === 'schedule-install') {
+    const options = values.input ? input() : {};
+    return action === 'schedule-preview' ? previewPluginSchedule(directory, options) : installPluginSchedule(directory, values.confirm, { ...options, author: values.author });
+  }
+  if (action === 'schedule-inspect') return inspectPluginSchedule(directory);
+  if (action === 'schedule-remove') return removePluginSchedule(directory);
+  if (action === 'schedule-tick') return pluginScheduleTick(directory);
   if (action === 'preview') return previewStudy(directory);
   if (action === 'inspect') return inspectStudy(directory);
   if (action === 'propose') return proposeStudyPlan(directory, input());
