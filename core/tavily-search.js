@@ -142,6 +142,19 @@ function parseUsage(input, strict) {
     keyUsage: key.usage, keyLimit: key.limit, accountPolicy: { currentPlan: account.current_plan, planLimit: account.plan_limit, paygoLimit: account.paygo_limit }, keyPolicy: { limit: key.limit } }, error };
 }
 
+/** @param {{apiKey?:string,strictFreeMode?:boolean,fetch?:typeof globalThis.fetch,signal?:AbortSignal}} [options] */
+export async function inspectTavilyUsage(options = {}) {
+  const key = (options.apiKey ?? process.env.TAVILY_API_KEY ?? '').trim();
+  if (!key) return { status: 'missing_key', keyPresent: false, usage: null };
+  try {
+    const response = await request(options.fetch ?? globalThis.fetch, 'usage', key, options.signal);
+    const error = httpCode(response.status);
+    if (error) return { status: error === 'authentication' ? 'authentication_required' : error, keyPresent: true, usage: null };
+    const parsed = parseUsage(response.json, options.strictFreeMode ?? true);
+    return { status: parsed.error ?? 'available', keyPresent: true, usage: parsed.usage ? redact(parsed.usage, key) : null };
+  } catch { return { status: 'unavailable', keyPresent: true, usage: null }; }
+}
+
 /** @param {Record} state @param {string} keyId */
 function remaining(state, keyId) {
   if (!state.usage?.[keyId]) return { account: null, key: null };
