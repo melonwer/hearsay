@@ -4,11 +4,12 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyInstalledRuntime } from './verify-plugin-runtime.js';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
 if (argv.includes('--help')) {
-  console.log('Usage: node scripts/verify-skill-discovery.js [--dist <directory>] [--host codex|claude|gemini]\nInstalls test bundles into temporary host configurations and checks skill discovery without inference.');
+  console.log('Usage: node scripts/verify-skill-discovery.js [--dist <directory>] [--host codex|claude|gemini]\nInstalls test bundles into isolated host configurations, checks discovery and runs the installed doctor/setup/study preview without inference.');
   process.exit(0);
 }
 for (let index = 0; index < argv.length; index += 2) {
@@ -40,12 +41,18 @@ function jsonFile(path, value) {
 function environment(host) {
   const directory = join(temporary, host);
   const config = join(directory, 'config');
+  const home = join(directory, 'home');
   mkdirSync(config, { recursive: true });
+  mkdirSync(home, { recursive: true });
   return {
     directory,
     config,
     env: {
       PATH: process.env.PATH,
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      XDG_DATA_HOME: join(home, '.local', 'share'),
+      XDG_STATE_HOME: join(home, '.local', 'state'),
       LANG: 'C.UTF-8',
       TERM: 'dumb',
       NO_COLOR: '1',
@@ -137,7 +144,8 @@ async function codex(context, bundle) {
   assert.ok(skill?.enabled, 'Codex did not discover an enabled Hearsay skill');
   assert.equal(skill.path, join(installed.installedPath, 'skills', 'hearsay', 'SKILL.md'));
   assert.deepEqual(readFileSync(skill.path), readFileSync(join(bundle, 'skills', 'hearsay', 'SKILL.md')));
-  return { skill: skill.name, method: 'plugin install and app-server skills/list', inferenceCalls: 0 };
+  const runtime = verifyInstalledRuntime(installed.installedPath, { ...context, host: 'codex' });
+  return { skill: skill.name, method: 'plugin install, app-server skills/list and installed runtime', runtime, inferenceCalls: 0 };
 }
 
 /** @param {ReturnType<typeof environment>} context @param {string} bundle */
@@ -153,7 +161,13 @@ async function claude(context, bundle) {
   const details = run('claude', ['plugin', 'details', 'hearsay@hearsay-discovery'], context);
   assert.match(details, /Skills\s+\(1\)\s+hearsay/);
   assert.match(details, /MCP servers\s+\(0\)/);
-  return { skill: 'hearsay', method: 'plugin validate, install and details', inferenceCalls: 0 };
+  const state = JSON.parse(readFileSync(join(context.config, 'plugins', 'installed_plugins.json'), 'utf8'));
+  const receipt = state.plugins['hearsay@hearsay-discovery'];
+  const installed = (Array.isArray(receipt) ? receipt[0] : receipt).installPath;
+  assert.ok(installed && resolve(installed).startsWith(context.config), 'Claude installation escaped isolated configuration');
+  assert.deepEqual(readFileSync(join(installed, 'skills', 'hearsay', 'SKILL.md')), readFileSync(join(bundle, 'skills', 'hearsay', 'SKILL.md')));
+  const runtime = verifyInstalledRuntime(installed, { ...context, host: 'claude-code' });
+  return { skill: 'hearsay', method: 'plugin validate, install, details and installed runtime', runtime, inferenceCalls: 0 };
 }
 
 /** @param {ReturnType<typeof environment>} context @param {string} bundle */
@@ -167,7 +181,8 @@ async function gemini(context, bundle) {
   const installed = join(context.config, '.gemini', 'extensions', 'hearsay', 'skills', 'hearsay', 'SKILL.md');
   assert.ok(list.includes(installed), 'Gemini skill discovery did not use isolated configuration');
   assert.deepEqual(readFileSync(installed), readFileSync(join(bundle, 'skills', 'hearsay', 'SKILL.md')));
-  return { skill: 'hearsay', method: 'extension validate, install and skills list', inferenceCalls: 0 };
+  const runtime = verifyInstalledRuntime(join(context.config, '.gemini', 'extensions', 'hearsay'), { ...context, host: 'gemini-cli' });
+  return { skill: 'hearsay', method: 'extension validate, install, skills list and installed runtime', runtime, inferenceCalls: 0 };
 }
 
 const checks = { codex, claude, gemini };
