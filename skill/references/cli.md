@@ -2,10 +2,14 @@
 
 The portable skill needs no executable. Detect paths, versions and help without inference. Ask which installed routes to use and save that selection per project. Credential availability does not verify authentication. Never send slash commands as headless prompts to inspect configuration.
 
-The optional Node runtime accepts these commands. Project means the directory containing project.json, normally `.hearsay/<app-id>`.
+Complete plugin bundles include the Node runtime. The host agent resolves it from its installed skill path as described in [setup](setup.md), then invokes it with Node and absolute project paths. Project means the directory containing project.json, normally `.hearsay/<app-id>`.
+
+`doctor` and `setup inspect` discover capabilities without inference. `setup save` validates the inferred non-secret product profile and bootstraps a new project without approving measurements. Existing projects retain their history.
 
 ```sh
 hearsay agents list --json
+hearsay doctor --project .hearsay/my-app --json
+hearsay setup save --project .hearsay/my-app --input inferred-setup.json --json
 hearsay run --project .hearsay/my-app --json
 hearsay run --project .hearsay/my-app --execute --confirm <preview-quote>
 hearsay report --project .hearsay/my-app --run <id>
@@ -17,7 +21,7 @@ hearsay import .hearsay/my-app/runs/<id>/evidence.json --database /absolute/path
 
 Codex and Claude Code have separate account routes. Invocations use fresh-session profiles and strip API-key variables. Costs and remaining allowance are unknown unless exposed. Never substitute API prices, assume unlimited use, or fall back to another account or billing method. Authentication stays unverified until a selected invocation succeeds.
 
-The Antigravity route is `agy-cli`, separate from `gemini-api`. The inspected version is 1.2.11 and the execution profile is `agy-search-v2`. It uses a fresh Linux home and workspace with bubblewrap, fresh settings and native keyring access, with credit overage disabled. The adapter extracts completed `search_web` events and preserves unrelated tool activity in the trace. Advertised tools do not determine whether web evidence is valid. New versions need compatibility validation. Gemini CLI measurement is not implemented; the Gemini extension installs the portable skill only.
+The Antigravity route is `agy-cli`, separate from `gemini-api`. The inspected version is 1.2.11 and the execution profile is `agy-search-v2`. It uses a fresh Linux home and workspace with bubblewrap, fresh settings and native keyring access, with credit overage disabled. The adapter extracts completed `search_web` events and preserves unrelated tool activity in the trace. Advertised tools do not determine whether web evidence is valid. New versions need compatibility validation. Gemini CLI measurement is not implemented; the Gemini extension installs the skill and shared runtime.
 
 Fresh-session isolation describes the context supplied to an invocation. It does not promise exclusive web tool availability or identical configuration across users. Record actual provider, version, profile and exposed model; keep results separate when these differ. Unknown context stays unknown.
 

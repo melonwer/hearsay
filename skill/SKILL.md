@@ -1,11 +1,13 @@
 ---
 name: hearsay
-description: Run an editable website study with the current AI agent. Propose buyer angles, save page versions, collect optional bounded Tavily search and isolated AI recommendations, review business outcomes, and keep evidence-linked history. Extra CLIs and the dashboard are optional.
+description: Set up and run Hearsay through conversation. Infer the product from existing context, inspect tools and credentials, propose buyer questions and an approved schedule, and track website studies with saved evidence. Extra providers and the dashboard are optional.
 ---
 
 # Hearsay
 
 Start with an app URL or repository context. Use the current host agent and available web tools. A request to research the app authorizes initial research. Do not require Node, SQLite, MCP, a server, another account or API credits.
+
+On first use or when setup is incomplete, read [conversational setup](references/setup.md). Infer details already established by reliable context, ask only material unknowns, detect supported routes, and configure non-secret records yourself. The installed plugin includes a runtime; resolve it relative to this skill and use an explicit workspace outside the installation. Guide missing secret input or interactive login through the host's secure mechanisms. Installation does not approve collection or recurring tasks.
 
 For ongoing website improvement, read [website studies](references/studies.md) first. Inspect the product, generate and rank sourced buyer angles, and propose one editable plan. The founder approves the actual collection scope or suggests changes. Preserve page versions, occurrences, analyses, change proposals, decisions, outcomes, and reviews. Run the approved routine work and report the next action. A collector alone leaves assistant analysis due.
 

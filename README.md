@@ -12,7 +12,9 @@ Optional [Tavily search](https://docs.tavily.com/documentation/api-credits) can 
 
 ## Start with your assistant
 
-> Install the Hearsay skill from https://github.com/melonwer/hearsay. Research https://my-app.example and propose a website study to improve qualified leads. Recommend buyer angles, an unchanged comparison page, questions, daily collection, a review date, and usage limits. Offer optional Tavily basic search within 200 credits for 30 collection days. Save page version 1 and show me the actual plan before enabling collection. Keep an evidence-linked history, analyze each collection, and propose one focused change for my approval.
+> Install Hearsay from https://github.com/melonwer/hearsay and study my product. Use what you already know, ask for missing details, check available providers, and propose buyer questions, usage limits, and a schedule. Show me the actual plan before enabling collection.
+
+Complete bundles include the local runtime for Codex, Claude Code, Gemini CLI, and portable skill hosts. The agent inspects setup, infers product details from reliable context, and guides missing credential or login steps. It asks before using measurement allowance or installing recurring work. See [conversational setup](skill/references/setup.md). These bundles are built locally from source; a public catalog release is separate.
 
 The agent chooses defaults and you can edit them. The first review can happen after one day; judging leads or sales depends on exposure, traffic, and supplied outcomes. Changing a page does not make new text immediately available to search-backed agents. See [the study workflow](skill/references/studies.md).
 
@@ -29,13 +31,13 @@ node scripts/build-bundles.js
 node scripts/verify-skill-discovery.js
 ```
 
-The second command checks installation and discovery in isolated host configurations without inference. Archives live in `dist/` and contain no local database, credentials or reports.
+The second command checks installation, skill discovery, and installed runtime access in isolated host configurations without inference. Archives live in `dist/` and contain the skill and runtime, with no local database, credentials, or reports.
 
 ## Optional runtime and dashboard
 
 With Node 22.13 or newer, `node bin/hearsay.js --help` exposes agent discovery, bounded panel execution, website study history, optional Tavily collection, outcome imports, saved reports, and schedules. `npm link` installs the local `hearsay` executable. These commands need no HTTP server. See the [CLI guide](skill/references/cli.md) and [study commands](skill/references/studies.md). Runtime collection marks assistant analysis due. Automatic analysis requires a connected host agent task; an approved configuration alone does not install one. Tavily strict free mode also requires a provider limit that prevents paid overage.
 
-Codex and Claude Code account routes use existing logins and keep results separate. Extra routes are selected explicitly; API keys are removed from account invocation environments. Costs and remaining allowance stay unknown unless reported. Antigravity `agy-cli` replaces the planned Gemini CLI measurement route. Its adapter extracts observed web searches from the event stream and preserves other tool activity in the trace. Tool inventories may differ between installations. The Gemini extension still installs the portable skill. Gemini API grounding remains a separate option.
+Codex and Claude Code account routes use existing logins and keep results separate. Extra routes are selected explicitly; API keys are removed from account invocation environments. Costs and remaining allowance stay unknown unless reported. Antigravity `agy-cli` replaces the planned Gemini CLI measurement route. Its adapter extracts observed web searches from the event stream and preserves other tool activity in the trace. Tool inventories may differ between installations. The Gemini extension installs the same skill and local runtime. Gemini CLI measurement is not implemented; Gemini API grounding remains a separate option.
 
 Import saved evidence through `hearsay import <evidence.json> --database /absolute/path/hearsay.db`, the dashboard's **Research** page, `POST /api/research/import`, or `hearsay_research_import`. List/detail operations are `GET /api/research`, `GET /api/research/:id`, `hearsay_research_list` and `hearsay_research_get`. Imports retain external provenance and never enter native measurement series. Research recommendations can be proposed in Opportunities, where acceptance requires a separate review.
 

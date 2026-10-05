@@ -1,9 +1,13 @@
 # Optional dashboard connection
 
+Complete packages also include `runtime/server.js`, its web assets, and the optional `runtime/mcp/server.mjs` connector. Resolve the runtime through [setup](setup.md). Start the dashboard only when requested. Run it from the external project workspace with `HEARSAY_DB_PATH` and `HEARSAY_PORT_FILE` set to absolute workspace paths. Keep credentials in the runner environment and review any enabled provider schedules before starting. The bundled dashboard has the existing benchmark and consent requirements below.
+
+For an optional MCP connection, register Node and the absolute bundled `runtime/mcp/server.mjs` path with the host, supplying the same external `HEARSAY_PORT_FILE` or the actual `HEARSAY_URL`. Normal plugin commands do not need this connector.
+
 ## Start with status and scope
 
-Call `hearsay_status` first. If the server is unreachable, ask the user to start
-`node server.js` in the Hearsay directory, then retry. If no benchmark is configured,
+Call `hearsay_status` first when the optional MCP connector is registered. If the server is unreachable, start
+the requested dashboard with the external workspace paths, then retry. If no benchmark is configured,
 use the setup steps below. Otherwise call `hearsay_series_list` and choose an explicit
 series with the user. Record its surface, model and execution profile, search policy,
 benchmark revision, analysis revision, and UTC window. Use the same `series_id` and

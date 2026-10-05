@@ -1,12 +1,12 @@
 # Installation, upgrades and removal
 
-Install the skill in a host with web access. It needs no Node, SQLite, MCP server, daemon, registration or Hearsay dashboard. Save project data in the workspace's `.hearsay/<app-id>/`, outside the installation directory.
+Install Hearsay in your agent, then ask it to study your product. It guides setup using the context it already has. Complete bundles include the skill and local runtime. Host research needs no server or extra provider account; automated collection needs Node 22.13 or newer. Save project data in the workspace's `.hearsay/<app-id>/`, outside the installation directory.
 
 ## Portable skill
 
-Extract `hearsay-portable.tar.gz`. Copy the complete `hearsay` folder into your host's skill directory. Keep `references`, `templates` and `schemas` beside `SKILL.md`. Codex discovers workspace skills under `.agents/skills/hearsay`; Claude Code discovers `.claude/skills/hearsay`. Refresh the host's skill list.
+Extract `hearsay-portable.tar.gz`. Copy the complete `hearsay` folder into your host's skill directory. Keep `runtime`, `references`, `templates`, and `schemas` beside `SKILL.md`. Codex discovers workspace skills under `.agents/skills/hearsay`; Claude Code discovers `.claude/skills/hearsay`. Refresh the host's skill list. Copying only the source `skill/` directory still supports host research but does not include the packaged runtime.
 
-Ask: "Use Hearsay to track https://my-app.example, discover its competitors, investigate its visibility, and recommend improvements."
+Ask: "Use Hearsay to study my product. Use what you already know, ask for any missing details, and propose the questions, limits, and schedule."
 
 The current agent begins research. Extra CLIs require selection. If fresh independent sessions are unavailable, the first report is a sourced research audit without independent recommendation rates.
 
@@ -35,9 +35,9 @@ gemini extensions install "$PWD/dist/gemini/hearsay"
 gemini skills list
 ```
 
-Review the local extension trust prompt. The extension adds the same skill without MCP. Host installation does not authenticate a provider or enable measurements. If a host cannot use your account, use the portable skill in your existing agent.
+Review the host's installation and trust prompts. Each package adds the same skill and runtime without mandatory MCP. Installation does not authenticate a provider, spend credits, or enable a task. The agent detects available routes and helps with missing login or secret setup through [conversational setup](setup.md). The Gemini extension does not add a Gemini CLI measurement route.
 
-If distributing only a plugin archive, extract it as `hearsay/` in a local marketplace directory. Register that directory using the host's local marketplace manifest. Generated `dist/codex` and `dist/claude` directories provide complete examples. Archives contain the plugin manifests and actual skill resources.
+If distributing only a plugin archive, extract its `hearsay/` package into a local marketplace directory and register it with the host's local marketplace manifest. Generated `dist/codex` and `dist/claude` directories provide complete examples. The Gemini archive contains its extension directory directly. Use [setup](setup.md) for installation-relative runtime paths.
 
 ## Upgrade and remove
 
@@ -45,8 +45,8 @@ For portable upgrades, back up the old installed folder and replace the whole sk
 
 Remove a portable installation by deleting only its installed `hearsay` folder. Remove plugins with `codex plugin remove hearsay@hearsay-local` or `claude plugin uninstall hearsay@hearsay-local`. Remove the extension with `gemini extensions uninstall hearsay`. Remove an unused local marketplace through the host's marketplace command if desired.
 
-Workspace reports and drafts survive these operations. Disable recurring schedules before removing the optional runtime. Removing a skill does not disable an external scheduler.
+Workspace reports and drafts survive these operations. Inspect and reconnect tasks when an update changes their runtime paths or versions. Cron schedules use `study schedule-inspect` to detect changed references; preview and approve the replacement before reconnecting. Disable recurring schedules before removing the runtime. Removing a plugin does not disable an external scheduler.
 
-## Optional runtime
+## Included runtime
 
-From a source checkout with Node 22.13 or newer, run `node bin/hearsay.js --help`, or install the local executable with `npm link` and use `hearsay --help`. It calls core services directly without the HTTP server. `npm unlink --global hearsay` removes the executable link and preserves project history. See [CLI execution](cli.md) for consent, limits and scheduling, or [dashboard connection](dashboard.md) for optional imports.
+The agent invokes `node ABSOLUTE_PLUGIN_DIRECTORY/runtime/bin/hearsay.js` for setup, study collection, and reports. It calls core services directly without an HTTP server. Node comes from the host environment; packages do not download it or provider CLIs on installation. You can also use `node bin/hearsay.js --help` from a source checkout or `npm link` for a local executable. See [CLI execution](cli.md) and [dashboard connection](dashboard.md) for existing optional workflows.
