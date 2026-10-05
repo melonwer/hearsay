@@ -29,7 +29,7 @@
 
 ---
 
-### Task 1: Shared setup contract and local inspection
+### Task 1: Shared setup contract and local inspection ✅
 
 **Files:** Create `core/plugin-setup.js`, `test/plugin-setup.test.js`; modify `bin/hearsay.js`.
 
@@ -41,7 +41,7 @@
 - [ ] Add `hearsay doctor`, `hearsay setup inspect`, and `hearsay setup save --project DIR --input FILE`; default setup action is inspection.
 - [ ] Run focused setup and CLI tests and commit this verifiable unit.
 
-### Task 2: Complete runtime bundles
+### Task 2: Complete runtime bundles ✅
 
 **Files:** Modify `scripts/build-bundles.js`, `test/skill-package.test.js`; add runtime package metadata and license entries through the generator.
 
@@ -52,7 +52,7 @@
 - [ ] Verify archive contents, source byte equality, portability, secret exclusions, and unchanged workspace history after a bundle replacement.
 - [ ] Commit the complete distribution unit.
 
-### Task 3: Conversational onboarding and provider setup guidance
+### Task 3: Conversational onboarding and provider setup guidance ✅
 
 **Files:** Modify `skill/SKILL.md`, `skill/references/installation.md`, `skill/references/cli.md`, `skill/references/studies.md`, `README.md`; create `skill/references/setup.md` and `skill/templates/setup.json`.
 
@@ -64,7 +64,7 @@
 - [ ] Document implemented measurement routes accurately; Gemini host installation does not create a Gemini CLI measurement route.
 - [ ] Run resource and bundle verification and commit the onboarding unit.
 
-### Task 4: Study scheduler connection and lifecycle
+### Task 4: Study scheduler connection and lifecycle ✅
 
 **Files:** Modify `core/study-cli.js`, `core/study-schedule.js`, `core/plugin-setup.js`, `bin/hearsay.js`, study references; add `test/plugin-schedule.test.js`.
 
@@ -76,7 +76,7 @@
 - [ ] Provide exact native task instructions and verification receipt; only verified installed jobs are labelled connected.
 - [ ] Run focused schedule/CLI tests and commit the lifecycle unit.
 
-### Task 5: Clean-host plugin verification and delivery receipts
+### Task 5: Clean-host plugin verification and delivery receipts ✅
 
 **Files:** Modify `scripts/verify-skill-discovery.js`, `package.json`; create `scripts/verify-plugin-runtime.js`, `docs/plugin-verification.md`; modify plan/spec status as appropriate.
 
