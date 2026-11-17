@@ -670,3 +670,85 @@ export function exportAll(db) {
   }
   return out;
 }
+
+/**
+ * Plain-SQL summary of standalone research audits and website study snapshots
+ * available for Weekly Review when native tracking series are absent or alongside them.
+ *
+ * @param {Db} db
+ * @returns {{
+ *   hasNativeSeries: boolean,
+ *   researchCount: number,
+ *   studyCount: number,
+ *   latestWindowEnd: string|null,
+ * }}
+ */
+export function standaloneWeeklySummary(db) {
+  const nativeRow = get(db, "SELECT COUNT(*) AS n FROM responses WHERE lane = 'tracking' AND surface IS NOT NULL");
+  const researchRows = all(db, `SELECT id, imported_at, json_extract(bundle_json, '$.createdAt') AS observed_at
+    FROM research_runs ORDER BY imported_at DESC, id DESC LIMIT 50`);
+  const studyRows = all(db, 'SELECT id, imported_at FROM study_imports ORDER BY imported_at DESC, id DESC LIMIT 50');
+  const latestAt = researchRows[0]?.observed_at ?? researchRows[0]?.imported_at ?? studyRows[0]?.imported_at ?? null;
+  return {
+    hasNativeSeries: Number(nativeRow?.n ?? 0) > 0,
+    researchCount: researchRows.length,
+    studyCount: studyRows.length,
+    latestWindowEnd: latestAt ? String(latestAt) : null,
+  };
+}
+
+/**
+ * Shipped/planned opportunities and saved intervention identifiers that outcomes
+ * can link to on the Weekly Review entry form.
+ *
+ * @param {Db} db
+ * @returns {{
+ *   opportunities: {id:number,status:string,label:string,targetUrl:string|null}[],
+ *   interventionIds: string[],
+ * }}
+ */
+export function listActionOutcomeTargets(db) {
+  const opportunities = all(db, `SELECT id, status, change_description, suggested_action, observed_finding, target_url
+    FROM opportunities WHERE status IN ('planned','in_progress','shipped','reviewed')
+    ORDER BY updated_at DESC, id DESC LIMIT 100`).map((row) => ({
+    id: Number(row.id),
+    status: String(row.status),
+    label: String(row.change_description || row.suggested_action || row.observed_finding || `Opportunity #${row.id}`),
+    targetUrl: row.target_url === null ? null : String(row.target_url),
+  }));
+  const interventionIds = all(db, `SELECT DISTINCT intervention_id FROM outcome_records
+    WHERE intervention_id IS NOT NULL ORDER BY intervention_id ASC LIMIT 100`)
+    .map((row) => String(row.intervention_id));
+  return { opportunities, interventionIds };
+}
+
+/**
+ * Plain-SQL read of imported standalone research runs and study snapshots so
+ * `/opportunities` can surface citation-gap action cards or keep/hold summaries
+ * when repeat runs carry empty supplied recommendations.
+ *
+ * @param {Db} db
+ * @returns {{
+ *   researchRuns: {id:number,appId:string,runId:string,bundleJson:string,importedAt:string}[],
+ *   studySnapshots: {id:number,studyId:string,appId:string,snapshotJson:string,importedAt:string}[],
+ * }}
+ */
+export function listStandaloneRunsForHandoff(db) {
+  const researchRuns = all(db, `SELECT id, app_id, run_id, bundle_json, imported_at
+    FROM research_runs ORDER BY imported_at DESC, id DESC LIMIT 10`).map((row) => ({
+    id: Number(row.id),
+    appId: String(row.app_id),
+    runId: String(row.run_id),
+    bundleJson: String(row.bundle_json),
+    importedAt: String(row.imported_at),
+  }));
+  const studySnapshots = all(db, `SELECT id, study_id, app_id, snapshot_json, imported_at
+    FROM study_imports ORDER BY imported_at DESC, id DESC LIMIT 10`).map((row) => ({
+    id: Number(row.id),
+    studyId: String(row.study_id),
+    appId: String(row.app_id),
+    snapshotJson: String(row.snapshot_json),
+    importedAt: String(row.imported_at),
+  }));
+  return { researchRuns, studySnapshots };
+}

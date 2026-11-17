@@ -774,6 +774,20 @@ export const MIGRATIONS = [
         BEGIN SELECT RAISE(ABORT, 'study imports are immutable'); END;
     `,
   },
+  {
+    version: 18,
+    sql: `
+      ALTER TABLE outcome_records ADD COLUMN intervention_id TEXT;
+      ALTER TABLE outcome_records ADD COLUMN opportunity_id INTEGER REFERENCES opportunities(id);
+      ALTER TABLE outcome_records ADD COLUMN page_role TEXT
+        CHECK (page_role IS NULL OR page_role IN ('changed', 'control'));
+      ALTER TABLE outcome_records ADD COLUMN comparison_page TEXT;
+      CREATE INDEX idx_outcome_records_intervention
+        ON outcome_records(intervention_id, page_role, period_start);
+      CREATE INDEX idx_outcome_records_opportunity
+        ON outcome_records(opportunity_id, page_role, period_start);
+    `,
+  },
 ];
 
 /** Latest schema version this build knows how to produce. */
