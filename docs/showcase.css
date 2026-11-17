@@ -466,9 +466,14 @@ pre,
 }
 
 /* Section Scaffolding */
+#main-content {
+  scroll-margin-top: 76px;
+}
+
 .section-block {
   padding: 38px 0;
   border-top: 1px solid var(--border);
+  scroll-margin-top: 76px;
 }
 
 .section-head {

@@ -39,6 +39,40 @@
     return Math.round(x * 100) + '%';
   }
 
+  /**
+   * Two-component variance split from core/metrics.js (§6.6):
+   *  - phrasingSpread = sqrt( mean_i[ (p_i - mean)^2 ] )
+   *  - rerunSpread    = sqrt( mean_i[ p_i * (1 - p_i) / n_i ] )
+   */
+  function computeIntentSpreads(hitsArr, denomArr) {
+    var k = hitsArr.length;
+    if (!k) return { phrasingSpreadPts: 0, rerunSpreadPts: 0 };
+    var ps = [];
+    var rerunSum = 0;
+    var pSum = 0;
+    for (var i = 0; i < k; i++) {
+      var n = Number(denomArr[i]) || 0;
+      var p = n > 0 ? (Number(hitsArr[i]) || 0) / n : 0;
+      ps.push(p);
+      pSum += p;
+      if (n > 0) {
+        rerunSum += (p * (1 - p)) / n;
+      }
+    }
+    var mean = pSum / k;
+    var phrasingVar = 0;
+    for (var j = 0; j < k; j++) {
+      var diff = ps[j] - mean;
+      phrasingVar += diff * diff;
+    }
+    phrasingVar = phrasingVar / k;
+    var rerunVar = rerunSum / k;
+    return {
+      phrasingSpreadPts: k >= 2 ? Math.round(Math.sqrt(phrasingVar) * 100) : 0,
+      rerunSpreadPts: Math.round(Math.sqrt(rerunVar) * 100)
+    };
+  }
+
   var BRANDS = [
     { id: 'Notewell', name: 'Notewell', domain: 'notewell.io', isSelf: true },
     { id: 'Otter.ai', name: 'Otter.ai', domain: 'otter.ai', isSelf: false },
@@ -188,69 +222,45 @@
   var COUNTS = {
     openai: {
       revops: {
-        phrasingSpreadPts: 28,
-        rerunSpreadPts: 9,
         hits: { 'Fireflies': [5, 4, 2], 'Otter.ai': [3, 4, 2], 'Notewell': [4, 2, 1], 'Granola': [2, 2, 3] }
       },
       botfree: {
-        phrasingSpreadPts: 26,
-        rerunSpreadPts: 8,
         hits: { 'Granola': [5, 5, 4], 'Notewell': [4, 3, 2], 'Fireflies': [2, 2, 2], 'Otter.ai': [2, 1, 2] }
       },
       soc2: {
-        phrasingSpreadPts: 31,
-        rerunSpreadPts: 10,
         hits: { 'Fireflies': [4, 4, 3], 'Otter.ai': [4, 3, 2], 'Notewell': [4, 1, 1], 'Granola': [2, 2, 1] }
       }
     },
     anthropic: {
       revops: {
-        phrasingSpreadPts: 25,
-        rerunSpreadPts: 9,
         hits: { 'Fireflies': [4, 4, 3], 'Notewell': [4, 3, 1], 'Otter.ai': [3, 3, 2], 'Granola': [2, 2, 3] }
       },
       botfree: {
-        phrasingSpreadPts: 22,
-        rerunSpreadPts: 7,
         hits: { 'Granola': [5, 4, 4], 'Notewell': [4, 3, 3], 'Otter.ai': [2, 1, 1], 'Fireflies': [1, 2, 1] }
       },
       soc2: {
-        phrasingSpreadPts: 29,
-        rerunSpreadPts: 9,
         hits: { 'Fireflies': [4, 3, 3], 'Notewell': [4, 2, 1], 'Otter.ai': [3, 3, 2], 'Granola': [2, 2, 2] }
       }
     },
     gemini: {
       revops: {
-        phrasingSpreadPts: 30,
-        rerunSpreadPts: 11,
         hits: { 'Otter.ai': [5, 4, 4], 'Fireflies': [4, 4, 3], 'Granola': [2, 2, 2], 'Notewell': [2, 1, 1] }
       },
       botfree: {
-        phrasingSpreadPts: 27,
-        rerunSpreadPts: 10,
         hits: { 'Granola': [5, 4, 4], 'Otter.ai': [3, 3, 2], 'Fireflies': [3, 2, 2], 'Notewell': [3, 1, 1] }
       },
       soc2: {
-        phrasingSpreadPts: 32,
-        rerunSpreadPts: 10,
         hits: { 'Otter.ai': [4, 4, 4], 'Fireflies': [4, 4, 3], 'Notewell': [2, 1, 0], 'Granola': [2, 1, 1] }
       }
     },
     codex: {
       revops: {
-        phrasingSpreadPts: 24,
-        rerunSpreadPts: 8,
         hits: { 'Notewell': [4, 3, 2], 'Fireflies': [4, 3, 2], 'Granola': [2, 2, 2], 'Otter.ai': [2, 2, 1] }
       },
       botfree: {
-        phrasingSpreadPts: 21,
-        rerunSpreadPts: 7,
         hits: { 'Granola': [5, 4, 3], 'Notewell': [4, 4, 2], 'Fireflies': [2, 1, 1], 'Otter.ai': [1, 1, 1] }
       },
       soc2: {
-        phrasingSpreadPts: 27,
-        rerunSpreadPts: 8,
         hits: { 'Notewell': [4, 2, 1], 'Fireflies': [4, 3, 2], 'Otter.ai': [3, 2, 1], 'Granola': [2, 2, 1] }
       }
     }
@@ -397,10 +407,15 @@
     var toggle = document.getElementById('theme-toggle');
     var metaTheme = document.querySelector('meta[name="theme-color"]');
     if (!toggle) return;
+    var labelSpan = toggle.querySelector('span');
 
     function syncThemeUi() {
       var isLight = document.documentElement.getAttribute('data-theme') === 'light';
       toggle.setAttribute('aria-pressed', isLight ? 'true' : 'false');
+      toggle.setAttribute('aria-label', isLight ? 'Switch to dark theme' : 'Switch to light theme');
+      if (labelSpan) {
+        labelSpan.textContent = isLight ? 'Dark' : 'Light';
+      }
       if (metaTheme) {
         metaTheme.setAttribute('content', isLight ? '#f8fafc' : '#0a0c10');
       }
@@ -649,14 +664,15 @@
     var varianceEl = document.getElementById('variance-callout-box');
     if (varianceEl) {
       var selectedArr = cell.hits[state.brand];
+      var spreads = computeIntentSpreads(selectedArr, surfaceObj.perPhrasingN);
       var pRates = selectedArr.map(function (hits, idx) {
         return Math.round((hits / surfaceObj.perPhrasingN[idx]) * 100) + '%';
       });
       varianceEl.innerHTML =
         '<strong>Phrasing sensitivity (' + esc(state.brand) + '):</strong> ' +
         pRates.join(' / ') + ' across 3 wordings of this intent · ' +
-        '<strong>' + cell.phrasingSpreadPts + ' pt phrasing spread</strong> vs. ' +
-        '<strong>' + cell.rerunSpreadPts + ' pt same-prompt rerun spread</strong>.';
+        '<strong>' + spreads.phrasingSpreadPts + ' pt phrasing spread</strong> vs. ' +
+        '<strong>' + spreads.rerunSpreadPts + ' pt same-prompt rerun spread</strong>.';
     }
 
     /* Render Receipt Inspector */
