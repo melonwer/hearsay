@@ -1,47 +1,11 @@
 # Hearsay
 
-A free AI visibility checker, run by the agent you already use.
+Open-source AI visibility and citation measurement with confidence intervals, verbatim answer
+receipts, and page-change lead tracking — run in your browser or by the AI assistant you already use.
 
 [![Hearsay animated preview: The conversation you never see](docs/hearsay-preview.gif)](https://melonwer.github.io/hearsay/)
 
-[Watch the full 51-second film with sound.](https://melonwer.github.io/hearsay/)
-
-Give Hearsay your website. Your agent proposes buyer angles, saves a baseline, suggests a page change, and follows the results. Approve its plan or adjust the questions, schedule, and limits yourself. Page versions, answers, decisions, and reports stay in `.hearsay/<app-id>/` so your agent can resume later.
-
-Optional [Tavily search](https://docs.tavily.com/documentation/api-credits) can use its 1,000 free monthly credits. Six basic searches a day use 180 credits over 30 days, including the baseline, with a proposed 20-credit diagnostic allowance. Your AI assistant's usage follows its own plan. Hearsay reports selected search and AI-agent observations; lead or sales comparisons use the business records you supply. Pricing checked October 2, 2026.
-
-## Start with your assistant
-
-> Install Hearsay from https://github.com/melonwer/hearsay and study my product. Use what you already know, ask for missing details, check available providers, and propose buyer questions, usage limits, and a schedule. Show me the actual plan before enabling collection.
-
-Complete bundles include the local runtime for Codex, Claude Code, Gemini CLI, and portable skill hosts. The agent inspects setup, infers product details from reliable context, and guides missing credential or login steps. It asks before using measurement allowance or installing recurring work. See [conversational setup](skill/references/setup.md). These bundles are built locally from source; a public catalog release is separate.
-
-The agent chooses defaults and you can edit them. The first review can happen after one day; judging leads or sales depends on exposure, traffic, and supplied outcomes. Changing a page does not make new text immediately available to search-backed agents. See [the study workflow](skill/references/studies.md).
-
-For manual installation, copy the complete `skill/` directory into your host's skill directory, for example `.agents/skills/hearsay` for Codex or `.claude/skills/hearsay` for Claude Code. Keep the references, templates, and schemas. Initial host research needs no Hearsay server, Node installation, API credits, or extra account.
-
-Hearsay researches the product and discovers direct and adjacent competitors with supporting links. It proposes evidence-linked improvements and separate drafts. Applying a patch or publishing content requires your request.
-
-Independent trials start with six neutral buyer questions and one answer per selected route. Fresh measurement sessions receive only neutral questions. Without fresh sessions, the report is a research audit with no independent visibility rate. Repeats preserve questions and revisions, show exact sample counts, and explain comparison eligibility.
-
-See [installation, upgrades and removal](skill/references/installation.md). Build the portable archive, Codex plugin, Claude Code plugin and Gemini CLI extension from one canonical skill:
-
-```sh
-node scripts/build-bundles.js
-node scripts/verify-skill-discovery.js
-```
-
-The second command checks installation, skill discovery, and installed runtime access in isolated host configurations without inference. Archives live in `dist/` and contain the skill and runtime, with no local database, credentials, or reports.
-
-## Optional runtime and dashboard
-
-With Node 22.13 or newer, `node bin/hearsay.js --help` exposes agent discovery, bounded panel execution, website study history, optional Tavily collection, outcome imports, saved reports, and schedules. `npm link` installs the local `hearsay` executable. These commands need no HTTP server. See the [CLI guide](skill/references/cli.md) and [study commands](skill/references/studies.md). Runtime collection marks assistant analysis due. Automatic analysis requires a connected host agent task; an approved configuration alone does not install one. Tavily strict free mode also requires a provider limit that prevents paid overage.
-
-Codex and Claude Code account routes use existing logins and keep results separate. Extra routes are selected explicitly; API keys are removed from account invocation environments. Costs and remaining allowance stay unknown unless reported. Antigravity `agy-cli` replaces the planned Gemini CLI measurement route. Its adapter extracts observed web searches from the event stream and preserves other tool activity in the trace. Tool inventories may differ between installations. The Gemini extension installs the same skill and local runtime. Gemini CLI measurement is not implemented; Gemini API grounding remains a separate option.
-
-Import saved evidence through `hearsay import <evidence.json> --database /absolute/path/hearsay.db`, the dashboard's **Research** page, `POST /api/research/import`, or `hearsay_research_import`. List/detail operations are `GET /api/research`, `GET /api/research/:id`, `hearsay_research_list` and `hearsay_research_get`. Imports retain external provenance and never enter native measurement series. Research recommendations can be proposed in Opportunities, where acceptance requires a separate review.
-
-The dashboard and API workflows are optional. Their setup follows below.
+**[Explore the Interactive Live Demo & Watch the 51-Second Film →](https://melonwer.github.io/hearsay/)**
 
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -49,430 +13,121 @@ The dashboard and API workflows are optional. Their setup follows below.
 [![Zero dependencies](https://img.shields.io/badge/dependencies-zero-blue.svg)](package.json)
 [![MCP built in](https://img.shields.io/badge/MCP-built%20in-8A2BE2.svg)](mcp/server.mjs)
 
-## What it does
+## Why Hearsay Exists
 
-Buyers ask AI tools which product to buy. Hearsay records how the specific API or
-signed-in agent route you select answers your own reviewed questions.
+Buyers ask ChatGPT, Claude, Gemini, and Perplexity what to buy before they ever visit your site.
+Most $99–$399/mo trackers collapse noisy answers into one synthetic "AI score" while locking each
+engine behind another tier.
+Hearsay samples real routes repeatedly, reports honest error bars, preserves every search and
+citation receipt, and tracks whether page changes move leads against an unchanged control page.
 
-Hearsay asks your buying questions several times and counts how often you get mentioned
-or receive a positive recommendation. Answer rates show a confidence interval and the
-number of comparable answers behind them. Retained answers let you inspect the text
-and evidence behind each selected series.
-An explicitly enabled Codex agent or Claude Code agent runs through its authenticated
-local CLI. Those measurements retain final answers, provider-confirmed web-search
-events, citations and redacted event artifacts. They are sibling evidence to API runs,
-never a blended score, and they consume the signed-in plan allowance or possible
-overage — subscription runs are not free or unlimited.
+| What matters | Typical $99–$399/mo Trackers | Hearsay (MIT, Local-First) |
+| --- | --- | --- |
+| **Headline metric** | Single blended "AI Score" & fake rank badge | Answer & share-of-voice rates with **Wilson 95% confidence intervals** (`n` shown) |
+| **Prompt sensitivity** | One fixed prompt per keyword (hides paraphrase drift) | Multi-paraphrase **buyer intents** splitting phrasing spread vs. rerun spread |
+| **Surface honesty** | Mixes unsearched completions with live search | Unblended per-route series (`OpenAI`, `Claude`, `Gemini`, `Perplexity`, `Codex`, `Claude Code`, `Antigravity`) |
+| **Evidence receipts** | Summary charts without raw provenance | **Verbatim receipts**: prompt, search query, returned URLs vs. cited URLs, and citation gaps |
+| **Business outcomes** | Stops at mention counts | Links shipped page changes to reported leads/sales vs. an **unchanged control page** |
+| **Client reporting & lock-in** | Per-seat and per-engine paywalls | **1-click shareable HTML/PDF B2B client reports**, local SQLite, full JSON/CSV export |
 
-Direct API keys are optional. Add keys for OpenAI, Anthropic, Gemini and/or Perplexity
-when you want direct API measurements and expanded coverage. API providers bill those
-questions separately, usually by usage. Hearsay's built-in quote and computed usage
-cost cover API calls only; they do not estimate or report subscription allowance
-consumption.
+## Choose Your Door (30-Second Quickstart)
 
-OpenAI API runs can use live web search on `gpt-5.6-luna`. Set
-`HEARSAY_OPENAI_SEARCH_POLICY=auto` or `required` to use the Responses API route;
-the default `off` keeps the existing Chat Completions request. Search runs always
-show a quote before starting. It forecasts one web-search call per target, but the
-hosted tool has no enforceable internal call ceiling. The daily API schedule stays
-search off until you separately confirm `POST /api/search-schedule` with a
-`target_ceiling` and its returned `quoteId`. Changing the execution profile or
-exceeding the target ceiling suspends scheduled search. Use
-`DELETE /api/search-schedule` to remove recurring search consent. No live provider smoke
-test is run automatically.
+### Option A — Browser Workbench (Founders, Marketers & Agencies)
 
-Anthropic API runs can use the basic server-side web search tool on
-`claude-sonnet-5` with `HEARSAY_ANTHROPIC_SEARCH_POLICY=auto`. Hearsay limits
-search to three calls per target and one continuation within the target timeout.
-The `auto` policy includes complete answers where Claude chooses not to search.
-The same on-demand quote and separate daily-schedule consent apply.
-An `auto` answer without search is comparable only when the provider response confirms
-that no search ran. A `required` answer needs a completed search event. A missing query
-string is shown as unavailable, never reconstructed from an answer or source URL.
-Gemini API search is off by default. Set `HEARSAY_GEMINI_SEARCH_POLICY=auto` on
-`gemini-3.6-flash` to enable Google Search grounding through GenerateContent. The
-grounded route has its own execution profile, needs the same run quote and schedule
-consent, and has no enforceable internal search-call ceiling. Hearsay retains the
-original grounding metadata and shows Google's Search Suggestions in an isolated
-frame beside a grounded answer. If Gemini omits the Suggestions after a search,
-Hearsay records a failed target without displaying its grounded content. Search billing remains partial when the API does
-not report the number of billable calls. Perplexity Sonar's historical built-in
-search remains a legacy profile without verified query wording.
-
-## Set up the optional dashboard by asking
-
-If you use a supported paid [Claude Code](https://claude.com/claude-code) account, paste
-this into Claude Code and it can do the whole setup:
-
-> Install and set up https://github.com/melonwer/hearsay for my brand,
-> **[your brand]**, and track it against **[competitor]** and **[competitor]**.
-> Skip the demo data. Show me the questions before you save them.
-
-It clones the repo, starts Hearsay, connects itself to it, drafts the buying questions
-worth tracking, shows you that list before saving anything, tells you what a run will
-cost before spending a cent, and then reports back.
-
-This works because Hearsay speaks MCP (Model Context Protocol), the standard way an AI
-assistant plugs into an outside tool. MCP lets Codex and Claude Code operate Hearsay;
-it does not make an arbitrary MCP client an inference backend. Hearsay inference runs
-come only from the explicitly enabled Codex and Claude Code CLIs or from optional
-direct API keys.
-
-<details>
-<summary>The exact steps, if your assistant gets stuck</summary>
-
-```sh
-git clone https://github.com/melonwer/hearsay && cd hearsay
-node --version                        # must be 22.13 or newer
-
-cp .env.example .env                  # subscription flags and optional API keys go here
-node server.js > hearsay.log 2>&1 &   # redirect, or a backgrounded server hangs the shell
-curl -s "http://127.0.0.1:$(tr -d '\\n' < data/hearsay.port)/api/status"   # repeat until this returns JSON
-
-# Add the MCP server for the client you use (see the subscription sections below).
-codex mcp add hearsay -- node "$PWD/mcp/server.mjs"
-claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
-```
-
-Hearsay's tools appear only after the assistant reconnects. Quit Claude Code and start
-it again, then say "carry on setting up Hearsay". If they still do not show up, work
-over the JSON API instead, which needs no setup: `GET /api/status`,
-`POST /api/setup/drafts`, `GET /api/setup/drafts/:id/review`,
-`POST /api/setup/drafts/:id/approve`, `GET /api/cost/estimate`, `POST /api/run`, `GET /api/runs/latest`,
-`GET /api/series`, `GET /api/series/summary`, `GET /api/series/evidence?series_id=...&intent_id=...`,
-`GET /api/answers?series_id=...`,
-`GET /api/alerts`. `GET /api/summary?days=30` remains the legacy API view. There
-is no index page at `/api`.
-
-The Evidence page groups the buyer questions, observed search queries, source observations,
-final-answer citations, and answer receipts for one selected measurement series. Open a
-group's supporting receipts to inspect the recorded action and source links. Query counts
-describe this configured panel, not customer search demand. Manual theme labels are
-separate from the provider's wording. The [evidence report guide](docs/evidence-report.md)
-explains the denominators and unknown associations.
-
-The Opportunities page turns selected receipts and repeated patterns into a reviewable
-shortlist. Each observed finding links to the answer and evidence IDs in one exact series
-and window. You can prioritize, dismiss, combine, or investigate a candidate. Page-change
-actions need reviewed page evidence, and assistant proposals need human acceptance.
-See [review evidence-backed opportunities](docs/opportunities.md).
-The same page records shipped changes and versioned follow-up plans against the saved baseline.
-See [compare a shipped change](docs/intervention-comparison.md) for the report's weighting,
-coverage, and interpretation rules.
-See [record outcomes and request a weekly review](docs/outcomes.md) for reported business results,
-expenses, and time alongside selected measurement evidence.
-
-The setup wizard asks who buys, what job they need done, and the desired conversion.
-It offers five editable intent groups with three phrasings each, then shows the exact
-questions and first-run target count before approval. Fewer questions are fine.
-You can draft without any provider key or subscription route. A run needs at least
-one configured route. Source notes stay local; only approved question wording is
-sent for measurement. Language and market are planning preferences, not enforced
-provider controls. See the [benchmark setup guide](docs/benchmark-setup.md).
-
-MCP access and inference enablement are separate. Registering the Hearsay MCP server
-lets a client operate Hearsay; setting `HEARSAY_CODEX_ENABLED=1` or
-`HEARSAY_CLAUDE_CODE_ENABLED=1` separately opts that specific signed-in CLI into
-Hearsay measurements. Other MCP clients can operate Hearsay but are not inference
-backends.
-
-The default starts a real workspace and opens `/setup` for your brand. To explore the
-fictional demo instead, set `HEARSAY_DEMO=1` in `.env` and restart. Demo data lives in
-`data/demo/hearsay.db`; changing the flag back to `0` returns to your real workspace
-without deleting either database.
-</details>
-
-## Run the optional dashboard yourself
-
-**First, install Node.js 22.13 or newer** from [nodejs.org](https://nodejs.org). Pick
-the installer for Mac or Windows and click through it. Hearsay needs that version
-because it includes the small built-in database it stores your data in, which is why
-there is nothing else to install: no extra packages, no build step, no separate
-database server.
-
-The lines below go in a terminal, which is the Terminal app on Mac or PowerShell on
-Windows. You also need Git ([git-scm.com](https://git-scm.com/downloads)); if you would
-rather not install it, use the green **Code → Download ZIP** button at the top of this
-page, unzip it, and skip the first line.
+No `.env` file, `npm install`, or API keys needed to explore. Install [Node.js ≥ 22.13](https://nodejs.org)
+(uses built-in `node:sqlite`), then run:
 
 ```sh
 git clone https://github.com/melonwer/hearsay && cd hearsay
 node server.js
 ```
 
-The window will look like it has frozen. That is Hearsay running. Leave it open and
-visit the URL printed by Hearsay, which is an address on your own computer, published
-nowhere. The selected port is also kept in `data/hearsay.port`. To stop it, click the
-terminal window and press Ctrl+C.
+*(Prefer not to use Git? Click **Code → Download ZIP** above, unzip, and run `node server.js`.)*
 
-You are now at the real-brand setup page. You can review a benchmark without spending
-anything. To try the fictional Notewell demo first, stop Hearsay, copy `.env.example`
-to `.env`, set `HEARSAY_DEMO=1`, and run `node server.js` again. The demo is seeded
-automatically into its own database. Set `HEARSAY_DEMO=0` and restart to return to
-real setup. Neither step deletes data or enables providers in demo mode.
+Open the local URL printed in your terminal:
 
-<details>
-<summary>If something goes wrong</summary>
+1. Click **Explore Interactive Notewell Demo** in 1 click, or stay in your live brand workspace.
+2. Paste provider API keys or toggle signed-in local CLI routes (`Codex`, `Claude Code`) right in the
+   browser UI (saved locally to `.env` with `0600` permissions).
+3. Approve your buyer intents, review the pre-run API cost quote, run your audit, and click
+   **Export Client Report** for a self-contained dark/light/printable HTML/PDF report.
 
-`command not found: node` means Node.js is not installed; get the LTS build from
-[nodejs.org](https://nodejs.org). `command not found: git` means Git is missing; on Mac
-run `xcode-select --install`, on Windows use [git-scm.com](https://git-scm.com/downloads).
-`ERR_UNKNOWN_BUILTIN_MODULE` means your Node is older than 22.13. `EADDRINUSE` means
-you explicitly selected a fixed `PORT` that another process is using; remove that
-setting or use `PORT=0` for automatic selection. If a reverse proxy needs a fixed
-port, choose an available one with `PORT=3100 node server.js`.
-</details>
+### Option B — Your AI Assistant (Claude Code, Codex, Antigravity)
 
-### Track your own brand
+Paste this prompt into your coding assistant to run an evidence-backed website study (stored in
+`.hearsay/<app-id>/`) with zero server setup:
 
-1. If you are viewing the demo, stop Hearsay (Ctrl+C), set `HEARSAY_DEMO=0` in `.env`,
-   and restart with `node server.js`. Leave both databases intact.
-2. Open the printed local URL. A fresh real workspace opens `/setup` automatically;
-   the port is also available in `data/hearsay.port`. Draft and review buyer
-   questions without a provider key.
-3. Before running, choose a signed-in Codex or Claude Code subscription runner below,
-   or add an optional direct API key such as `OPENAI_API_KEY=sk-...`. One route is enough.
+> Install Hearsay from https://github.com/melonwer/hearsay and study my product. Use what you
+> already know, ask for missing details, check available providers, and propose buyer questions,
+> usage limits, and a schedule. Show me the actual plan before enabling collection.
 
-For a Linux service that keeps this local process running, see the
-[manual systemd user-service setup](docs/background-service.md). The app never installs
-or starts a background service for you.
-
-### Use a Codex subscription runner
-
-Codex measurements use the local authenticated CLI and the allowance of your supported
-Codex subscription plan. They are not measurements of the ChatGPT web app. Subscription
-usage is not free or unlimited and may incur overage.
+Or inspect local routes, install host plugins, and register the built-in MCP server directly:
 
 ```sh
-codex login
-codex login status
+node bin/hearsay.js doctor                                   # inspect runtime & installed agent routes
+node scripts/build-bundles.js                                # build portable, Codex, Claude & Gemini bundles
+codex plugin marketplace add "$PWD/dist/codex" && codex plugin add hearsay@hearsay-local
+claude plugin marketplace add "$PWD/dist/claude" && claude plugin install hearsay@hearsay-local
+codex mcp add hearsay -- node "$PWD/mcp/server.mjs"          # optional: connect Codex to local workbench
+claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs" # optional: connect Claude Code to workbench
 ```
 
-Add this line to `.env`, then restart Hearsay:
+See [Skill & Plugin Installation](skill/references/installation.md) for portable skill, Codex/Claude
+plugins, and Gemini CLI extension bundles, and [Setup & Provider Reference](docs/setup-reference.md)
+for search policies and CLI runner flags.
 
-```dotenv
-HEARSAY_CODEX_ENABLED=1
-```
-
-Register Hearsay as an MCP server for Codex from the repository directory:
-
-```sh
-codex mcp add hearsay -- node "$PWD/mcp/server.mjs"
-```
-
-### Use a Claude Code subscription runner
-
-Claude Code requires a supported paid Pro, Max, Team, Enterprise or Console account;
-the free `claude.ai` plan does not include Claude Code. Claude Code measurements use
-the local authenticated CLI and its plan allowance. They are not measurements of
-Claude.ai. Subscription usage is not free or unlimited and may incur overage.
-
-Authenticate in the terminal with `claude auth login`, or start `claude` and complete
-the browser login, then verify it:
-
-```sh
-claude auth login
-claude auth status
-```
-
-Add this line to `.env`, then restart Hearsay:
-
-```dotenv
-HEARSAY_CLAUDE_CODE_ENABLED=1
-```
-
-Register Hearsay for every Claude Code session from the repository directory:
-
-```sh
-claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
-```
-
-### Optional direct API providers
-
-API keys are optional and independent of the subscription flags. Add one or more of
-`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` and `PERPLEXITY_API_KEY` to
-`.env` when you want direct API measurements and Gemini or Perplexity coverage. The
-API cost calculator and actual-spend figure apply to these API calls only; they do not
-turn subscription allowance into a dollar estimate.
-
-### Connect an AI assistant
-
-Run this from inside the `hearsay` folder. The `$PWD` part fills in the full path for
-you, so there is nothing to edit:
-
-```sh
-claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
-```
-
-When Hearsay uses the default `PORT=0`, this MCP server discovers the selected local
-port from `data/hearsay.port`; no port argument is needed. For a fixed or remote
-deployment, set `HEARSAY_URL` in the MCP server environment instead.
-
-For Claude Desktop, open Settings → Developer → **Edit Config**, which opens
-`claude_desktop_config.json` for you. Run `pwd` inside the `hearsay` folder to print its
-full path, then paste the block below, replacing `YOUR_PATH`. If the file already has an
-`mcpServers` section, add the `"hearsay"` entry inside it rather than replacing
-everything. Quit Claude Desktop completely and reopen it afterwards.
-
-```json
-{ "mcpServers": { "hearsay": { "command": "node", "args": ["YOUR_PATH/mcp/server.mjs"] } } }
-```
-
-Now ask it "how's our AI visibility this week?" and it answers from your own
-measurements. The tools cover setup, exploration questions, exact-surface
-subscription previews/runs, scheduling, cost quotes, results and alerts. Your
-assistant uses its own model to talk to you. Reading results does not trigger a new
-Hearsay measurement run or optional provider-API spend; the assistant interaction
-follows that assistant client's own plan/usage.
-
-The standalone [skill](skill/SKILL.md) is the default entry point. Load its [dashboard reference](skill/references/dashboard.md) when working with a connected instance.
+## Dashboard Preview
 
 <p>
-  <img src="docs/screenshot-light.png" alt="Hearsay demo dashboard, light theme, with tracking health, an exact series, and share of AI voice" width="49%">
-  <img src="docs/screenshot-dark.png" alt="Hearsay dashboard, dark theme" width="49%">
+  <img src="docs/screenshot-dark.png" alt="Hearsay dashboard in dark theme showing exact measurement series, confidence intervals, and answer receipts" width="49%">
+  <img src="docs/screenshot-light.png" alt="Hearsay dashboard in light theme showing tracking health, exact series, and share of AI voice" width="49%">
 </p>
 
-Light and dark themes. Select a series, then open its comparable answer receipts.
+Dark and light themes — select any exact measurement series to inspect its comparable answer receipts,
+citation gaps, and exportable client report.
 
-## Why it exists
+## How It Works in 4 Steps
 
-Buying questions now receive AI answers as well as conventional search results. A
-stored answer is useful when you can see which route produced it, whether search
-actually ran, and which evidence supports the number in a report.
+1. **Draft Buyer Intents** — Express each non-branded buying job in multiple paraphrases
+   ([arXiv:2605.27440](https://arxiv.org/pdf/2605.27440) shows rewording drops brand overlap to
+   14–29% vs. 50–61% on identical reruns) and approve exact prompts before spending a cent.
+2. **Measure Repeatedly Across Real Routes** — Sample direct APIs (with opt-in verified web search)
+   or signed-in `Codex`, `Claude Code`, and `Antigravity` CLIs; every route, model, and search policy
+   stays an unblended directional series with Wilson 95% intervals.
+3. **Inspect Verbatim Citation Receipts** — Keep exposed search queries, returned search URLs, and
+   final-answer citations separate so you can spot citation gaps where third-party comparisons or
+   docs cite competitors instead of you.
+4. **Track Page Changes & Leads Against a Control Page** — Record shipped updates in
+   **Opportunities** and business results in **Weekly Review** to compare changed-page vs. unchanged
+   control-page outcomes and bound background drift without faking causal attribution.
 
-Hearsay is a measurement method you can run anywhere. It asks each question repeatedly,
-publishes the margin of error, keeps the answers behind every figure, and hands the
-whole job to your AI assistant if you would rather not click through a dashboard.
+## Local-First, Zero Lock-In
 
-## What you get
+- **Your machine, your SQLite file:** Live data stays in `data/hearsay.db` (separate from the
+  fictional demo in `data/demo/hearsay.db`); website studies live in `.hearsay/<app-id>/`.
+- **Transparent costs:** Hearsay has no hosted fee or gated tier. Direct API calls are billed by
+  your configured providers (previewed before every run); signed-in CLI runs use your plan allowance.
+- **Full portability:** Export client-ready HTML/PDF reports (`GET /api/export/report`), outcome
+  CSVs, or the entire database as JSON (`GET /api/export`) at any time. Zero telemetry.
 
-Answer rates come from repeated questions and show a Wilson 95% confidence interval
-and comparable-answer count. Fewer than five comparable answers are labeled low sample.
-Share of AI voice instead counts tracked-entity mentions in non-branded questions.
+## Documentation Map
 
-Questions are grouped into intents, meaning one buying question written several ways.
-Hearsay shows you how much the answers move when you ask again, and separately how much
-they move when you reword the question. Rewording moves them more, which is why
-single-prompt tracking is unstable.
+- **[Methodology](METHODOLOGY.md)** — Wilson 95% intervals, phrasing vs. rerun variance, route
+  boundaries, and what Hearsay refuses to fake.
+- **[Setup, Providers & API Reference](docs/setup-reference.md)** — Direct API search policies,
+  subscription CLI runners, quotes & schedule consent, MCP config, Linux `systemd` service, and
+  HTTP JSON endpoints.
+- **[Agent Skill & Website Studies](skill/SKILL.md)** — Conversational product audits,
+  `.hearsay/<app-id>/` workspaces, and [plugin/bundle installation](skill/references/installation.md).
+- **[Evidence Report Guide](docs/evidence-report.md)** — Search actions, exposed queries, source
+  observations, final-answer citations, and denominators.
+- **[Opportunities & Page Comparisons](docs/opportunities.md)** — Shortlisting citation gaps,
+  recording shipped changes, and [frozen baseline comparisons](docs/intervention-comparison.md).
+- **[Business Outcomes & Weekly Review](docs/outcomes.md)** — Manual/CSV outcome tracking,
+  changed-vs-control page comparisons, and weekly review exports.
+- **[Security](SECURITY.md)** & **[Contributing](CONTRIBUTING.md)** — Localhost trust boundary,
+  `0600` secret handling, zero-telemetry design, and zero-dependency rules.
 
-Every retained answer is searchable. Exact-series reports link their rates to the
-comparable answers and show attempted targets that could not enter those rates. Evidence
-keeps search queries, returned sources, page fetches, and final-answer citations
-separate. A source returned by search is not a citation in the answer. Measurement
-health alerts flag gaps and changes that start a new series; historical heuristic
-business alerts remain labeled as legacy context.
+---
 
-The cost calculator estimates direct API usage before an API run starts and records a
-computed usage cost afterwards. It shows a known subtotal when some billing units are
-unknown; these figures are not an invoice. When Sonar supplies a monetary charge, the
-answer receipt shows it separately from the computed cost. Subscription runs consume
-the signed-in Codex or Claude Code plan allowance and may incur overage. Hearsay does
-not estimate their dollar cost here.
-
-### What Hearsay refuses to build
-
-It will not give you a single blended "AI visibility score", because one number hides
-the uncertainty the tool exists to show you. It records explicit ordered recommendation positions only within individual answers. These are not stable search rankings.
-It will not estimate how many people ask a given question, because nobody has that data,
-and a made-up figure would corrupt every number sitting next to it. Research can produce proposed content or patches, separate from independent measurements. Applying or publishing them requires a user request.
-
-## What it costs to run
-
-Hearsay itself has no paid edition or hosted fee. A Codex or Claude Code subscription
-runner uses the allowance of the signed-in plan and may incur overage; it is not free or
-unlimited. Optional direct API runs are billed by the API providers you configure. What
-an API run costs depends on how many questions you track, how many API providers you
-ask, and how many samples you take, so the built-in calculator estimates that API usage
-before each run and records computed API usage costs afterwards. Unknown charges stay
-visible as unknown, with any known subtotal shown separately. It does not estimate
-subscription allowance in dollars.
-
-![Hearsay's cost calculator on the Settings page](docs/screenshot-cost.png)
-
-## From evidence to action
-
-Select one exact measurement series and window. Use **Evidence** to inspect the buyer
-question, completed search actions, available query wording, source observations,
-final citations, and answer stance. Hearsay keeps branded questions separate from
-non-branded discovery rates by default. A low rate or repeated gap is a reason to
-investigate; it does not explain why a model answered that way.
-
-Save an investigation on **Opportunities**. Keep the observed receipt IDs and your
-hypothesis separate. An assistant can propose a candidate, but a person must accept it.
-A page-change plan needs reviewed page evidence. After you ship a change yourself, save
-its publication time and follow-up windows. The comparison reports coverage and
-uncertainty for the frozen baseline and review snapshots. It describes changes in the
-observations without crediting the intervention for them. **Weekly review** combines
-that evidence with your reported outcomes, time, expenses, and partial API costs. It
-does not infer leads or return on investment from mention counts.
-
-The built-in API price table is versioned and was checked on 2026-09-24. Prices can
-change. The quote uses the configured panel and known price components; it is a
-forecast, not a bill or a hard cap on hosted search calls.
-
-## Methodology
-
-Three things worth knowing before you read any number, from
-[METHODOLOGY.md](METHODOLOGY.md) (also served at `/methodology`):
-
-Reword a question and the two answers overlap in only 14% to 29% of the brands they
-recommend. Ask the identical question twice and the overlap is 50% to 61%
-([arXiv:2605.27440](https://arxiv.org/pdf/2605.27440)). So Hearsay asks each question
-several ways and shows you both numbers.
-
-Answers from the direct APIs are not the same as what a logged-in person sees in the
-ChatGPT app, and Codex agent or Claude Code agent results are not measurements of the
-ChatGPT web app or Claude.ai. API answers have no memory of the user, no personalisation
-and none of the hidden instructions the consumer apps add. Treat each configured route
-as its own directional baseline; no amount of extra sampling makes sibling surfaces a
-single comparable score.
-
-The report measures the questions you selected. It does not estimate how often buyers
-ask those questions, how much traffic an answer caused, or whether a later business
-outcome came from a specific content change.
-
-## No cloud version, no lock-in
-
-> MIT licensed, one license, with no separate paid edition and no gated features.
-> Everything in this repo is everything there is, and no hosted version is planned.
-> Hearsay runs locally and does not collect telemetry. Direct API prompts go only to
-> the API providers whose keys you configure; subscription prompts go through the
-> explicitly enabled, locally authenticated Codex or Claude Code CLI and its provider.
-> MCP clients can operate your local Hearsay instance, but are not inference backends
-> unless one of those supported runners is enabled. Core records live in
-> `data/hearsay.db`; subscription runs may also write redacted event artifacts under
-> `data/artifacts/` (or your configured `HEARSAY_DATA_DIR`), so back up both when needed.
-> The separate fictional demo lives in `data/demo/hearsay.db` and
-> `data/demo/artifacts/` by default. A database found at the wrong mode's path is
-> rejected rather than merged or deleted. For a legacy demo in `data/hearsay.db`,
-> keep it there: set `HEARSAY_DEMO_DB_PATH=./data/hearsay.db` and
-> `HEARSAY_DB_PATH=./data/real/hearsay.db` before restarting. The real workspace then
-> starts fresh without touching the old demo.
-> The `/api/export` endpoint at
-> `http://127.0.0.1:<the-port-in-data/hearsay.port>/api/export` exports all database
-> records, including questions, runs, answers, evidence, opportunities, follow-up plans,
-> outcomes and ledger entries, as one JSON file. It does not package
-> artifact files; back up `data/artifacts/` (or your configured `HEARSAY_DATA_DIR`)
-> separately.
-
-## Roadmap
-
-v1.1 brings pushed alerts first, using webhooks, so a drop in mentions can fire straight
-into Slack or email. Then multi-client workspaces with white-label HTML and PDF reports,
-opt-in sentiment scoring that uses your existing keys, CSV export, and a Docker image
-for people who want one.
-
-Possible later work includes Google AI Overviews through a separately reviewed search
-contract, more engines, and shared prompt packs. Shipped changes can already be recorded
-with publication times and follow-up plans in Opportunities.
-
-## Contributing and security
-
-[CONTRIBUTING.md](CONTRIBUTING.md) covers the no-dependencies rule, how to run the
-tests, and where the good first issues are. [SECURITY.md](SECURITY.md) covers the
-localhost default, how API keys are handled, and how to report a vulnerability.
-
-Not affiliated with OpenAI, Anthropic, Google or Perplexity; trademarks belong to their
-owners.
-
-[MIT](LICENSE).
+[MIT License](LICENSE). Not affiliated with OpenAI, Anthropic, Google, or Perplexity; trademarks belong to their owners.
