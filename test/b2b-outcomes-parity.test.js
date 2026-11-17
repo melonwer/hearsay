@@ -304,7 +304,13 @@ test('Priority 2 (outcome-probe parity): standalone research + qualified-lead ou
 
   // 3. End-to-end HTTP server verification (/api/weekly-review & /weekly-review page)
   const dir = mkdtempSync(join(tmpdir(), 'hearsay-b2b-parity-'));
-  const config = buildConfig({ HEARSAY_DATA_DIR: dir, HEARSAY_PORT: '0' });
+  const dbPath = join(dir, 'hearsay.db');
+  const config = buildConfig({
+    HEARSAY_DB_PATH: dbPath,
+    HEARSAY_DATA_DIR: dir,
+    HEARSAY_PORT_FILE: join(dir, 'hearsay.port'),
+    PORT: '0',
+  });
   const srv = await startServer({ config });
   const baseUrl = `http://127.0.0.1:${srv.port}`;
   try {
