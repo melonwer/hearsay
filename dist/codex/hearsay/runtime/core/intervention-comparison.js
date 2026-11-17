@@ -2,6 +2,9 @@ import { all, get, isoNow, run, transaction } from './db.js';
 import { wilson } from './metrics.js';
 import { advanceOpportunityVersion, checkOpportunityVersion, getOpportunity,
   OpportunityError, recordOpportunityEvent } from './opportunities.js';
+import { CONTROL_PAGE_NOTE, summarizeInterventionOutcomes } from './outcomes.js';
+
+export { CONTROL_PAGE_NOTE, summarizeInterventionOutcomes as compareInterventionOutcomes };
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {ReturnType<typeof getOpportunity>} Opportunity */
@@ -258,6 +261,14 @@ export function compareIntervention(db, input) {
   }
   const deltaPercentagePoints = before.rate === null || after.rate === null
     ? null : (after.rate - before.rate) * 100;
+  const businessComparison = summarizeInterventionOutcomes(db, {
+    opportunityId: item.id,
+    targetPage: item.targetUrl ?? null,
+    baselineStart: baseline.windowStart,
+    baselineEnd: baseline.windowEnd,
+    reviewStart: review.windowStart,
+    reviewEnd: review.windowEnd,
+  });
   return { opportunityId: item.id, planId: plan.id, snapshotId: review.id,
     selectionMode: mode, status, reasons, warnings, interpretation: INTERPRETATION,
     scope: { seriesId: String(baselineSeries.id), surface: String(baselineSeries.surface),
@@ -280,6 +291,7 @@ export function compareIntervention(db, input) {
     changes: { queries: layerChanges(beforeAnswers, afterAnswers, 'queries'),
       sources: layerChanges(beforeAnswers, afterAnswers, 'sources'),
       citations: layerChanges(beforeAnswers, afterAnswers, 'citations') },
+    businessComparison,
     confounders };
 }
 

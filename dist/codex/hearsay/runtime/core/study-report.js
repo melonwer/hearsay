@@ -1,6 +1,8 @@
 /** Deterministic factual reports for saved website studies. */
 import { createHash } from 'node:crypto';
 import { sampleEligibility } from './research-contract.js';
+import { summarizeResearchCitationGaps } from './research-report.js';
+import { CONTROL_PAGE_NOTE, summarizeStudyPageComparison } from './study-outcomes.js';
 
 /** @param {unknown} value */
 const object = (value) => value && typeof value === 'object' && !Array.isArray(value) ? /** @type {Record<string, any>} */ (value) : {};
@@ -12,6 +14,18 @@ function id(value, fallback) { return typeof value === 'string' && value ? value
 function md(value) { return String(value ?? '').replaceAll('\\', '\\\\').replaceAll('|', '\\|').replaceAll('\n', ' '); }
 /** @param {unknown} value */
 function hash(value) { return createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex'); }
+
+/** @param {unknown} rawUrl */
+function domainOf(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return parsed.hostname.replace(/^www\./, '').toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
 
 /** @param {any[]} records @param {string|null} appUrl */
 function searchPresence(records, appUrl) {
@@ -36,7 +50,6 @@ export function deriveStudyExposure(input) {
   const activeVersionId = input?.activeVersionId ?? null;
   const active = versions.find((version) => version.id === activeVersionId) ?? versions.find((version) => version.status === 'published') ?? versions.at(-1) ?? null;
   const activePage = active ? pages.find((page) => page.id === active.pageId || page.id === active.captureId) : null;
-  const activeText = String(activePage?.content ?? activePage?.text ?? activePage?.extractedContent ?? '');
   const sameUrl = Boolean(url && activePage && (url === activePage.url || url === activePage.finalUrl || url === activePage.requestedUrl));
   const matches = versions.map((version) => {
     const page = pages.find((candidate) => candidate.id === version.pageId || candidate.id === version.captureId);
@@ -59,7 +72,6 @@ export function deriveStudyExposure(input) {
   };
 }
 
-/** @param {Record<string, any>} snapshot */
 /** @param {Record<string, any>} snapshot */
 function angleFacts(snapshot) {
   const plan = object(snapshot?.plan); const angles = list(plan.angles); const planQuestions = list(plan.questions); const questionAngles = new Map(planQuestions.map((question) => [question.id, question.angleId]));
@@ -102,7 +114,8 @@ function angleFacts(snapshot) {
 /** @param {Record<string, any>} snapshot */
 function businessFacts(snapshot) {
   const plan = object(snapshot?.plan); const comparison = object(plan.comparison); const contract = object(plan.outcome);
-  const targetUrl = typeof plan.targetUrl === 'string' ? plan.targetUrl : null; const referenceUrl = typeof comparison.referenceUrl === 'string' ? comparison.referenceUrl : null;
+  const planTargetUrl = typeof plan.targetUrl === 'string' ? plan.targetUrl : null;
+  const planReferenceUrl = typeof comparison.referenceUrl === 'string' ? comparison.referenceUrl : null;
   const design = comparison.design ?? 'before_after'; const outcomes = list(snapshot?.outcomes).map(object); const groups = new Map();
   for (const outcome of outcomes) {
     const key = `${outcome.changeId ?? 'unlinked'}:${outcome.metric ?? ''}:${outcome.unit ?? ''}:${outcome.currency ?? ''}`;
@@ -123,11 +136,22 @@ function businessFacts(snapshot) {
   /** @param {any[]} rows */
   const periodDays = (rows) => rows.map((/** @type {any} */ item) => (Date.parse(item.periodEnd) - Date.parse(item.periodStart)) / 86400000);
   return [...groups.values()].map((bucket) => {
-    const rows = bucket.rows; const targetRows = targetUrl ? rows.filter((/** @type {any} */ item) => item.pageUrl === targetUrl) : rows; const referenceRows = referenceUrl ? rows.filter((/** @type {any} */ item) => item.pageUrl === referenceUrl) : [];
-    const unknownPageRows = targetUrl ? rows.filter((/** @type {any} */ item) => item.pageUrl !== targetUrl && item.pageUrl !== referenceUrl) : [];
+    const rows = bucket.rows;
+    const targetUrl = planTargetUrl ?? rows.find((/** @type {any} */ item) => item.pageRole === 'changed')?.pageUrl ?? null;
+    const referenceUrl = planReferenceUrl
+      ?? rows.find((/** @type {any} */ item) => item.comparisonPage)?.comparisonPage
+      ?? rows.find((/** @type {any} */ item) => item.pageRole === 'control')?.pageUrl ?? null;
+    const targetRows = rows.filter((/** @type {any} */ item) => item.pageRole === 'changed'
+      || (item.pageRole !== 'control' && (targetUrl ? item.pageUrl === targetUrl : !referenceUrl || item.pageUrl !== referenceUrl)));
+    const referenceRows = rows.filter((/** @type {any} */ item) => item.pageRole === 'control'
+      || (item.pageRole !== 'changed' && Boolean(referenceUrl && item.pageUrl === referenceUrl)));
+    const unknownPageRows = targetUrl ? rows.filter((/** @type {any} */ item) =>
+      item.pageRole !== 'changed' && item.pageRole !== 'control'
+      && item.pageUrl !== targetUrl && item.pageUrl !== referenceUrl) : [];
     const targetBaseline = targetRows.filter((/** @type {any} */ item) => item.phase === 'baseline'); const targetAfter = targetRows.filter((/** @type {any} */ item) => item.phase === 'after');
     const referenceBaseline = referenceRows.filter((/** @type {any} */ item) => item.phase === 'baseline'); const referenceAfter = referenceRows.filter((/** @type {any} */ item) => item.phase === 'after');
-    const allCompared = [...targetBaseline, ...targetAfter, ...(design === 'unchanged_reference' ? [...referenceBaseline, ...referenceAfter] : [])];
+    const hasExplicitControlArm = design === 'unchanged_reference' || referenceRows.length > 0;
+    const allCompared = [...targetBaseline, ...targetAfter, ...(hasExplicitControlArm ? [...referenceBaseline, ...referenceAfter] : [])];
     const denominatorMissing = allCompared.some((/** @type {any} */ item) => item.denominator == null);
     const trafficMismatch = allCompared.some((/** @type {any} */ item) => /different|mismatch|unequal|unknown/i.test(String(item.trafficNotes ?? '')));
     const minimumDenominator = Number(contract.minimumDenominator ?? 1); const minimumObservations = Number(contract.minimumObservations ?? 1);
@@ -140,7 +164,8 @@ function businessFacts(snapshot) {
     const reviewPeriodDays = Number(contract.reviewPeriodDays ?? 1); const reviewPeriodSatisfied = periodDays(targetAfter).every((days) => Number.isFinite(days) && days >= reviewPeriodDays);
     const missingReference = design === 'unchanged_reference' && (!referenceUrl || referenceBaseline.length === 0 || referenceAfter.length === 0);
     const missingChangeLink = !bucket.changeId;
-    const unmatchedPages = unknownPageRows.length > 0 || (design === 'unchanged_reference' && rows.some((/** @type {any} */ item) => item.pageUrl !== targetUrl && item.pageUrl !== referenceUrl));
+    const unmatchedPages = unknownPageRows.length > 0 || (design === 'unchanged_reference' && rows.some((/** @type {any} */ item) =>
+      item.pageRole !== 'changed' && item.pageRole !== 'control' && item.pageUrl !== targetUrl && item.pageUrl !== referenceUrl));
     const assignmentSpec = comparison.assignment;
     const assignmentMethod = typeof assignmentSpec === 'string' ? assignmentSpec.trim().toLowerCase() : typeof assignmentSpec?.method === 'string' ? assignmentSpec.method.trim().toLowerCase() : '';
     const assignmentDocumented = design === 'controlled_allocation' && Boolean(assignmentMethod) && !/not\s+random|none|unknown/.test(assignmentMethod) && allCompared.length > 0 && allCompared.every((/** @type {any} */ item) => typeof item.assignment === 'string' && item.assignment.trim().toLowerCase() === assignmentMethod);
@@ -157,12 +182,100 @@ function businessFacts(snapshot) {
       const minimumEffect = Number(contract.minimumEffect ?? 0); const lossLimit = Number(contract.lossLimit ?? 0);
       conclusion = absoluteEffect != null && absoluteEffect <= -lossLimit && lossLimit > 0 ? 'loss_limit_reached' : Math.abs(absoluteEffect ?? 0) >= minimumEffect ? 'documented_controlled_comparison' : 'below_minimum_effect';
     } else if (comparable) conclusion = design === 'unchanged_reference' ? 'observed_difference_requires_caution' : 'observed_before_after_difference_requires_caution';
+    const pageComparison = summarizeStudyPageComparison(rows, { targetUrl, referenceUrl });
     return { changeId: bucket.changeId, metric: bucket.metric, unit: bucket.unit, currency: bucket.currency, design, targetUrl, referenceUrl,
       baseline: targetBaseline, after: targetAfter, referenceBaseline: referenceBaseline, referenceAfter, baselineRate, afterRate, referenceBaselineRate, referenceAfterRate,
-      absoluteEffect, targetDelta, referenceDelta, denominatorMissing, trafficMismatch, unmatchedPages, windowsMatch, missingReference, missingChangeLink,
+      absoluteEffect, targetDelta, referenceDelta, pageComparison, denominatorMissing, trafficMismatch, unmatchedPages, windowsMatch, missingReference, missingChangeLink,
       reviewPeriodSatisfied, lowSample, assignmentDocumented, hasControlCohort, comparable, inconclusiveReasons: reasons, conclusion,
       windows: [...new Set(allCompared.map((/** @type {any} */ item) => `${item.periodStart}/${item.periodEnd}`))] };
   });
+}
+
+/** @param {Record<string, any>} snapshot */
+function studyCitationGaps(snapshot) {
+  const plan = object(snapshot?.plan);
+  const brandDomain = domainOf(plan.app?.url ?? plan.targetUrl);
+  /** @type {Map<string, {domain:string,observations:number,finalCitations:number}>} */
+  const domains = new Map();
+  let completedAnswers = 0;
+  let brandAbsentAnswers = 0;
+  let recommendationCount = list(snapshot?.recommendations).length;
+
+  for (const run of list(snapshot?.researchRuns)) {
+    const bundle = object(run.bundle ?? run.evidence ?? run);
+    recommendationCount += list(bundle.recommendations).length;
+    const gaps = summarizeResearchCitationGaps({
+      ...bundle,
+      app: bundle.app ?? plan.app ?? { id: snapshot?.appId ?? 'app', url: plan.targetUrl ?? null },
+    });
+    completedAnswers += gaps.completedSamples;
+    brandAbsentAnswers += gaps.brandAbsentSamples;
+    for (const item of gaps.domains) {
+      const bucket = domains.get(item.domain) ?? { domain: item.domain, observations: 0, finalCitations: 0 };
+      bucket.observations += item.sampleCount;
+      bucket.finalCitations += item.finalCitationCount;
+      domains.set(item.domain, bucket);
+    }
+  }
+
+  let completedSearches = 0;
+  let brandAbsentSearches = 0;
+  for (const run of list(snapshot?.searchRuns)) {
+    for (const record of list(run.records)) {
+      if ((record.lane ?? run.lane ?? 'collection') === 'diagnostic') continue;
+      if (record.status !== 'completed') continue;
+      completedSearches += 1;
+      const results = list(record.results);
+      const hasBrand = Boolean(brandDomain && results.some((source) => {
+        const domain = domainOf(source?.url);
+        return domain && (domain === brandDomain || domain.endsWith(`.${brandDomain}`));
+      }));
+      if (hasBrand) continue;
+      brandAbsentSearches += 1;
+      const seenInRecord = new Set();
+      for (const source of results) {
+        const domain = domainOf(source?.url);
+        if (!domain || (brandDomain && (domain === brandDomain || domain.endsWith(`.${brandDomain}`))) || seenInRecord.has(domain)) continue;
+        seenInRecord.add(domain);
+        const bucket = domains.get(domain) ?? { domain, observations: 0, finalCitations: 0 };
+        bucket.observations += 1;
+        domains.set(domain, bucket);
+      }
+    }
+  }
+
+  const ranked = [...domains.values()]
+    .sort((a, b) => b.finalCitations - a.finalCitations || b.observations - a.observations || a.domain.localeCompare(b.domain))
+    .slice(0, 5);
+  const appLabel = String(plan.app?.name ?? snapshot?.appId ?? 'your site');
+  const totalCompleted = completedAnswers + completedSearches;
+  const totalAbsent = brandAbsentAnswers + brandAbsentSearches;
+  const decision = /** @type {'investigate_citation_gap'|'hold_steady'|'awaiting_samples'} */ (
+    ranked.length > 0 || totalAbsent > 0
+      ? 'investigate_citation_gap'
+      : totalCompleted > 0 ? 'hold_steady' : 'awaiting_samples'
+  );
+  const actionHeadline = ranked.length > 0
+    ? `Competitors are cited via ${ranked.map((item) => item.domain).slice(0, 3).join(', ')}; ${appLabel} isn't.`
+    : totalCompleted > 0 && totalAbsent === 0
+      ? `Keep / hold: ${appLabel} appeared across completed study checks.`
+      : totalAbsent > 0
+        ? `${appLabel} was omitted in ${totalAbsent} completed check${totalAbsent === 1 ? '' : 's'}.`
+        : 'No completed search or answer receipts are saved yet.';
+
+  return {
+    recommendationCount,
+    completedAnswers,
+    brandAbsentAnswers,
+    completedSearches,
+    brandAbsentSearches,
+    domains: ranked,
+    decision,
+    actionHeadline,
+    nextStepStatus: decision === 'hold_steady'
+      ? `No improvement proposals are saved yet; ${appLabel} appeared across completed checks, so assistant review can confirm holding current pages steady.`
+      : 'No improvement proposals are saved yet; assistant review is ready to evaluate these receipts and propose or skip the next action.',
+  };
 }
 
 /** @param {Record<string, any>} snapshot */
@@ -191,6 +304,7 @@ export function deriveStudyReport(snapshot) {
   const appId = id(snapshot.appId ?? object(snapshot.plan).app?.id, 'app');
   const angles = angleFacts(snapshot); const versionFacts = list(snapshot.versions).map((version) => ({ id: version.id, status: version.status, pageId: version.pageId, capturedAt: version.capturedAt ?? null, publishedAt: version.publishedAt ?? null })); const exposure = [...list(snapshot.searchRuns), ...list(snapshot.researchRuns)].flatMap((run) => list(object(run).exposures ?? object(run.bundle).exposures ?? object(run.evidence).exposures));
   const business = businessFacts(snapshot); const schedule = scheduling(snapshot);
+  const citationGaps = studyCitationGaps(snapshot);
   const analyses = list(snapshot.analyses); const analyzedOccurrences = new Set(analyses.flatMap((analysis) => list(analysis.occurrenceIds ?? (analysis.occurrenceId ? [analysis.occurrenceId] : [])))); const dueByOccurrence = new Map(); for (const event of list(snapshot.events)) if (event.analysisDue === true && event.occurrenceId) dueByOccurrence.set(event.occurrenceId, event); const due = [...dueByOccurrence.values()].filter((event) => !analyzedOccurrences.has(event.occurrenceId));
   const summary = { angleCount: angles.length, searchRequests: angles.reduce((sum, angle) => sum + angle.searchRequests, 0), recommendationObservations: angles.reduce((sum, angle) => sum + angle.recommendationObservations, 0), diagnosticRequests: angles.reduce((sum, angle) => sum + angle.diagnosticRequests, 0), businessComparisons: business.length, analysisDue: due.length };
   const reportId = hash({ studyId, plan: snapshot.plan, angles, versionFacts, exposure, business, schedule, analyses }).slice(0, 24);
@@ -204,13 +318,50 @@ export function deriveStudyReport(snapshot) {
   if (exposure.length) for (const item of exposure) lines.push(`- ${md(item.status ?? 'unknown')}: ${md(item.url ?? '')}`);
   else lines.push('- No revision exposure records are saved.');
   lines.push('', '## Business outcomes', '');
-  if (!business.length) lines.push('- No linked business outcomes are saved; visibility cannot establish leads or sales.');
-  else for (const item of business) lines.push(`- ${md(item.metric)} (${md(item.unit)}): ${item.comparable ? 'comparison recorded; causal claim still requires assignment evidence' : 'inconclusive (missing denominator, low sample, mismatched traffic, or missing phase)'}.`);
+  if (!business.length) {
+    lines.push('- No linked business outcomes are saved; visibility cannot establish leads or sales.');
+  } else {
+    let renderedControlNote = false;
+    for (const item of business) {
+      const unitLabel = item.currency ? `${item.unit} ${item.currency}` : item.unit;
+      lines.push(`- ${md(item.metric)} (${md(unitLabel)})${item.changeId ? ` [${md(item.changeId)}]` : ''}: ${item.comparable ? 'comparison recorded; causal claim still requires assignment evidence' : 'inconclusive (missing denominator, low sample, mismatched traffic, or missing phase)'}.`);
+      const pc = item.pageComparison;
+      if (pc.changed.baseline !== null && pc.changed.after !== null) {
+        lines.push(`  - Changed page${pc.changedPage ? ` (${md(pc.changedPage)})` : ''}: baseline ${pc.changed.baseline} -> after ${pc.changed.after} (delta ${pc.changed.signedDelta}).`);
+      }
+      if (pc.control.baseline !== null && pc.control.after !== null) {
+        lines.push(`  - Control page${pc.controlPage ? ` (${md(pc.controlPage)})` : ''}: baseline ${pc.control.baseline} -> after ${pc.control.after} (delta ${pc.control.signedDelta}).`);
+      }
+      if (pc.differenceInChange !== null) {
+        lines.push(`  - Difference-in-change (changed minus control): ${pc.signedDifferenceInChange}.`);
+        renderedControlNote = true;
+      } else if (pc.afterDifference !== null) {
+        lines.push(`  - Post-change difference (changed minus control): ${pc.signedAfterDifference}.`);
+        renderedControlNote = true;
+      }
+    }
+    if (renderedControlNote) lines.push(`- ${CONTROL_PAGE_NOTE}`);
+  }
   lines.push('', '## Scheduling', '', `- Status: ${schedule.status}; connected: ${schedule.connected ? schedule.connectedKind : 'no'}; last success: ${schedule.lastSuccess ?? 'none'}; missed: ${schedule.missed}.`);
-  lines.push('', '## Assistant review', '');
   const latestAnalysis = analyses.at(-1);
+  if (!latestAnalysis && citationGaps.recommendationCount === 0) {
+    lines.push('', '## Observed Citation Gaps & Next-Step Status', '',
+      `- Action summary: ${md(citationGaps.actionHeadline)}`,
+      `- Next-step status: ${citationGaps.nextStepStatus}`);
+    if (citationGaps.domains.length) {
+      lines.push(`- Top external domains observed when the target website was absent:`);
+      for (const domain of citationGaps.domains) {
+        lines.push(`  - ${md(domain.domain)}: ${domain.observations} observation${domain.observations === 1 ? '' : 's'}${domain.finalCitations ? ` (${domain.finalCitations} final citation${domain.finalCitations === 1 ? '' : 's'})` : ''}`);
+      }
+    } else if (citationGaps.completedAnswers + citationGaps.completedSearches > 0) {
+      lines.push('- Citation gaps: No brand-absent external citation domains were observed in completed runs. Hold current page steady until the next scheduled check.');
+    } else {
+      lines.push('- Citation gaps: No completed search or answer receipts are saved yet.');
+    }
+  }
+  lines.push('', '## Assistant review', '');
   if (latestAnalysis) lines.push(`Recommendation: ${md(latestAnalysis.recommendation)}`, '', `Reason: ${md(latestAnalysis.reason)}`, '', `Next action: ${md(latestAnalysis.nextAction)}`, '', `Evidence: ${list(latestAnalysis.evidenceIds).map(md).join(', ') || 'none supplied'}.`);
   else lines.push('Assistant analysis has not been saved. Review the collected receipts before choosing a page change.');
   if (summary.analysisDue) lines.push('', `${summary.analysisDue} collection occurrence${summary.analysisDue === 1 ? '' : 's'} still require assistant analysis.`);
-  return { version: 1, id: reportId, studyId, appId, summary, versions: versionFacts, angles, exposure, business, scheduling: schedule, analysis: { records: analyses, due }, markdown: lines.join('\n') };
+  return { version: 1, id: reportId, studyId, appId, summary, versions: versionFacts, angles, exposure, business, citationGaps, scheduling: schedule, analysis: { records: analyses, due }, markdown: lines.join('\n') };
 }

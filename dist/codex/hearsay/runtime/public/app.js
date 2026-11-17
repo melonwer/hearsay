@@ -456,6 +456,35 @@ function initRowActions() {
       const { ok, data } = await api(`/api/entities/${entityDelete}`, 'DELETE');
       if (ok) window.location.reload();
       else showError(target, data);
+      return;
+    }
+
+    const switchDemo = target.getAttribute('data-switch-demo');
+    if (switchDemo !== null) {
+      target.setAttribute('disabled', 'disabled');
+      const wantDemo = switchDemo === 'true' || switchDemo === '1';
+      const { ok, data } = await api('/api/onboarding/mode', 'POST', { demo: wantDemo });
+      if (!ok) {
+        target.removeAttribute('disabled');
+        showError(target, data);
+      } else {
+        const dest = typeof data?.redirectTo === 'string' && data.redirectTo ? data.redirectTo : '/';
+        if (window.location.pathname === dest) window.location.reload();
+        else window.location.href = dest;
+      }
+      return;
+    }
+
+    const clearKey = target.getAttribute('data-clear-key');
+    if (clearKey !== null) {
+      target.setAttribute('disabled', 'disabled');
+      const { ok, data } = await api('/api/onboarding/providers', 'POST', { clearKeys: [clearKey] });
+      if (!ok) {
+        target.removeAttribute('disabled');
+        showError(target, data);
+      } else {
+        window.location.reload();
+      }
     }
   });
 
@@ -505,6 +534,22 @@ function initRowActions() {
       if (!ok) {
         target.checked = !target.checked;
         showError(target, data);
+      }
+      return;
+    }
+
+    const cliToggle = target.getAttribute('data-cli-toggle');
+    if (cliToggle !== null && target instanceof HTMLInputElement) {
+      target.setAttribute('disabled', 'disabled');
+      const { ok, data } = await api('/api/onboarding/providers', 'POST', {
+        cliRoutes: { [cliToggle]: target.checked },
+      });
+      if (!ok) {
+        target.removeAttribute('disabled');
+        target.checked = !target.checked;
+        showError(target, data);
+      } else {
+        window.location.reload();
       }
       return;
     }
@@ -857,11 +902,97 @@ function initSuggest() {
   });
 }
 
+function previewUrlToken(rawText, explicitName = '') {
+  const trimmed = rawText.trim();
+  const hint = explicitName.trim();
+  if (!trimmed && !hint) return null;
+  const looksUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) || (/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/.*)?$/i.test(trimmed) && !trimmed.includes(' '));
+  if (!looksUrl) return hint || trimmed;
+  const host = trimmed.toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0].split('?')[0].split('#')[0].replace(/^www\./, '').replace(/:\d+$/, '');
+  const parts = host.split('.').filter(Boolean);
+  const core = parts.length >= 3 && ['www', 'app', 'get', 'try', 'use'].includes(parts[0]) ? parts[1] : parts[0] || host;
+  const derived = hint || core.split(/[-_]+/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  return `${derived} (${host})`;
+}
+
+function initOnboarding() {
+  for (const form of document.querySelectorAll('form[data-onboarding-providers-form]')) {
+    if (!(form instanceof HTMLFormElement)) continue;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      /** @type {Record<string, string>} */
+      const keys = {};
+      /** @type {HTMLInputElement[]} */
+      const inputs = [];
+      for (const field of form.querySelectorAll('input')) {
+        if (!(field instanceof HTMLInputElement) || !field.name) continue;
+        inputs.push(field);
+        const val = field.value.trim();
+        if (val !== '') keys[field.name] = val;
+      }
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn instanceof HTMLElement) submitBtn.setAttribute('disabled', 'disabled');
+      const { ok, data } = await api('/api/onboarding/providers', 'POST', { keys });
+      for (const input of inputs) input.value = '';
+      if (!ok) {
+        if (submitBtn instanceof HTMLElement) submitBtn.removeAttribute('disabled');
+        showError(form, data);
+        return;
+      }
+      window.location.reload();
+    });
+  }
+
+  for (const form of document.querySelectorAll('form[data-onboarding-urls-form]')) {
+    if (!(form instanceof HTMLFormElement)) continue;
+    const brandUrlInput = form.querySelector('input[name="brandUrl"]');
+    const brandNameInput = form.querySelector('input[name="brandName"]');
+    const competitorsInput = form.querySelector('input[name="competitors"]');
+    const previewEl = form.querySelector('[data-url-preview]');
+
+    const updatePreview = () => {
+      if (!(previewEl instanceof HTMLElement)) return;
+      const bUrl = brandUrlInput instanceof HTMLInputElement ? brandUrlInput.value : '';
+      const bName = brandNameInput instanceof HTMLInputElement ? brandNameInput.value : '';
+      const compsRaw = competitorsInput instanceof HTMLInputElement ? competitorsInput.value : '';
+      const bLabel = previewUrlToken(bUrl, bName);
+      const cLabels = compsRaw.split(/[\n,;]+/).map((s) => previewUrlToken(s)).filter(Boolean);
+      const parts = [];
+      if (bLabel) parts.push(`Brand: ${bLabel}`);
+      if (cLabels.length > 0) parts.push(`Competitors: ${cLabels.join(', ')}`);
+      previewEl.textContent = parts.join(' · ');
+    };
+    form.addEventListener('input', updatePreview);
+    updatePreview();
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const brandUrl = brandUrlInput instanceof HTMLInputElement ? brandUrlInput.value.trim() : '';
+      const brandName = brandNameInput instanceof HTMLInputElement ? brandNameInput.value.trim() : '';
+      const competitors = competitorsInput instanceof HTMLInputElement ? competitorsInput.value.trim() : '';
+      const submitBtn = form.querySelector('button[type="submit"]');
+      if (submitBtn instanceof HTMLElement) submitBtn.setAttribute('disabled', 'disabled');
+      const { ok, data } = await api('/api/onboarding/brand-urls', 'POST', {
+        brandUrl,
+        brandName,
+        competitors,
+      });
+      if (!ok) {
+        if (submitBtn instanceof HTMLElement) submitBtn.removeAttribute('disabled');
+        showError(form, data);
+        return;
+      }
+      window.location.href = typeof data?.redirectTo === 'string' && data.redirectTo ? data.redirectTo : '/setup?step=2';
+    });
+  }
+}
+
 initTheme();
 initCharts();
 initSortableTables();
 initRunButton();
 initApiForms();
+initOnboarding();
 initRowActions();
 initPromptPanelReview();
 initSuggest();

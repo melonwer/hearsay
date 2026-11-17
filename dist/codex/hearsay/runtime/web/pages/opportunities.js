@@ -1,10 +1,146 @@
-import { listEvidenceIntents } from '../../core/evidence-report.js';
+import { intentEvidenceReport, listEvidenceIntents } from '../../core/evidence-report.js';
 import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metrics.js';
 import { deriveOpportunityCandidates, listOpportunities } from '../../core/opportunities.js';
 import { compareIntervention } from '../../core/intervention-comparison.js';
+import { summarizeResearchCitationGaps } from '../../core/research-report.js';
+import { deriveStudyReport } from '../../core/study-report.js';
 import { emptyState, html, layout, raw, SURFACE_LABEL } from '../layout.js';
 import { listResearchActions } from '../../core/research-store.js';
+import { brandEntity, listStandaloneRunsForHandoff } from '../queries.js';
 import { researchActionCards } from './research.js';
+
+/** @param {unknown} rawUrl */
+function domainOf(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl) return null;
+  try {
+    const parsed = new URL(rawUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    return parsed.hostname.replace(/^www\./, '').toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** @param {import('node:sqlite').DatabaseSync} db */
+function buildStandaloneHandoffs(db) {
+  const { researchRuns, studySnapshots } = listStandaloneRunsForHandoff(db);
+  /** @type {{kind:'research'|'study',id:number,selectorId:string,appName:string,runLabel:string,observedAt:string,decision:'investigate_citation_gap'|'hold_steady'|'awaiting_samples',headline:string,nextStepStatus:string,completed:number,brandAbsent:number,domains:{domain:string,sampleCount:number,finalCitationCount:number}[]}[]} */
+  const handoffs = [];
+  for (const row of researchRuns) {
+    try {
+      const bundle = JSON.parse(row.bundleJson);
+      if (Array.isArray(bundle.recommendations) && bundle.recommendations.length > 0) continue;
+      const gaps = summarizeResearchCitationGaps(bundle);
+      if (gaps.decision === 'awaiting_samples') continue;
+      handoffs.push({
+        kind: 'research',
+        id: row.id,
+        selectorId: `research:${row.runId}`,
+        appName: String(bundle.app?.name ?? row.appId),
+        runLabel: String(bundle.runId ?? row.runId),
+        observedAt: String(bundle.createdAt ?? row.importedAt),
+        decision: gaps.decision,
+        headline: gaps.actionHeadline,
+        nextStepStatus: gaps.nextStepStatus,
+        completed: gaps.completedSamples,
+        brandAbsent: gaps.brandAbsentSamples,
+        domains: gaps.domains.map((d) => ({
+          domain: d.domain,
+          sampleCount: d.sampleCount,
+          finalCitationCount: d.finalCitationCount,
+        })),
+      });
+    } catch { /* ignore unreadable historical bundle */ }
+  }
+  for (const row of studySnapshots) {
+    try {
+      const snapshot = JSON.parse(row.snapshotJson);
+      const derived = deriveStudyReport(snapshot);
+      if (derived.citationGaps.recommendationCount > 0 || (Array.isArray(snapshot.analyses) && snapshot.analyses.length > 0)) continue;
+      if (derived.citationGaps.decision === 'awaiting_samples') continue;
+      handoffs.push({
+        kind: 'study',
+        id: row.id,
+        selectorId: `study:${row.studyId}`,
+        appName: String(snapshot.plan?.app?.name ?? row.appId),
+        runLabel: `study ${row.studyId}`,
+        observedAt: row.importedAt,
+        decision: derived.citationGaps.decision,
+        headline: derived.citationGaps.actionHeadline,
+        nextStepStatus: derived.citationGaps.nextStepStatus,
+        completed: derived.citationGaps.completedAnswers + derived.citationGaps.completedSearches,
+        brandAbsent: derived.citationGaps.brandAbsentAnswers + derived.citationGaps.brandAbsentSearches,
+        domains: derived.citationGaps.domains.map((d) => ({
+          domain: d.domain,
+          sampleCount: d.observations,
+          finalCitationCount: d.finalCitations,
+        })),
+      });
+    } catch { /* ignore unreadable historical snapshot */ }
+  }
+  return handoffs.slice(0, 6);
+}
+
+/**
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {ReturnType<typeof resolveMeasurementSeries>} series
+ * @param {number|null} intentId
+ */
+function buildNativeIntentHandoff(db, series, intentId) {
+  if (!series || intentId === null) return null;
+  const brand = brandEntity(db);
+  const brandId = brand ? brand.id : null;
+  const brandName = brand ? brand.name : 'your site';
+  const brandDomains = (brand?.domains ?? []).map((d) => d.replace(/^www\./, '').toLowerCase()).filter(Boolean);
+  const isBrandDomain = (/** @type {string} */ domain) =>
+    brandDomains.some((bd) => domain === bd || domain.endsWith(`.${bd}`));
+  const report = intentEvidenceReport(db, { series, intentId });
+  const answers = report?.answers ?? [];
+  if (!answers.length) return null;
+  const absent = brandId === null
+    ? []
+    : answers.filter((answer) => !answer.mentions.some((m) => m.entityId === brandId));
+  /** @type {Map<string, {domain:string,responseIds:Set<number>,citationIds:Set<number>,sourceIds:Set<number>}>} */
+  const domains = new Map();
+  for (const answer of absent) {
+    for (const cite of answer.answerCitations) {
+      const domain = domainOf(cite.url);
+      if (!domain || isBrandDomain(domain)) continue;
+      let bucket = domains.get(domain);
+      if (!bucket) { bucket = { domain, responseIds: new Set(), citationIds: new Set(), sourceIds: new Set() }; domains.set(domain, bucket); }
+      bucket.responseIds.add(answer.id);
+      bucket.citationIds.add(cite.id);
+    }
+    for (const src of answer.sourceObservations) {
+      const domain = domainOf(src.url);
+      if (!domain || isBrandDomain(domain)) continue;
+      let bucket = domains.get(domain);
+      if (!bucket) { bucket = { domain, responseIds: new Set(), citationIds: new Set(), sourceIds: new Set() }; domains.set(domain, bucket); }
+      bucket.responseIds.add(answer.id);
+      bucket.sourceIds.add(src.id);
+    }
+  }
+  const ranked = [...domains.values()]
+    .sort((a, b) => b.citationIds.size - a.citationIds.size || b.responseIds.size - a.responseIds.size || a.domain.localeCompare(b.domain))
+    .slice(0, 4)
+    .map((b) => ({
+      domain: b.domain,
+      answerCount: b.responseIds.size,
+      finalCitationCount: b.citationIds.size,
+      responseIds: [...b.responseIds],
+      citationIds: [...b.citationIds],
+      sourceIds: [...b.sourceIds],
+    }));
+  return {
+    brandName,
+    completedAnswers: answers.length,
+    brandAbsentAnswers: absent.length,
+    decision: ranked.length > 0 ? /** @type {const} */ ('investigate_citation_gap')
+      : absent.length === 0 ? /** @type {const} */ ('hold_steady')
+        : /** @type {const} */ ('absent_without_urls'),
+    domains: ranked,
+  };
+}
 
 /** @param {string|null} value */
 function positiveInt(value) {
@@ -69,6 +205,8 @@ export function buildView({ db }, params) {
   }
   return {
     researchActions: listResearchActions(db),
+    standaloneHandoffs: buildStandaloneHandoffs(db),
+    nativeHandoff: buildNativeIntentHandoff(db, series, intentId),
     days, seriesOptions, series, intents, intentId, candidates, opportunities: selected,
     comparisons, comparisonPlanId, comparisonSnapshotId,
     prefill: {
@@ -124,9 +262,30 @@ function support(view, evidence) {
   </details>`;
 }
 
+/** @param {ReturnType<typeof buildStandaloneHandoffs>} handoffs */
+function standaloneCitationGapSection(handoffs) {
+  if (!handoffs.length) return '';
+  return html`<section class="card citation-gap-handoffs">
+    <h2>Citation-gap &amp; repeat-run next steps</h2>
+    <p class="muted">Imported standalone runs with no supplied improvement proposals surface observed citation gaps or an explicit hold decision.</p>
+    <div class="opportunity-list">${handoffs.map((item) => html`<article class="opportunity-preview">
+      <div class="opportunity-topline">
+        <span class="tag">${item.decision === 'hold_steady' ? 'Keep / hold' : 'Citation gap'}</span>
+        <span class="muted small">${item.appName} · ${item.runLabel} · ${item.observedAt}</span>
+      </div>
+      <h3>${item.headline}</h3>
+      ${item.domains.length ? html`<p class="muted small">${item.brandAbsent}/${item.completed} completed checks omitted ${item.appName}. Cited external domains: ${item.domains.map((d) => `${d.domain} (${d.finalCitationCount ? `${d.finalCitationCount} final citation${d.finalCitationCount === 1 ? '' : 's'}` : `${d.sampleCount} source${d.sampleCount === 1 ? '' : 's'}`})`).join(', ')}.</p>` : ''}
+      <p class="muted small">${item.nextStepStatus}</p>
+      <p><a class="btn btn-sm" href="${item.kind === 'study' ? `/research?study_id=${item.id}` : `/research?id=${item.id}`}">Inspect receipts</a>
+        <a class="btn btn-sm" href="/weekly-review?series_id=${encodeURIComponent(item.selectorId)}">Weekly business review</a></p>
+    </article>`)}</div>
+  </section>`;
+}
+
 /** @param {ReturnType<typeof buildView>} view */
 function candidateSection(view) {
   const available = view.candidates.filter((item) => !item.existingOpportunityId || item.newResponseIds?.length);
+  const nh = view.nativeHandoff;
   return html`<section class="card">
     <div class="opportunity-section-head"><div><h2>Observed patterns to review</h2>
       <p class="muted">Repeated source and query-theme patterns need two comparable answer receipts from two completed runs in this exact selection. Explicit negative or uncertain statements can appear from one completed answer. The threshold helps triage; it does not measure importance. Save only the investigations you want to review.</p></div>
@@ -142,13 +301,25 @@ function candidateSection(view) {
         <button type="submit" class="btn btn-sm">Save this investigation</button>
         <p class="form-error" data-form-error role="alert" hidden></p>
       </form>
-    </article>`)}</div>` : html`<p class="muted">No new pattern qualifies for this selection. You can create an investigation from a single receipt below.</p>`}
+    </article>`)}</div>`
+    : nh?.domains.length ? html`<div class="opportunity-list">${nh.domains.map((d) => html`<article class="opportunity-preview">
+      <div class="opportunity-topline"><span class="tag">Citation gap</span><span class="muted small">${d.answerCount} answer${d.answerCount === 1 ? '' : 's'}${d.finalCitationCount ? ` · ${d.finalCitationCount} final citation${d.finalCitationCount === 1 ? '' : 's'}` : ''}</span></div>
+      <h3>Competitors are cited via ${d.domain}; ${nh.brandName} isn't</h3>
+      <p class="muted small">Observed in ${d.answerCount} answer receipt${d.answerCount === 1 ? '' : 's'} (#${d.responseIds.join(', #')}) where ${nh.brandName} was absent. Single-run observations stay below the two-run auto-candidate threshold unless you choose to investigate.</p>
+      <p><a class="btn btn-sm" href="${selectionUrl(view, {
+        response_ids: d.responseIds.join(','),
+        citation_ids: d.citationIds.join(','),
+        source_ids: d.sourceIds.join(','),
+      })}#manual-opportunity-form">Prefill investigation from receipts</a></p>
+    </article>`)}</div>`
+    : nh?.decision === 'hold_steady' ? html`<p class="muted"><strong>Keep / hold:</strong> ${nh.brandName} appeared in all ${nh.completedAnswers} comparable answer${nh.completedAnswers === 1 ? '' : 's'} for this intent. No new pattern qualifies; hold current pages steady until the next scheduled run, or create an investigation from a single receipt below.</p>`
+    : html`<p class="muted">No new pattern qualifies for this selection. You can create an investigation from a single receipt below.</p>`}
   </section>`;
 }
 
 /** @param {ReturnType<typeof buildView>} view */
 function manualForm(view) {
-  return html`<section class="card"><h2>Create an investigation from selected evidence</h2>
+  return html`<section class="card" id="manual-opportunity-form"><h2>Create an investigation from selected evidence</h2>
     <p class="muted">Use the links on <a href="/evidence?${new URLSearchParams({
       series_id: view.series?.id ?? '', start: view.series?.start ?? '', end: view.series?.end ?? '',
       intent_id: String(view.intentId ?? ''), days: String(view.days),
@@ -221,6 +392,46 @@ function changedLayer(report, layer, label) {
   </details>`;
 }
 
+/** @param {{page:string|null,baseline:string|null,post:string|null,signedDelta:string|null}} arm */
+function outcomeArmCell(arm) {
+  const hint = arm.page ? html`<br /><span class="muted small">${arm.page}</span>` : '';
+  if (arm.baseline !== null && arm.post !== null) return html`<strong>${arm.baseline} → ${arm.post}</strong> (${arm.signedDelta})${hint}`;
+  if (arm.post !== null) return html`${arm.post} in review (no baseline)${hint}`;
+  if (arm.baseline !== null) return html`Baseline ${arm.baseline} (no review)${hint}`;
+  return html`<span class="muted">Not recorded</span>${hint}`;
+}
+
+/** @param {ReturnType<typeof compareIntervention>} report */
+function businessComparisonBlock(report) {
+  const biz = report.businessComparison;
+  if (!biz?.items?.length) {
+    return html`<details><summary>Linked business outcomes (0)</summary>
+      <p class="muted small">No outcome records are linked to Opportunity #${report.opportunityId} across these windows yet. Link outcomes with <code>opportunity_id: ${report.opportunityId}</code> and <code>page_role: changed|control</code> in <a href="/weekly-review">Weekly review</a>.</p>
+    </details>`;
+  }
+  return html`<details open><summary>Changed vs. control page business outcomes (${biz.items.length})</summary>
+    <div class="opportunity-table-scroll"><table>
+      <thead><tr>
+        <th scope="col">Metric</th>
+        <th scope="col">Changed page</th>
+        <th scope="col">Unchanged control page</th>
+        <th scope="col">Difference-in-change</th>
+      </tr></thead>
+      <tbody>${biz.items.map((item) => html`<tr>
+        <th scope="row">${item.metricName} <span class="muted small">(${item.currency ? `${item.unit} ${item.currency}` : item.unit})</span></th>
+        <td>${outcomeArmCell(item.changed)}</td>
+        <td>${outcomeArmCell(item.control)}</td>
+        <td>${item.signedDifferenceInChange !== null
+          ? html`<strong>${item.signedDifferenceInChange}</strong>`
+          : item.signedWindowDifference !== null
+            ? html`${item.signedWindowDifference} <span class="muted small">(review window only)</span>`
+            : html`<span class="muted">Needs baseline + control</span>`}</td>
+      </tr>`)}</tbody>
+    </table></div>
+    <p class="muted small">${biz.note}</p>
+  </details>`;
+}
+
 /** @param {ReturnType<typeof compareIntervention>} report */
 function comparisonReport(report) {
   const status = ({ incomparable: 'Incomparable', insufficient_data: 'Insufficient data',
@@ -256,6 +467,7 @@ function comparisonReport(report) {
     <details><summary>Capture and metadata coverage</summary><div class="opportunity-table-scroll"><table><thead><tr><th scope="col">Window</th><th scope="col">Targets</th><th scope="col">Comparable answers</th><th scope="col">Query metadata</th><th scope="col">Source observations</th><th scope="col">Answer citations</th></tr></thead><tbody>
       ${coverageRows(report.coverage.before, 'Baseline')}${coverageRows(report.coverage.after, 'Review')}
     </tbody></table></div></details>
+    ${businessComparisonBlock(report)}
     ${changedLayer(report, 'queries', 'Queries')}${changedLayer(report, 'sources', 'Sources')}${changedLayer(report, 'citations', 'Citations')}
     ${report.confounders.length ? html`<details><summary>Other shipped actions (${report.confounders.length})</summary><ul>${report.confounders.map((action) => html`<li>Opportunity #${action.opportunityId} · intent #${action.intentId} · shipped ${action.shippedAt} · ${action.target} · ${action.changeDescription}</li>`)}</ul></details>` : ''}
     <p class="muted">${report.interpretation}</p>
@@ -457,7 +669,7 @@ function opportunityCard(view, item) {
 
 /** @param {import('../layout.js').ShellCtx} ctx @param {ReturnType<typeof buildView>} view */
 export function render(ctx, view) {
-  let body = html`<p class="muted">Review observed evidence, choose a next step, and record who owns it. These entries are hypotheses and decisions, not claims about how an engine ranks pages.</p>${researchActionCards(view.researchActions ?? [])}${selector(view)}`;
+  let body = html`<p class="muted">Review observed evidence, choose a next step, and record who owns it. These entries are hypotheses and decisions, not claims about how an engine ranks pages.</p>${researchActionCards(view.researchActions ?? [])}${standaloneCitationGapSection(view.standaloneHandoffs ?? [])}${selector(view)}`;
   if (!view.series || view.intentId === null) {
     body = html`${body}${emptyState({ title: 'No evidence for this selection',
       line: 'Choose a measurement series and buyer intent with completed comparable answers.',

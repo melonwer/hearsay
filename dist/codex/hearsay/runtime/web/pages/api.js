@@ -19,7 +19,9 @@ import { API_SEARCH_SCHEDULE_CONSENT_VERSION, apiScheduleQuoteId,
   apiSearchScheduleApproved, disableApiSearchSchedule, getApiSearchSchedule, hasEnabledApiSearch,
   saveApiSearchSchedule } from '../../core/api-search-schedule.js';
 import { stableIdentity } from '../../core/measurement-contract.js';
-import { sendJson, sendError, sendHtml } from '../router.js';
+import { buildClientReport, renderClientReportHtml } from '../../core/client-export.js';
+import { detectCliExecutable, maskOnboardingHint, runningScheduleLanes, scheduleStatusInfo } from '../layout.js';
+import { isLoopbackRequest, sendJson, sendError, sendHtml } from '../router.js';
 import { metrics, NotReadyError, runner, soft, strict, suggest } from '../data.js';
 import {
   activePromptCount,
@@ -1798,7 +1800,10 @@ export function registerApiRoutes(router, deps) {
       periodStart: body.period_start, periodEnd: body.period_end,
       landingPage: body.landing_page, metricName: body.metric_name, value: body.value,
       unit: body.unit, currency: body.currency, attributionMethod: body.attribution_method,
-      notes: body.notes, supersedesId: body.supersedes_id, author: body.author });
+      notes: body.notes, supersedesId: body.supersedes_id,
+      interventionId: body.intervention_id, opportunityId: body.opportunity_id,
+      pageRole: body.page_role, comparisonPage: body.comparison_page,
+      author: body.author });
   }, 201));
   router.add('POST', '/api/outcomes/import', json((ctx) => {
     const body = asObject(ctx.body);
@@ -2404,6 +2409,39 @@ export function registerApiRoutes(router, deps) {
     json(() => exportAll(db)),
   );
 
+  router.add(
+    'GET',
+    '/api/export/report',
+    json((ctx) => exportClientReport(deps, ctx)),
+  );
+
+  router.add(
+    'GET',
+    '/api/onboarding/state',
+    json((ctx) => {
+      assertOnboardingLoopback(ctx);
+      return onboardingStateView(deps);
+    }),
+  );
+
+  router.add(
+    'POST',
+    '/api/onboarding/providers',
+    json((ctx) => updateOnboardingProviders(deps, ctx)),
+  );
+
+  router.add(
+    'POST',
+    '/api/onboarding/mode',
+    json((ctx) => switchOnboardingMode(deps, ctx)),
+  );
+
+  router.add(
+    'POST',
+    '/api/onboarding/brand-urls',
+    json((ctx) => saveOnboardingBrandUrls(deps, ctx)),
+  );
+
   // Not in the §10.3 table, but §11.6 requires a persisted branded-prompt SOV toggle
   // and there is no other endpoint that could carry it. Kept to that one setting.
   router.add(
@@ -2418,4 +2456,594 @@ export function registerApiRoutes(router, deps) {
       };
     }),
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * Browser onboarding, workspace mode switcher & B2B client export
+ * ------------------------------------------------------------------ */
+
+const ONBOARDING_KEY_ENVS = /** @type {const} */ ([
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY',
+  'PERPLEXITY_API_KEY',
+  'TAVILY_API_KEY',
+]);
+
+const ONBOARDING_CLI_MAP = /** @type {Record<string, string>} */ ({
+  codex: 'HEARSAY_CODEX_ENABLED',
+  'codex-agent': 'HEARSAY_CODEX_ENABLED',
+  HEARSAY_CODEX_ENABLED: 'HEARSAY_CODEX_ENABLED',
+  claudeCode: 'HEARSAY_CLAUDE_CODE_ENABLED',
+  'claude-code-agent': 'HEARSAY_CLAUDE_CODE_ENABLED',
+  HEARSAY_CLAUDE_CODE_ENABLED: 'HEARSAY_CLAUDE_CODE_ENABLED',
+});
+
+/**
+ * Enforce strict loopback + local host/origin check on `/api/onboarding/*`.
+ * @param {import('../router.js').Ctx} ctx
+ */
+function assertOnboardingLoopback(ctx) {
+  if (!isLoopbackRequest(ctx.req)) {
+    throw new ApiError(
+      403,
+      'forbidden',
+      'Onboarding and workspace controls are restricted to local loopback requests.',
+    );
+  }
+}
+
+/**
+ * Build a secret-free onboarding state snapshot (never includes raw API keys or paths).
+ * @param {ApiDeps & {runtime?: import('../../server.js').OnboardingRuntime}} deps
+ */
+function onboardingStateView(deps) {
+  const db = deps.runtime ? deps.runtime.getDb() : deps.db;
+  const config = deps.runtime ? deps.runtime.getConfig() : deps.config;
+  const tavilyKey = deps.runtime
+    ? deps.runtime.getEnvValue('TAVILY_API_KEY')
+    : String(process.env.TAVILY_API_KEY ?? '');
+  const pathEnv = deps.runtime ? deps.runtime.getPathEnv() : process.env.PATH;
+
+  const providers = [
+    ...PROVIDER_IDS.map((id) => {
+      const p = config.providers[id];
+      return {
+        id: p.id,
+        label: p.label,
+        keyEnv: p.keyEnv,
+        model: p.model,
+        kind: 'panel_api',
+        configured: p.enabled,
+        maskedHint: maskOnboardingHint(p.apiKey),
+      };
+    }),
+    {
+      id: 'tavily',
+      label: 'Tavily Search',
+      keyEnv: 'TAVILY_API_KEY',
+      model: null,
+      kind: 'research_search',
+      configured: tavilyKey.trim() !== '',
+      maskedHint: maskOnboardingHint(tavilyKey),
+    },
+  ];
+
+  const codexExec = config.subscription.codex?.executable ?? 'codex';
+  const claudeExec = config.subscription.claudeCode?.executable ?? 'claude';
+  const cliRoutes = [
+    {
+      key: 'codex',
+      id: 'codex-agent',
+      label: 'Codex CLI',
+      enabledEnv: 'HEARSAY_CODEX_ENABLED',
+      command: 'codex',
+      detected: detectCliExecutable(codexExec, pathEnv),
+      enabled: Boolean(config.subscription.codex?.enabled),
+    },
+    {
+      key: 'claudeCode',
+      id: 'claude-code-agent',
+      label: 'Claude Code CLI',
+      enabledEnv: 'HEARSAY_CLAUDE_CODE_ENABLED',
+      command: 'claude',
+      detected: detectCliExecutable(claudeExec, pathEnv),
+      enabled: Boolean(config.subscription.claudeCode?.enabled),
+    },
+  ];
+
+  const health = trackingHealth({ db, config });
+  const hasSearch = hasEnabledApiSearch(config);
+  const recurringSearchApproved = apiSearchScheduleApproved(db, config);
+  const running = runningScheduleLanes(db);
+
+  return {
+    demo: config.demo,
+    providers,
+    cliRoutes,
+    scheduleBadges: {
+      api: scheduleStatusInfo('api', {
+        trackingHealth: health,
+        demo: config.demo,
+        hasSearch,
+        recurringSearchApproved,
+        collecting: running.api,
+      }),
+      subscription: scheduleStatusInfo('subscription', {
+        trackingHealth: health,
+        demo: config.demo,
+        collecting: running.subscription,
+      }),
+    },
+  };
+}
+
+const COMMON_MULTI_TLDS = new Set([
+  'co.uk',
+  'org.uk',
+  'com.au',
+  'co.nz',
+  'co.jp',
+  'co.in',
+  'com.br',
+]);
+
+/**
+ * Derive a clean human entity name from a normalized domain hostname (`notewell.ai` -> `Notewell`).
+ * @param {string} domain
+ * @returns {string}
+ */
+function nameFromDomain(domain) {
+  const parts = domain.split('.').filter(Boolean);
+  if (parts.length === 0) return '';
+  let core = parts[0];
+  if (parts.length >= 3) {
+    const tail2 = `${parts[parts.length - 2]}.${parts[parts.length - 1]}`;
+    const labelIndex = COMMON_MULTI_TLDS.has(tail2) ? parts.length - 3 : parts.length - 2;
+    const candidate = parts[Math.max(0, labelIndex)];
+    if (candidate && !['www', 'app', 'get', 'try', 'use', 'docs'].includes(candidate)) {
+      core = candidate;
+    } else if (parts[0] && !['www', 'app', 'get', 'try', 'use', 'docs'].includes(parts[0])) {
+      core = parts[0];
+    } else if (candidate) {
+      core = candidate;
+    }
+  }
+  return core
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
+ * Parse a single founder URL, domain, `"Name (url)"`, or plain competitor name into `{ name, domains, aliases }`.
+ * @param {string} rawText
+ * @param {string} [explicitName]
+ * @returns {{name: string, domains: string[], aliases: string[]}|null}
+ */
+function parseEntityUrlToken(rawText, explicitName = '') {
+  const trimmed = rawText.trim();
+  const cleanExplicit = explicitName.trim();
+  if (trimmed === '' && cleanExplicit === '') return null;
+
+  let nameHint = cleanExplicit;
+  let target = trimmed;
+
+  const parenMatch = /^([^()]+)\(([^()]+)\)$/.exec(trimmed);
+  if (parenMatch) {
+    if (!nameHint) nameHint = parenMatch[1].trim();
+    target = parenMatch[2].trim();
+  }
+
+  const looksLikeUrlOrDomain =
+    /^[a-z][a-z0-9+.-]*:\/\//i.test(target) ||
+    (/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/.*)?$/i.test(target) && !target.includes(' '));
+
+  if (looksLikeUrlOrDomain) {
+    const domain = normaliseDomain(target).replace(/:\d+$/, '');
+    if (!domain || !domain.includes('.')) {
+      throw new ApiError(422, 'unprocessable', `Could not parse website domain from "${trimmed}"`);
+    }
+    const derivedName = nameHint || nameFromDomain(domain) || domain;
+    const aliases =
+      domain.length >= MIN_ALIAS_LENGTH && domain.toLowerCase() !== derivedName.toLowerCase()
+        ? [domain]
+        : [];
+    return {
+      name: derivedName.slice(0, 120),
+      domains: [domain],
+      aliases,
+    };
+  }
+
+  const plainName = (nameHint || target).slice(0, 120);
+  if (!plainName) return null;
+  return { name: plainName, domains: [], aliases: [] };
+}
+
+/**
+ * `POST /api/onboarding/brand-urls` — non-technical founder 1-step URL-to-brand & competitor setup.
+ * Accepts website URLs or names, normalizes domains & display names, and persists in one transaction.
+ *
+ * @param {ApiDeps & {runtime?: import('../../server.js').OnboardingRuntime}} deps
+ * @param {import('../router.js').Ctx} ctx
+ */
+function saveOnboardingBrandUrls(deps, ctx) {
+  assertOnboardingLoopback(ctx);
+  const db = deps.runtime ? deps.runtime.getDb() : deps.db;
+  const config = deps.runtime ? deps.runtime.getConfig() : deps.config;
+  if (config.demo) {
+    throw new ApiError(400, 'demo_mode', 'Switch out of Demo mode before saving your live brand.');
+  }
+
+  const body = asObject(ctx.body);
+  const brandUrl = str(body.brandUrl ?? body.brand_url, 'brandUrl', { max: 500 }) ?? '';
+  const brandName = str(body.brandName ?? body.brand_name, 'brandName', { max: 120 }) ?? '';
+  const extraAliases = checkAliases(strList(body.brandAliases ?? body.aliases, 'brandAliases') ?? []);
+
+  /** @type {{name: string, domains: string[], aliases: string[]}[]} */
+  const competitorItems = [];
+  if (typeof body.competitors === 'string') {
+    for (const part of body.competitors.split(/[\n,;]+/)) {
+      const parsed = parseEntityUrlToken(part);
+      if (parsed) competitorItems.push(parsed);
+    }
+  } else if (Array.isArray(body.competitors)) {
+    for (let i = 0; i < body.competitors.length; i += 1) {
+      const entry = body.competitors[i];
+      if (typeof entry === 'string') {
+        const parsed = parseEntityUrlToken(entry);
+        if (parsed) competitorItems.push(parsed);
+      } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        const obj = /** @type {Record<string, unknown>} */ (entry);
+        const u = str(obj.url ?? obj.domain, `competitors[${i}].url`, { max: 500 }) ?? '';
+        const n = str(obj.name, `competitors[${i}].name`, { max: 120 }) ?? '';
+        const parsed = parseEntityUrlToken(u, n);
+        if (parsed) competitorItems.push(parsed);
+      } else {
+        throw new ApiError(422, 'unprocessable', `competitors[${i}] must be a URL string or object`);
+      }
+    }
+  } else if (body.competitors !== undefined && body.competitors !== null) {
+    throw new ApiError(422, 'unprocessable', 'competitors must be a string or array');
+  }
+
+  const brandItem = parseEntityUrlToken(brandUrl, brandName);
+  if (brandItem) {
+    const mergedAliases = [...new Set([...brandItem.aliases, ...extraAliases])].filter(
+      (a) => a.toLowerCase() !== brandItem.name.toLowerCase(),
+    );
+    brandItem.aliases = checkAliases(mergedAliases);
+  }
+
+  if (!brandItem && competitorItems.length === 0) {
+    throw new ApiError(422, 'nothing_to_do', 'Enter your website URL (or brand name) or at least one competitor URL.');
+  }
+
+  transaction(db, () => {
+    const existingBrand = brandEntity(db);
+
+    if (brandItem) {
+      assertDomainsFree(db, brandItem.domains, existingBrand?.id ?? null);
+      const nameClash = get(
+        db,
+        'SELECT id, is_self FROM entities WHERE name = ? COLLATE NOCASE',
+        [brandItem.name],
+      );
+      if (nameClash && Number(nameClash.is_self) !== 1) {
+        throw new ApiError(
+          409,
+          'conflict',
+          `"${brandItem.name}" is already listed as a competitor.`,
+        );
+      }
+
+      if (existingBrand) {
+        const nextDomains = [...new Set([...(existingBrand.domains ?? []), ...brandItem.domains])];
+        const nextAliases = checkAliases([
+          ...new Set([...(existingBrand.aliases ?? []), ...brandItem.aliases]),
+        ]);
+        run(
+          db,
+          'UPDATE entities SET name = ?, aliases = ?, domains = ? WHERE id = ?',
+          [brandItem.name, JSON.stringify(nextDomains.length ? nextAliases : brandItem.aliases), JSON.stringify(nextDomains), existingBrand.id],
+        );
+      } else {
+        const res = run(
+          db,
+          'INSERT INTO entities(name, aliases, domains, is_self, created_at) VALUES(?, ?, ?, 1, ?)',
+          [
+            brandItem.name,
+            JSON.stringify(brandItem.aliases),
+            JSON.stringify(brandItem.domains),
+            isoNow(),
+          ],
+        );
+        makeSelf(db, res.lastInsertRowid);
+      }
+    }
+
+    const activeBrand = brandEntity(db);
+    const brandDomains = new Set((activeBrand?.domains ?? []).map(normaliseDomain));
+
+    for (const comp of competitorItems) {
+      if (activeBrand && comp.name.toLowerCase() === activeBrand.name.toLowerCase()) continue;
+      if (comp.domains.some((d) => brandDomains.has(d))) continue;
+
+      const byName = get(
+        db,
+        'SELECT id, domains, aliases, is_self, archived_at FROM entities WHERE name = ? COLLATE NOCASE',
+        [comp.name],
+      );
+      if (byName) {
+        if (Number(byName.is_self) === 1 || byName.archived_at !== null) continue;
+        const prevDomains = /** @type {string[]} */ (JSON.parse(String(byName.domains ?? '[]')));
+        const nextDomains = [...new Set([...prevDomains, ...comp.domains])];
+        assertDomainsFree(db, nextDomains, Number(byName.id));
+        run(db, 'UPDATE entities SET domains = ? WHERE id = ?', [
+          JSON.stringify(nextDomains),
+          Number(byName.id),
+        ]);
+        continue;
+      }
+
+      // Skip if another competitor already owns this exact domain.
+      const existingOwner = listEntities(db, { includeArchived: true }).find((e) =>
+        e.domains.some((d) => comp.domains.includes(normaliseDomain(d))),
+      );
+      if (existingOwner) continue;
+
+      run(
+        db,
+        'INSERT INTO entities(name, aliases, domains, is_self, created_at) VALUES(?, ?, ?, 0, ?)',
+        [comp.name, JSON.stringify(comp.aliases), JSON.stringify(comp.domains), isoNow()],
+      );
+    }
+
+    recordCurrentBenchmarkRevision(db);
+  });
+
+  const savedBrand = brandEntity(db);
+  const allEntities = listEntities(db);
+  return {
+    ok: true,
+    brand: savedBrand,
+    competitors: allEntities.filter((e) => e.is_self !== 1),
+    redirectTo: '/setup?step=2',
+  };
+}
+
+/**
+ * Parse a flexible boolean flag (`true`/`false`/`1`/`0`/`"1"`/`"0"`).
+ * @param {unknown} value
+ * @param {string} field
+ * @returns {boolean}
+ */
+function parseToggleFlag(value, field) {
+  if (typeof value === 'boolean') return value;
+  if (value === 1 || value === '1' || value === 'true') return true;
+  if (value === 0 || value === '0' || value === 'false') return false;
+  throw new ApiError(422, 'unprocessable', `${field} must be a boolean`);
+}
+
+/**
+ * Validate and apply a single API key update from the request body.
+ * Blank strings are ignored so multi-provider forms do not erase untouched keys;
+ * `null` or `clearKeys` explicitly removes a saved key.
+ *
+ * @param {Record<string, string|null>} updates
+ * @param {string} envKey
+ * @param {unknown} rawValue
+ */
+function collectKeyUpdate(updates, envKey, rawValue) {
+  if (!ONBOARDING_KEY_ENVS.includes(/** @type {*} */ (envKey))) {
+    throw new ApiError(422, 'unprocessable', `Unsupported provider key: ${envKey}`);
+  }
+  if (rawValue === null) {
+    updates[envKey] = null;
+    return;
+  }
+  if (typeof rawValue !== 'string') {
+    throw new ApiError(422, 'unprocessable', `${envKey} must be a string or null`);
+  }
+  if (/[\r\n\0]/.test(rawValue)) {
+    throw new ApiError(422, 'unprocessable', `${envKey} cannot contain control characters or newlines`);
+  }
+  const trimmed = rawValue.trim();
+  if (trimmed.length > 512) {
+    throw new ApiError(422, 'unprocessable', `${envKey} exceeds maximum length`);
+  }
+  if (trimmed !== '') {
+    updates[envKey] = trimmed;
+  }
+}
+
+/**
+ * `POST /api/onboarding/providers` — save API keys / toggle local CLI routes in `.env` (`0600`)
+ * and reload live server configuration in-process without returning any secret values.
+ *
+ * @param {ApiDeps & {runtime?: import('../../server.js').OnboardingRuntime}} deps
+ * @param {import('../router.js').Ctx} ctx
+ */
+async function updateOnboardingProviders(deps, ctx) {
+  assertOnboardingLoopback(ctx);
+  if (!deps.runtime) {
+    throw new ApiError(503, 'not_ready', 'Live runtime configuration updates are unavailable');
+  }
+
+  const body = asObject(ctx.body);
+  const allowedTopLevel = new Set([
+    'keys',
+    'clearKeys',
+    'cliRoutes',
+    ...ONBOARDING_KEY_ENVS,
+    'HEARSAY_CODEX_ENABLED',
+    'HEARSAY_CLAUDE_CODE_ENABLED',
+  ]);
+  for (const field of Object.keys(body)) {
+    if (!allowedTopLevel.has(field)) {
+      throw new ApiError(422, 'unprocessable', `Unsupported onboarding field: ${field}`);
+    }
+  }
+
+  /** @type {Record<string, string|null>} */
+  const updates = {};
+
+  if (body.keys !== undefined) {
+    const keysObj = asObject(body.keys);
+    for (const [k, v] of Object.entries(keysObj)) {
+      collectKeyUpdate(updates, k, v);
+    }
+  }
+  for (const envKey of ONBOARDING_KEY_ENVS) {
+    if (body[envKey] !== undefined) {
+      collectKeyUpdate(updates, envKey, body[envKey]);
+    }
+  }
+
+  if (body.clearKeys !== undefined) {
+    const clearList = strList(body.clearKeys, 'clearKeys') ?? [];
+    for (const envKey of clearList) {
+      if (!ONBOARDING_KEY_ENVS.includes(/** @type {*} */ (envKey))) {
+        throw new ApiError(422, 'unprocessable', `Unsupported provider key in clearKeys: ${envKey}`);
+      }
+      updates[envKey] = null;
+    }
+  }
+
+  if (body.cliRoutes !== undefined) {
+    const cliObj = asObject(body.cliRoutes);
+    for (const [k, v] of Object.entries(cliObj)) {
+      const mapped = ONBOARDING_CLI_MAP[k];
+      if (!mapped) {
+        throw new ApiError(422, 'unprocessable', `Unsupported CLI route: ${k}`);
+      }
+      updates[mapped] = parseToggleFlag(v, `cliRoutes.${k}`) ? '1' : '0';
+    }
+  }
+  for (const cliEnv of ['HEARSAY_CODEX_ENABLED', 'HEARSAY_CLAUDE_CODE_ENABLED']) {
+    if (body[cliEnv] !== undefined) {
+      updates[cliEnv] = parseToggleFlag(body[cliEnv], cliEnv) ? '1' : '0';
+    }
+  }
+
+  try {
+    await deps.runtime.updateProviders(updates);
+  } catch (err) {
+    if (err instanceof RangeError) {
+      throw new ApiError(422, 'unprocessable', err.message);
+    }
+    throw err;
+  }
+
+  return {
+    ok: true,
+    ...onboardingStateView(deps),
+  };
+}
+
+/**
+ * `POST /api/onboarding/mode` — 1-click switch between Demo Workspace (`HEARSAY_DEMO=1`)
+ * and Live Brand Workspace (`HEARSAY_DEMO=0`) without restarting Node.
+ *
+ * @param {ApiDeps & {runtime?: import('../../server.js').OnboardingRuntime}} deps
+ * @param {import('../router.js').Ctx} ctx
+ */
+async function switchOnboardingMode(deps, ctx) {
+  assertOnboardingLoopback(ctx);
+  if (!deps.runtime) {
+    throw new ApiError(503, 'not_ready', 'Live workspace mode switching is unavailable');
+  }
+
+  const body = asObject(ctx.body);
+  /** @type {boolean|undefined} */
+  let targetDemo;
+  if (body.demo !== undefined) {
+    targetDemo = parseToggleFlag(body.demo, 'demo');
+  } else if (body.mode !== undefined) {
+    const mode = str(body.mode, 'mode', { max: 20, required: true });
+    if (mode === 'demo') targetDemo = true;
+    else if (mode === 'live' || mode === 'real') targetDemo = false;
+    else throw new ApiError(422, 'unprocessable', 'mode must be demo, live, or real');
+  } else {
+    throw new ApiError(422, 'unprocessable', 'demo (boolean) or mode ("demo"|"live") is required');
+  }
+
+  let result;
+  try {
+    result = await deps.runtime.switchMode(targetDemo);
+  } catch (err) {
+    if (err instanceof Error && err.name === 'RunInProgressError') {
+      throw new ApiError(409, 'run_in_progress', err.message);
+    }
+    if (err instanceof Error) {
+      throw new ApiError(409, 'workspace_conflict', err.message);
+    }
+    throw err;
+  }
+
+  const activeDb = deps.runtime.getDb();
+  const hasEntities = listEntities(activeDb).length > 0;
+  const redirectTo = result.demo ? '/' : hasEntities ? '/' : '/setup';
+
+  return {
+    ok: true,
+    switched: result.switched,
+    redirectTo,
+    ...onboardingStateView(deps),
+  };
+}
+
+/**
+ * `GET /api/export/report` — downloadable or inline self-contained B2B client report HTML.
+ *
+ * @param {ApiDeps} deps
+ * @param {import('../router.js').Ctx} ctx
+ */
+function exportClientReport({ db, config }, ctx) {
+  const now = isoNow();
+  const requestedSeriesId = ctx.url.searchParams.get('series_id');
+  if (!requestedSeriesId && (ctx.url.searchParams.has('start') || ctx.url.searchParams.has('end'))) {
+    throw new ApiError(400, 'bad_request', 'start and end require series_id');
+  }
+  const { days, series, range } = selectedSeries(db, ctx.url, now);
+  if (requestedSeriesId && !series) {
+    throw new ApiError(404, 'series_not_found', 'No series in this window');
+  }
+  const receiptLimit = intQuery(ctx.url, 'receipt_limit', 50, 1, 200);
+
+  const report = buildClientReport(db, {
+    days,
+    seriesId: series?.id,
+    start: series?.start ?? range.start,
+    end: series?.end ?? range.end,
+    now,
+    receiptLimit,
+    demo: config.demo,
+  });
+  const htmlBody = renderClientReportHtml(report);
+
+  const slug =
+    (report.brand?.name ?? 'brand')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'brand';
+  const datePart = report.generatedAt.slice(0, 10);
+  const filename = `hearsay-client-report-${slug}-${datePart}.html`;
+  const inline =
+    ctx.url.searchParams.get('inline') === '1' || ctx.url.searchParams.get('inline') === 'true';
+
+  ctx.res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(htmlBody),
+    'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${filename}"`,
+    'Content-Security-Policy':
+      "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'",
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
+  });
+  ctx.res.end(htmlBody);
 }
