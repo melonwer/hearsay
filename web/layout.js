@@ -1,4 +1,7 @@
-import { AGENT_ROUTES, isAgentSurface } from '../core/agent-routes.js';
+import { accessSync, constants, statSync } from 'node:fs';
+import { delimiter, join, resolve } from 'node:path';
+import { AGENT_ROUTES, AGENT_SURFACES_SQL, isAgentSurface } from '../core/agent-routes.js';
+import { get } from '../core/db.js';
 /**
  * Page shell — nav, theme, and the `esc()` / `html` helpers (§10.1, §11.2).
  *
@@ -124,9 +127,13 @@ export function layout({ title, active, body, ctx }) {
 
   const banner = ctx.demo
     ? html`<div class="demo-banner" role="status">
-        <span class="demo-banner-icon" aria-hidden="true">◆</span>
-        <span>Demo workspace — fictional data in a separate database. Live providers and schedules are off.
-          <a href="/setup">Set up your brand</a></span>
+        <div class="demo-banner-copy">
+          <span class="demo-banner-icon" aria-hidden="true">◆</span>
+          <span>Demo workspace — fictional data in a separate database (Notewell sample). Live providers and schedules are off.</span>
+        </div>
+        <div class="demo-banner-actions">
+          <button type="button" class="btn btn-sm btn-demo-exit" data-switch-demo="false">Exit Demo → Set Up My Brand</button>
+        </div>
       </div>`
     : '';
 
@@ -420,4 +427,212 @@ export function truncate(text, max) {
   const cut = s.slice(0, max);
   const space = cut.lastIndexOf(' ');
   return `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
+
+/**
+ * Mask a secret into a prefix-only hint (`sk-...****`) with zero trailing key characters.
+ * @param {string|null|undefined} secret
+ * @returns {string|null}
+ */
+export function maskOnboardingHint(secret) {
+  const s = String(secret ?? '').trim();
+  if (s === '') return null;
+  if (s.length <= 8) return '****';
+  const dash = s.indexOf('-');
+  const prefix = dash > 0 && dash <= 5 ? s.slice(0, dash + 1) : s.slice(0, 3);
+  return `${prefix}...****`;
+}
+
+/**
+ * Check whether an executable exists and is runnable on PATH without spawning a process.
+ * @param {string} executable
+ * @param {string|undefined} [pathEnv]
+ * @returns {boolean}
+ */
+export function detectCliExecutable(executable, pathEnv = process.env.PATH) {
+  const target = String(executable ?? '').trim();
+  if (target === '') return false;
+  const checkFile = (/** @type {string} */ candidate) => {
+    try {
+      if (!statSync(candidate).isFile()) return false;
+      accessSync(candidate, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (target.includes('/') || target.includes('\\')) {
+    return checkFile(resolve(target));
+  }
+  for (const dir of String(pathEnv ?? '').split(delimiter)) {
+    if (!dir) continue;
+    if (checkFile(join(dir, target))) return true;
+  }
+  return false;
+}
+
+/**
+ * @typedef {'stopped'|'configured'|'connected'|'collecting'|'stale'} ScheduleRuntimeState
+ */
+
+/**
+ * @typedef {'Stopped'|'Configured (Consent Suspended / Needs Quote)'|'Connected (Active in Running Server)'|'Collecting Now'|'Stale (Missed or Failed Run)'} ScheduleBadgeLabel
+ */
+
+/**
+ * @typedef {Object} ScheduleBadgeInfo
+ * @property {ScheduleRuntimeState} state
+ * @property {ScheduleBadgeLabel} status
+ * @property {'off'|'active'|'warn'|'collecting'} tone
+ * @property {string} summary
+ */
+
+/**
+ * Compute the canonical schedule health badge state so `/settings`, `/dashboard`, and
+ * `/api/onboarding/state` explicitly distinguish configured vs connected vs collecting
+ * vs stale vs stopped.
+ *
+ * @param {'api'|'subscription'} kind
+ * @param {Object} opts
+ * @param {ReturnType<typeof import('../core/tracking-health.js').trackingHealth>} opts.trackingHealth
+ * @param {boolean} [opts.demo]
+ * @param {boolean} [opts.hasSearch]
+ * @param {boolean} [opts.recurringSearchApproved]
+ * @param {boolean} [opts.collecting]
+ * @returns {ScheduleBadgeInfo}
+ */
+export function scheduleStatusInfo(kind, opts) {
+  const {
+    trackingHealth,
+    demo = false,
+    hasSearch = false,
+    recurringSearchApproved = false,
+    collecting = false,
+  } = opts;
+
+  if (collecting && !demo) {
+    return {
+      state: 'collecting',
+      status: 'Collecting Now',
+      tone: 'collecting',
+      summary: 'A live collection run is currently executing in this server process.',
+    };
+  }
+
+  if (kind === 'api') {
+    if (demo || !trackingHealth.api.enabled) {
+      return {
+        state: 'stopped',
+        status: 'Stopped',
+        tone: 'off',
+        summary: demo
+          ? 'Stopped while demo workspace is active.'
+          : 'Stopped — no API provider key configured.',
+      };
+    }
+    if (hasSearch && !recurringSearchApproved) {
+      return {
+        state: 'configured',
+        status: 'Configured (Consent Suspended / Needs Quote)',
+        tone: 'warn',
+        summary: 'Saved configuration only — recurring web search awaits explicit quote consent.',
+      };
+    }
+    if (trackingHealth.api.stale) {
+      return {
+        state: 'stale',
+        status: 'Stale (Missed or Failed Run)',
+        tone: 'warn',
+        summary: 'Scheduled run missed or failed, or last observation is >48h old; missed runs do not auto-replay.',
+      };
+    }
+    return {
+      state: 'connected',
+      status: 'Connected (Active in Running Server)',
+      tone: 'active',
+      summary: 'In-process scheduler timer connected in this running server (stops if Node exits).',
+    };
+  }
+
+  if (!trackingHealth.subscription.configured) {
+    return {
+      state: 'stopped',
+      status: 'Stopped',
+      tone: 'off',
+      summary: 'Stopped — no recurring subscription schedule saved.',
+    };
+  }
+  if (demo || !trackingHealth.subscription.enabled || !trackingHealth.subscription.ready) {
+    return {
+      state: 'configured',
+      status: 'Configured (Consent Suspended / Needs Quote)',
+      tone: 'warn',
+      summary: demo
+        ? 'Saved in SQLite, paused while demo workspace is active.'
+        : 'Saved configuration only — not collecting until CLI surface and quote consent match.',
+    };
+  }
+  if (trackingHealth.subscription.stale) {
+    return {
+      state: 'stale',
+      status: 'Stale (Missed or Failed Run)',
+      tone: 'warn',
+      summary: 'Scheduled run missed or failed, or last observation is >48h old; missed runs do not auto-replay.',
+    };
+  }
+  return {
+    state: 'connected',
+    status: 'Connected (Active in Running Server)',
+    tone: 'active',
+    summary: 'In-process scheduler timer connected in this running server (stops if Node exits).',
+  };
+}
+
+/**
+ * Inspect whether an API or subscription collection run is currently executing in SQLite.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @returns {{api: boolean, subscription: boolean}}
+ */
+export function runningScheduleLanes(db) {
+  const subRow = get(
+    db,
+    `SELECT 1 AS hit
+       FROM runs
+      WHERE status = 'running'
+        AND (
+          schedule_key = 'subscription-agent'
+          OR EXISTS (
+            SELECT 1 FROM responses
+             WHERE responses.run_id = runs.id
+               AND responses.surface IN (${AGENT_SURFACES_SQL})
+          )
+        )
+      LIMIT 1`,
+  );
+  const apiRow = get(
+    db,
+    `SELECT 1 AS hit
+       FROM runs
+      WHERE status = 'running'
+        AND (
+          schedule_key = 'api-panel'
+          OR trigger = 'api'
+          OR EXISTS (
+            SELECT 1 FROM responses
+             WHERE responses.run_id = runs.id
+               AND responses.surface LIKE '%-api'
+          )
+        )
+      LIMIT 1`,
+  );
+  return { api: Boolean(apiRow), subscription: Boolean(subRow) };
+}
+
+/**
+ * Render a Schedule Health Status Badge pill.
+ * @param {ScheduleBadgeInfo} info
+ * @returns {RawHtml}
+ */
+export function scheduleStatusBadge(info) {
+  return html`<span class="status-pill status-pill-${info.tone}" data-schedule-state="${info.state}">${info.status}</span>`;
 }

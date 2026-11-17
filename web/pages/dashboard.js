@@ -21,6 +21,9 @@ import {
   raw,
   rateWithCI,
   relTime,
+  runningScheduleLanes,
+  scheduleStatusBadge,
+  scheduleStatusInfo,
   seriesColor,
   severityChip,
   truncate,
@@ -28,6 +31,7 @@ import {
 } from '../layout.js';
 import { barChartH, lineChart, meter, sparkline } from '../svg.js';
 import { metrics, soft } from '../data.js';
+import { apiSearchScheduleApproved, hasEnabledApiSearch } from '../../core/api-search-schedule.js';
 import { brandEntity, colorIndexFor, latestReceipts, listAlerts, listEntities } from '../queries.js';
 import { surfaceLabel } from '../../core/subscription-model.js';
 import { trackingHealth } from '../../core/tracking-health.js';
@@ -131,6 +135,9 @@ export function deltaPoints(last7, last14) {
  * @property {ReturnType<typeof metrics.listMeasurementSeries>} seriesOptions
  * @property {string} recMethod
  * @property {boolean} demo
+ * @property {boolean} enabledApiSearch
+ * @property {boolean} recurringSearchApproved
+ * @property {{api: boolean, subscription: boolean}} runningLanes
  * @property {ReturnType<typeof trackingHealth>} trackingHealth
  * @property {{id: number, name: string}|null} brand
  * @property {number} entityCount
@@ -246,9 +253,9 @@ export function buildView({ db, config }, opts = {}) {
     sov: Number(row.sov ?? 0),
     mentions: Number(row.mentions ?? 0),
     /** @type {MentionStat} */
-    mentionRate: m('mentionRate', { ...scope, entityId: row.entityId }, null),
+    mentionRate: row.entityId === brandId ? mentionRate : m('mentionRate', { ...scope, entityId: row.entityId }, null),
     /** @type {RecStat} */
-    recRate: recommendation(row.entityId, days),
+    recRate: row.entityId === brandId ? recRate : recommendation(row.entityId, days),
     /** @type {number|null} */
     avgRank: m('avgRank', { ...scope, entityId: row.entityId }, null),
     delta7d: deltaPoints(sovCounts(sov7, row.entityId), sovCounts(sov14, row.entityId)),
@@ -260,6 +267,9 @@ export function buildView({ db, config }, opts = {}) {
     seriesOptions,
     recMethod,
     demo: config.demo,
+    enabledApiSearch: hasEnabledApiSearch(config),
+    recurringSearchApproved: apiSearchScheduleApproved(db, config),
+    runningLanes: runningScheduleLanes(db),
     trackingHealth: trackingHealth({ db, config, now }),
     brand: brand ? { id: brand.id, name: brand.name } : null,
     entityCount: entities.length,
@@ -364,6 +374,14 @@ function answersHref(view, extra = {}) {
   return `/answers?${params.toString()}`;
 }
 
+/** @param {ReturnType<typeof buildView>} view @param {boolean} [inline] */
+function reportHref(view, inline = false) {
+  const params = new URLSearchParams({ days: String(view.days) });
+  if (view.series) params.set('series_id', view.series.id);
+  if (inline) params.set('inline', '1');
+  return `/api/export/report?${params.toString()}`;
+}
+
 /** @param {ReturnType<typeof buildView>} view */
 function seriesSelector(view) {
   const options = view.seriesOptions.map((item) => html`<option value="${item.id}"${item.id === view.series?.id ? raw(' selected') : ''}>
@@ -372,11 +390,17 @@ function seriesSelector(view) {
     · ${item.comparableAnswers}/${item.attemptedTargets} comparable
   </option>`);
   return html`<section class="card" aria-label="Measurement series">
-    <form method="get" action="/" class="filter-row">
-      <label>Measurement series <select name="series_id">${options}</select></label>
-      <input type="hidden" name="days" value="${view.days}" />
-      <button type="submit" class="btn">Show series</button>
-    </form>
+    <div class="series-toolbar">
+      <form method="get" action="/" class="filter-row">
+        <label>Measurement series <select name="series_id">${options}</select></label>
+        <input type="hidden" name="days" value="${view.days}" />
+        <button type="submit" class="btn">Show series</button>
+      </form>
+      <div class="export-actions">
+        <a class="btn btn-primary" href="${reportHref(view, false)}">Export Client Report</a>
+        <a class="btn" href="${reportHref(view, true)}" target="_blank" rel="noopener">Preview HTML</a>
+      </div>
+    </div>
     ${view.series ? html`<p class="muted small series-description">${surfaceLabel(view.series.surface)} · ${view.series.searchPolicy ?? 'legacy'}
       · profile ${view.series.executionProfileId ?? 'legacy'} · benchmark ${view.series.benchmarkRevisionId ?? 'legacy'}
       · analysis ${view.series.analysisRevision ?? 'legacy'} · ${view.series.start} to ${view.series.end} UTC (end exclusive)
@@ -712,18 +736,31 @@ function receiptsPanel(view) {
 
 /** @param {ReturnType<typeof buildView>} view */
 function trackingPanel(view) {
+  const apiBadge = scheduleStatusInfo('api', {
+    trackingHealth: view.trackingHealth,
+    demo: view.demo,
+    hasSearch: view.enabledApiSearch,
+    recurringSearchApproved: view.recurringSearchApproved,
+    collecting: view.runningLanes.api,
+  });
+  const subBadge = scheduleStatusInfo('subscription', {
+    trackingHealth: view.trackingHealth,
+    demo: view.demo,
+    collecting: view.runningLanes.subscription,
+  });
   const rows = [
-    { label: 'API', lane: view.trackingHealth.api,
-      state: view.trackingHealth.api.enabled ? 'Scheduled' : 'Disabled' },
-    { label: 'Subscription agents', lane: view.trackingHealth.subscription,
-      state: !view.trackingHealth.subscription.enabled ? 'Disabled'
-        : view.trackingHealth.subscription.ready ? 'Scheduled' : 'Needs renewed consent' },
-  ].map(({ label, lane, state }) => html`<article class="health-lane">
-    <h3>${label}</h3>
+    { label: 'API', lane: view.trackingHealth.api, badge: apiBadge },
+    { label: 'Subscription agents', lane: view.trackingHealth.subscription, badge: subBadge },
+  ].map(({ label, lane, badge }) => html`<article class="health-lane">
+    <div class="health-lane-head">
+      <h3>${label}</h3>
+      ${scheduleStatusBadge(badge)}
+    </div>
     <dl class="kv">
-      <dt>Schedule</dt><dd>${state}</dd>
+      <dt>Schedule</dt><dd>${badge.status}</dd>
+      <dt>Runtime state</dt><dd>${badge.summary}</dd>
       <dt>Last successful observation</dt><dd>${lane.lastSuccessfulObservationAt ?? 'None yet'}</dd>
-      <dt>Next occurrence</dt><dd>${state === 'Needs renewed consent' ? 'Suspended until consent' : lane.nextScheduledAt ?? 'None'}</dd>
+      <dt>Next occurrence</dt><dd>${badge.state === 'configured' && label === 'Subscription agents' ? 'Suspended until consent' : lane.nextScheduledAt ?? 'None'}</dd>
       <dt>Recent missed or failed runs</dt><dd>${lane.recentIssues.length ? `${lane.recentIssues.length} recent` : 'None'}</dd>
     </dl>
   </article>`);

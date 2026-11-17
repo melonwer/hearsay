@@ -6,10 +6,10 @@ it measures, how answer-rate intervals work, and what the numbers cannot establi
 ## What Hearsay measures
 
 Hearsay asks reviewed buyer questions through separately labeled OpenAI, Anthropic,
-Gemini, and Perplexity APIs or signed-in Codex and Claude Code agents. It retains the
-final answer and available evidence for each attempt. Exact-series reports count
-comparable answers and link to their receipts. Failed or incomplete attempts remain
-visible as collection gaps.
+Gemini, and Perplexity APIs or signed-in Codex, Claude Code, and Antigravity agents. It
+retains the final answer and available evidence for each attempt. Exact-series reports
+count comparable answers and link to their receipts. Failed or incomplete attempts
+remain visible as collection gaps.
 
 There is no machine-learned scoring layer between an answer and its metric. Mention
 detection matches entity names and aliases. The deterministic stance classifier labels
@@ -56,24 +56,29 @@ comparison context.
 
 OpenAI Responses web search supports `auto` and `required` on the validated
 `gpt-5.6-luna` route. Anthropic Messages basic web search supports `auto` on the
-validated `claude-sonnet-5` route. These are distinct measurement series from
-their search-off API routes and from each other. A complete `auto` answer where
-the provider confirms no search remains a valid auto observation. A failed or
-unfinished search makes the answer non-comparable. Search actions, exposed
-queries, returned sources, and final citations are stored separately.
+validated `claude-sonnet-5` route. Gemini GenerateContent Google Search grounding
+supports `auto` on the validated `gemini-3.6-flash` route, rendering required Search
+Suggestions in an isolated frame and failing searched responses that omit them. These
+are distinct measurement series from their search-off API routes and from each other. A
+complete `auto` answer where the provider confirms no search remains a valid auto
+observation. A failed or unfinished search makes the answer non-comparable. Search
+actions, exposed queries, returned sources, and final citations are stored separately.
 
 Anthropic search is bounded to three attempted searches and one continuation
-within a target timeout. OpenAI's hosted search has no enforceable internal
-call ceiling. Quotes forecast one billed search per target, then computed usage
+within a target timeout. OpenAI and Gemini hosted search tools have no enforceable
+internal call ceiling. Quotes forecast one billed search per target, then computed usage
 costs use provider-reported token and tool-use records when available. A
-missing billing quantity remains unknown, and no quote is an invoice.
+missing billing quantity remains unknown, and no quote is an invoice. Perplexity Sonar
+retains its historical built-in search profile without exposed query wording or
+per-action completion records.
 
 ## Subscription agent surfaces
 
 Hearsay can also run an explicitly enabled panel through a locally installed,
-already-authenticated Codex or Claude Code CLI. These results are labeled exactly as
-**Codex agent** and **Claude Code agent**. They are not measurements of the ChatGPT web
-app, Claude.ai, Google AI Mode, or a general consumer population; they are
+already-authenticated Codex, Claude Code, or Antigravity CLI. Connected dashboard runs
+are labeled as **Codex agent** and **Claude Code agent**; standalone CLI runs also
+support **Antigravity (`agy-cli`)**. They are not measurements of the ChatGPT web app,
+Claude.ai, Google AI Mode, or a general consumer population; they are
 developer-tool/technical-B2B buyer-angle observations from a particular signed-in
 agent surface.
 
@@ -85,14 +90,10 @@ citations remain separate receipts.
 
 Only completed, tracking-lane, comparable targets with verified web search enter
 subscription trends, rates and alerts. Exploration answers remain discovery evidence
-until a human explicitly promotes the question; API, Codex agent and Claude Code agent
-series are never silently joined. Subscription runs consume the user's plan allowance
-and may incur overage, so Hearsay reports usage metadata when exposed and does not
-invent a dollar price.
-
-Gemini grounded search remains disabled pending legal review. The existing Gemini API
-route stays separate. Perplexity Sonar retains its historical built-in search profile;
-its exact query wording and per-action search completion are unavailable.
+until a human explicitly promotes the question; API, Codex agent, Claude Code agent,
+and Antigravity series are never silently joined. Subscription runs consume the user's
+plan allowance and may incur overage, so Hearsay reports usage metadata when exposed
+and does not invent a dollar price.
 
 ## Deliberate choices
 
@@ -127,10 +128,14 @@ uncertainty, and any incompatible profile or prompt cells. A common-prompt subse
 be chosen explicitly. These comparisons are descriptive and do not establish that the
 change caused a difference.
 
-Weekly review combines those observations with outcomes, time, and expenses you entered.
-Each outcome carries its source, unit, period, and attribution method. Hearsay does not
-infer traffic, conversions, or return on investment from answer counts. Reading a report
-does not run a provider or authorize publication.
+Weekly review combines those observations with outcomes, time, and expenses you entered
+for either a native tracking series or a separately labeled `Standalone Research Audit`
+import (without blending external imports into native series). Each outcome carries its
+source, unit, period, attribution method, and optional intervention link and page role
+(`changed` vs. `control`). Comparing outcomes on a changed page against an unchanged
+comparison page helps bound background period drift when traffic is comparable, not
+prove causation on its own. Hearsay does not infer traffic, conversions, or return on
+investment from answer counts.
 
 ## What Hearsay refuses to fake
 
@@ -139,4 +144,4 @@ These are product decisions, not gaps in the roadmap:
 - **No single blended "AI visibility score".** Collapsing mention rates, citations and recommendations into one magic number destroys the information you need to act, and hides the uncertainty this page exists to expose.
 - **No rank-position claims.** AI answers are not a ranked results page; pretending a stable "position 3" exists in a stochastic answer stream is false precision.
 - **No prompt-volume estimates.** Nobody has real data on how often people prompt a given question; a made-up volume column would poison every number next to it.
-- **No content generation.** Hearsay is a measurement instrument. The moment it also writes your content, its numbers become marketing for itself.
+- **No silent content publishing.** Hearsay is a measurement instrument; assistant research drafts stay separate from measurements and never publish without your explicit action.

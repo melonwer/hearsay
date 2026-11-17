@@ -258,6 +258,58 @@ export function sameOrigin(req) {
   }
 }
 
+const LOOPBACK_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/i;
+
+/**
+ * Strict local-loopback guard for browser onboarding & `.env` endpoints:
+ *  - Socket remote address must be loopback (`127.x.x.x`, `::1`, `::ffff:127.x.x.x`)
+ *  - No reverse-proxy forwarding headers (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`)
+ *  - `Host` header must be `localhost`, `127.0.0.1`, or `[::1]` (blocks DNS rebinding)
+ *  - `Sec-Fetch-Site` (when sent) must be `same-origin` or `none`
+ *  - `Origin` (when sent, on GET or POST) must match `Host` on loopback
+ *
+ * @param {Req} req
+ * @returns {boolean}
+ */
+export function isLoopbackRequest(req) {
+  const remote = String(req.socket?.remoteAddress ?? '').trim();
+  const isLoopbackIp =
+    remote === '::1' ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(remote) ||
+    /^::ffff:127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/i.test(remote);
+  if (!isLoopbackIp) return false;
+
+  if (
+    req.headers['x-forwarded-for'] !== undefined ||
+    req.headers['x-real-ip'] !== undefined ||
+    req.headers.forwarded !== undefined
+  ) {
+    return false;
+  }
+
+  const hostHeader = String(req.headers.host ?? '').trim();
+  if (!LOOPBACK_HOST_RE.test(hostHeader)) return false;
+
+  const secFetchSite = String(req.headers['sec-fetch-site'] ?? '').trim().toLowerCase();
+  if (secFetchSite !== '' && secFetchSite !== 'same-origin' && secFetchSite !== 'none') {
+    return false;
+  }
+
+  const origin = req.headers.origin;
+  if (origin !== undefined) {
+    if (origin === 'null') return false;
+    try {
+      const parsed = new URL(origin);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+      if (parsed.host.toLowerCase() !== hostHeader.toLowerCase()) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Resolve a `/public/...` request to a file path inside `publicDir`, or null when the
  * path escapes it (traversal guard).

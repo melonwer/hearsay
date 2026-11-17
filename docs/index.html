@@ -3,168 +3,644 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Research what AI says about your product with the agent you already use. Watch the Hearsay film, explore the workflow, and get started in the repo.">
-    <meta name="theme-color" content="#f9f9f7">
-    <title>Hearsay · What does AI say about your product?</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232a78d6'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='Arial,sans-serif' font-size='26' font-weight='700' fill='white'%3Eh%3C/text%3E%3C/svg%3E">
-    <style>
-      :root {
-        color-scheme: light;
-        --ink: #151a22;
-        --muted: #5a6472;
-        --blue: #245fa5;
-        --line: #dfe5ec;
-      }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        background: radial-gradient(ellipse at 100% 0, #e5eefb, transparent 55%) #f9f9f7;
-        color: var(--ink);
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        line-height: 1.6;
-        -webkit-font-smoothing: antialiased;
-      }
-      .page { width: min(100% - 64px, 1240px); margin: 0 auto; }
-      header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 30px 0; }
-      .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 750; letter-spacing: -.04em; }
-      .mark {
-        display: grid;
-        place-items: center;
-        width: 30px;
-        height: 30px;
-        border-radius: 8px;
-        background: #2a78d6;
-        color: white;
-        font-size: 25px;
-        line-height: 1;
-        letter-spacing: 0;
-      }
-      a { color: var(--blue); text-underline-offset: 4px; }
-      a:focus-visible, video:focus-visible { outline: 3px solid #2a78d6; outline-offset: 5px; }
-      .repo-link {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 11px 17px;
-        border: 1px solid #d2dbe6;
-        border-radius: 10px;
-        background: #ffffffa6;
-        color: var(--ink);
-        font-size: 14px;
-        font-weight: 650;
-        text-decoration: none;
-        white-space: nowrap;
-        transition: background .15s, border-color .15s;
-      }
-      .repo-link:hover { background: white; border-color: #97abc4; }
-      .repo-link svg { width: 16px; height: 16px; }
-      .hero { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.3fr); gap: 56px; align-items: center; padding: 62px 0 70px; }
-      .eyebrow { margin: 0 0 20px; color: var(--blue); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-      h1 { margin: 0 0 24px; font-size: clamp(40px, 4.3vw, 62px); line-height: 1.06; font-weight: 750; letter-spacing: -.055em; }
-      h1 span { color: var(--blue); }
-      p { margin: 0; color: var(--muted); }
-      .intro { max-width: 430px; font-size: 17px; line-height: 1.75; }
-      .quickstart { display: inline-flex; align-items: center; gap: 8px; margin-top: 24px; font-size: 15px; font-weight: 650; }
-      figure { min-width: 0; margin: 0; }
-      .player { padding: 8px; border: 1px solid #d7e0ed; border-radius: 20px; background: white; box-shadow: 0 24px 64px #28446812, 0 4px 12px #28446808; }
-      video {
-        display: block;
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        border-radius: 12px;
-        background: #0b0b0b;
-      }
-      figcaption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 15px 4px 0; color: var(--muted); font-size: 12px; }
-      figcaption strong { color: var(--ink); font-weight: 600; }
-      .overview { padding: 36px 0 48px; border-top: 1px solid var(--line); }
-      .section-heading { margin: 0 0 30px; font-size: 24px; font-weight: 650; line-height: 1.3; letter-spacing: -.035em; }
-      .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; margin: 0; padding: 0; list-style: none; counter-reset: steps; }
-      .steps li { counter-increment: steps; padding-right: 28px; }
-      .steps li + li { border-left: 1px solid var(--line); padding-left: 32px; }
-      .steps li::before { content: "0" counter(steps); display: block; margin-bottom: 14px; color: var(--blue); font-size: 12px; font-weight: 700; letter-spacing: .08em; }
-      .steps h3 { margin: 0 0 9px; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
-      .steps p { font-size: 14px; line-height: 1.75; }
-      footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; padding: 22px 0 30px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
-      footer a { color: var(--muted); }
-      @media (max-width: 960px) {
-        .hero { grid-template-columns: 1fr; gap: 36px; padding: 36px 0 48px; }
-        .hero-copy { max-width: 620px; }
-        h1 { max-width: 560px; font-size: 52px; }
-        .intro { max-width: 580px; }
-        .steps { gap: 20px; }
-        .steps li { padding-right: 0; }
-        .steps li + li { padding-left: 20px; }
-      }
-      @media (max-width: 640px) {
-        .page { width: calc(100% - 40px); }
-        header { padding: 24px 0; }
-        .hero { padding-top: 28px; }
-        h1 { font-size: 44px; }
-        .intro { font-size: 16px; }
-        .player { padding: 5px; border-radius: 14px; }
-        video { border-radius: 9px; }
-        figcaption { font-size: 11px; }
-        .overview { padding-top: 30px; }
-        .steps { grid-template-columns: 1fr; gap: 24px; }
-        .steps li + li { border-left: 0; border-top: 1px solid var(--line); padding: 24px 0 0; }
-      }
-      @media (max-width: 480px) {
-        .repo-link { padding: 9px 12px; font-size: 13px; }
-        .brand { font-size: 19px; }
-        h1 { font-size: 40px; }
-        .eyebrow { font-size: 11px; }
-      }
-    </style>
+    <meta name="description" content="Open-source AI visibility benchmark with Wilson 95% confidence intervals, verbatim search & citation receipts, and controlled page-change lead tracking. MIT licensed.">
+    <meta name="theme-color" content="#0a0c10">
+    <meta property="og:title" content="Hearsay · See what AI tells buyers about your product — with receipts">
+    <meta property="og:description" content="Measure real buyer questions across OpenAI, Claude, Gemini, and coding agents with Wilson 95% intervals, citation-gap receipts, and controlled page-change outcomes.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://melonwer.github.io/hearsay/">
+    <meta property="og:image" content="https://melonwer.github.io/hearsay/social-preview.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <title>Hearsay · Open-Source AI Visibility Benchmark with Receipts</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b82f6'/%3E%3Ctext x='16' y='24' text-anchor='middle' font-family='system-ui,sans-serif' font-size='24' font-weight='700' fill='white'%3Eh%3C/text%3E%3C/svg%3E">
+    <script>
+      (function () {
+        try {
+          if (localStorage.getItem('hearsay-theme') === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+        } catch (_e) {}
+      })();
+    </script>
+    <link rel="stylesheet" href="showcase.css">
+    <script src="showcase.js" defer></script>
   </head>
   <body>
-    <div class="page">
-      <header>
-        <span class="brand"><span class="mark" aria-hidden="true">h</span>Hearsay</span>
-        <a class="repo-link" href="https://github.com/melonwer/hearsay">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14"/></svg>
-          Return to Repo
-        </a>
-      </header>
-      <main>
-        <section class="hero" aria-labelledby="intro-title">
-          <div class="hero-copy">
-            <p class="eyebrow">Open-source AI visibility research</p>
-            <h1 id="intro-title">What does AI say about <span>your product?</span></h1>
-            <p class="intro">Ask the questions your buyers might ask. Hearsay works with the agent you already use and saves the answers and evidence, so you can decide what to test next.</p>
-            <a class="quickstart" href="https://github.com/melonwer/hearsay#start-with-your-assistant">Read the quickstart <span aria-hidden="true">↗</span></a>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <div class="brand-group">
+          <a class="brand" href="#main-content">
+            <span class="mark" aria-hidden="true">h</span>
+            <span>Hearsay</span>
+          </a>
+          <span class="license-pill">MIT · $0 Local-First</span>
+        </div>
+
+        <nav class="header-nav" aria-label="Section navigation">
+          <a href="#quickstart">Quickstart</a>
+          <a href="#sandbox">Live Receipt Sandbox</a>
+          <a href="#methodology">Methodology</a>
+        </nav>
+
+        <div class="header-actions">
+          <button id="theme-toggle" type="button" class="icon-btn" aria-pressed="false" aria-label="Switch to light theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <circle cx="12" cy="12" r="4.2"/>
+              <path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/>
+            </svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+              <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/>
+            </svg>
+            <span>Light</span>
+          </button>
+
+          <a class="repo-btn" href="https://github.com/melonwer/hearsay">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.38-3.88-1.38-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.7 5.4-5.27 5.69.42.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/>
+            </svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main-content" class="container">
+      <!-- 1. Hero + Embedded 51s Launch Film -->
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>Open-Source AI Visibility Benchmark</p>
+          <h1 id="hero-title">See what AI tells buyers about <span>your product</span> — with receipts.</h1>
+          <p class="hero-subcopy">
+            Hearsay asks real B2B buying questions repeatedly across OpenAI, Claude, Gemini, and coding agents, linking every rate to Wilson 95% confidence intervals and verbatim citation receipts. Spot citation gaps and track page-change leads locally—without paying $399/mo for a blended vanity score.
+          </p>
+          <div class="hero-ctas">
+            <a class="btn-primary" href="#sandbox">Explore Live Receipt Sandbox</a>
+            <a class="btn-secondary" href="#quickstart">30-Second Quickstart</a>
           </div>
-          <figure>
-            <div class="player">
-              <video controls playsinline preload="none" poster="film-poster.webp" aria-label="Hearsay launch film">
-                <source src="hearsay-launch.mp4" type="video/mp4">
-                <a href="hearsay-launch.mp4">Open the Hearsay film.</a>
-              </video>
+          <ul class="spec-strip" aria-label="Technical highlights">
+            <li>Zero dependencies</li>
+            <li>Node &ge; 22.13 built-in SQLite</li>
+            <li>Browser UI + CLI + MCP</li>
+          </ul>
+        </div>
+
+        <figure class="film-figure">
+          <div class="film-frame">
+            <video controls playsinline preload="none" poster="film-poster.webp" aria-label="Hearsay launch film: The conversation you never see">
+              <source src="hearsay-launch.mp4" type="video/mp4">
+              <a href="hearsay-launch.mp4">Open the 51-second Hearsay launch film (MP4).</a>
+            </video>
+          </div>
+          <figcaption class="film-caption">
+            <strong>The conversation you never see</strong>
+            <span>0:51 launch film · Sound &amp; music</span>
+          </figcaption>
+        </figure>
+      </section>
+
+      <!-- 2. Two-Door Entrance Switcher -->
+      <section id="quickstart" class="section-block" aria-labelledby="quickstart-title">
+        <div class="section-head">
+          <div class="section-title-group">
+            <h2 id="quickstart-title">Start in your browser or hand it to your AI agent</h2>
+            <p>Same local SQLite workspace, same verifiable receipts—pick the workflow that matches how you work.</p>
+          </div>
+        </div>
+
+        <div id="copy-status" class="sr-only" aria-live="polite"></div>
+
+        <div class="door-shell">
+          <div class="door-tabs" role="tablist" aria-label="Quickstart path">
+            <button id="tab-founders" type="button" class="door-tab" role="tab" data-door-tab="founders" aria-selected="true" aria-controls="panel-founders" tabindex="0">
+              <span>Founders &amp; Marketers</span>
+              <span class="door-tab-badge">Zero CLI jargon</span>
+            </button>
+            <button id="tab-devs" type="button" class="door-tab" role="tab" data-door-tab="devs" aria-selected="false" aria-controls="panel-devs" tabindex="-1">
+              <span>Developers &amp; AI Agents</span>
+              <span class="door-tab-badge">Prompt · CLI · MCP</span>
+            </button>
+          </div>
+
+          <!-- Tab A: Founders & Marketers -->
+          <div id="panel-founders" class="door-panel" role="tabpanel" data-door-panel="founders" aria-labelledby="tab-founders">
+            <div class="founder-steps">
+              <div class="step-card">
+                <div>
+                  <span class="step-num">STEP 01</span>
+                  <h3>Start the local workbench</h3>
+                  <p>Download Hearsay and start it once. It opens a private browser dashboard on your own computer—no cloud signup and no config files to edit.</p>
+                </div>
+                <div class="ui-mock">
+                  <code id="code-founder-start" class="ui-mock-muted">git clone https://github.com/melonwer/hearsay &amp;&amp; cd hearsay &amp;&amp; node server.js</code>
+                  <button type="button" class="copy-btn" data-copy-target="code-founder-start">Copy</button>
+                </div>
+              </div>
+
+              <div class="step-card">
+                <div>
+                  <span class="step-num">STEP 02</span>
+                  <h3>1-click Demo or paste your brand</h3>
+                  <p>Explore the pre-loaded Notewell dataset in one click for $0, or paste your brand, competitors, and provider keys directly into the browser setup screen.</p>
+                </div>
+                <div class="ui-mock" aria-hidden="true">
+                  <span class="ui-mock-chip">Explore Notewell Demo ($0)</span>
+                  <span class="ui-mock-muted">/setup · saved locally (0600)</span>
+                </div>
+              </div>
+
+              <div class="step-card">
+                <div>
+                  <span class="step-num">STEP 03</span>
+                  <h3>Run &amp; export a client-ready audit</h3>
+                  <p>Inspect citation gaps and changed-vs-control page leads, then click Export for a single-file dark/light HTML report or printable executive PDF.</p>
+                </div>
+                <div class="ui-mock" aria-hidden="true">
+                  <span class="ui-mock-chip">Export Client Report</span>
+                  <span class="ui-mock-muted">HTML · Ctrl+P to PDF</span>
+                </div>
+              </div>
             </div>
-            <figcaption><strong>The conversation you never see</strong><span>51 seconds · Music and sound</span></figcaption>
-          </figure>
-        </section>
-        <section class="overview" aria-labelledby="overview-title">
-          <h2 class="section-heading" id="overview-title">From a question to a next step.</h2>
-          <ol class="steps">
-            <li>
-              <h3>Run your buyer questions.</h3>
-              <p>Start with your website and review the questions your agent proposes.</p>
-            </li>
-            <li>
-              <h3>Inspect the answers.</h3>
-              <p>Keep answers, sources, and citations in a record you can revisit.</p>
-            </li>
-            <li>
-              <h3>Choose a change to test.</h3>
-              <p>Review suggested changes, then repeat the questions to compare what was observed.</p>
-            </li>
-          </ol>
-        </section>
-      </main>
-      <footer>
-        <span>Open source. Built for the agent you already use.</span>
-        <a href="https://github.com/melonwer/hearsay/blob/main/LICENSE">MIT licensed</a>
-      </footer>
-    </div>
+          </div>
+
+          <!-- Tab B: Developers & AI Agents -->
+          <div id="panel-devs" class="door-panel" role="tabpanel" data-door-panel="devs" aria-labelledby="tab-devs" hidden>
+            <div class="dev-grid">
+              <div class="code-card">
+                <div class="code-card-head">
+                  <span class="code-card-title">1-Prompt Website Study (Claude Code, Codex, Antigravity)</span>
+                  <button type="button" class="copy-btn" data-copy-target="code-agent-prompt">Copy prompt</button>
+                </div>
+                <pre id="code-agent-prompt">Install Hearsay from https://github.com/melonwer/hearsay and study my product. Use what you already know, ask for missing details, check available providers, and propose buyer questions, usage limits, and a schedule. Show me the actual plan before enabling collection.</pre>
+                <div class="code-card-foot">
+                  Infers competitors &amp; buyer intents, previews exact API/CLI route limits, and waits for approval before running.
+                </div>
+              </div>
+
+              <div class="code-card">
+                <div class="code-card-head">
+                  <span class="code-card-title">Local Workbench, Doctor &amp; MCP / Skill Wiring</span>
+                  <button type="button" class="copy-btn" data-copy-target="code-dev-cli">Copy commands</button>
+                </div>
+                <pre id="code-dev-cli">git clone https://github.com/melonwer/hearsay &amp;&amp; cd hearsay
+node server.js                                  # local browser UI + JSON API
+node bin/hearsay.js doctor                      # inspect routes, Tavily &amp; project state
+claude mcp add -s user hearsay -- node "$PWD/mcp/server.mjs"
+codex mcp add hearsay -- node "$PWD/mcp/server.mjs"</pre>
+                <div class="code-card-foot">
+                  Plugin &amp; portable skill bundles (<code class="mono">node scripts/build-bundles.js</code>) documented in <a href="https://github.com/melonwer/hearsay/blob/main/skill/references/installation.md">installation reference</a>.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3 & 4. Interactive Live Receipt Sandbox + "Why $399/mo Trackers Lie" Switch -->
+      <section id="sandbox" class="section-block" aria-labelledby="sandbox-title">
+        <div class="section-head">
+          <div class="section-title-group">
+            <h2 id="sandbox-title">Live Receipt Sandbox · Zero-install B2B demo</h2>
+            <p>Click any engine surface, buyer intent, prompt wording, or competitor row to inspect real Wilson 95% intervals and verbatim search receipts.</p>
+          </div>
+        </div>
+
+        <!-- "Why $399/mo Trackers Lie" Mode Switch -->
+        <div class="mode-switch-bar" role="region" aria-label="Why $399 per month trackers lie comparison switch">
+          <div class="mode-switch-copy">
+            <span class="mode-switch-label">Why $399/mo AI trackers lie — compare on the exact same dataset:</span>
+            <span class="mode-switch-sub">Flip between a blended SaaS vanity score and Hearsay's unblended intervals &amp; verbatim receipts.</span>
+          </div>
+          <div class="segmented-control" role="group" aria-label="Dataset view mode">
+            <button id="mode-hearsay-btn" type="button" class="seg-btn" aria-pressed="true">Hearsay View ($0 MIT)</button>
+            <button id="mode-tracker-btn" type="button" class="seg-btn lie-btn" aria-pressed="false">Typical $399/mo Tracker View</button>
+          </div>
+        </div>
+
+        <div class="sandbox-shell">
+          <!-- Hearsay View ($0 MIT) -->
+          <div id="hearsay-mode-container">
+            <div class="sandbox-top-tabs">
+              <div class="subtab-list" role="tablist" aria-label="Sandbox views">
+                <button id="subtab-benchmark" type="button" class="subtab-btn" role="tab" aria-selected="true" aria-controls="sandbox-benchmark-pane">
+                  Live Benchmark &amp; Receipt Inspector
+                </button>
+                <button id="subtab-outcomes" type="button" class="subtab-btn" role="tab" aria-selected="false" aria-controls="sandbox-outcomes-pane">
+                  Before vs. After Page Change (Business Outcomes)
+                </button>
+              </div>
+              <span id="series-meta-display" class="series-meta-pill">series: openai-api · gpt-5.6-luna · responses-search=required</span>
+            </div>
+
+            <!-- Subtab 1: Benchmark & Receipt Inspector -->
+            <div id="sandbox-benchmark-pane" class="benchmark-pane" role="tabpanel" aria-labelledby="subtab-benchmark">
+              <div class="filter-bar">
+                <div class="filter-group">
+                  <span class="filter-group-label">Engine Surface (Unblended Series)</span>
+                  <div class="pill-row" role="group" aria-label="Engine surface">
+                    <button type="button" class="filter-pill" data-surface="openai" aria-pressed="true">OpenAI Web Search</button>
+                    <button type="button" class="filter-pill" data-surface="anthropic" aria-pressed="false">Claude Search</button>
+                    <button type="button" class="filter-pill" data-surface="gemini" aria-pressed="false">Gemini Grounding</button>
+                    <button type="button" class="filter-pill" data-surface="codex" aria-pressed="false">Codex CLI</button>
+                  </div>
+                </div>
+
+                <div class="filter-group">
+                  <span class="filter-group-label">Non-Branded Buyer Intent (3 Phrasings Each)</span>
+                  <div class="pill-row" role="group" aria-label="Buyer intent">
+                    <button type="button" class="filter-pill" data-intent="revops" aria-pressed="true">CRM-Synced Sales Notes</button>
+                    <button type="button" class="filter-pill" data-intent="botfree" aria-pressed="false">Bot-Free Executive Capture</button>
+                    <button type="button" class="filter-pill" data-intent="soc2" aria-pressed="false">SOC 2 Startup Pricing</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="sandbox-workspace">
+                <!-- Left: Clickable Answer Rate & Share of AI Voice Rows -->
+                <div class="rates-pane">
+                  <div class="pane-head">
+                    <h3>Answer Rate &amp; Share of AI Voice</h3>
+                    <span id="rates-coverage-note" class="pane-sub">15/15 comparable · verified search</span>
+                  </div>
+
+                  <div id="brand-rows-container" class="brand-rows" role="listbox" aria-label="Tracked brands — click to inspect receipt">
+                    <button type="button" class="brand-row tabular" role="option" data-brand-row="Fireflies" aria-selected="false">
+                      <span class="brand-ident">
+                        <span class="brand-name-line">Fireflies</span>
+                        <span class="brand-domain">fireflies.ai</span>
+                      </span>
+                      <span class="ci-cell">
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:48%;width:41%"></span>
+                          <span class="ci-point" style="left:73%"></span>
+                        </span>
+                        <span class="ci-stat"><strong>73%</strong> [48%–89%] · 15/15 comparable</span>
+                      </span>
+                      <span class="sov-cell"><strong>32%</strong><span>SOV (11/34)</span></span>
+                    </button>
+
+                    <button type="button" class="brand-row tabular" role="option" data-brand-row="Otter.ai" aria-selected="false">
+                      <span class="brand-ident">
+                        <span class="brand-name-line">Otter.ai</span>
+                        <span class="brand-domain">otter.ai</span>
+                      </span>
+                      <span class="ci-cell">
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:36%;width:44%"></span>
+                          <span class="ci-point" style="left:60%"></span>
+                        </span>
+                        <span class="ci-stat"><strong>60%</strong> [36%–80%] · 15/15 comparable</span>
+                      </span>
+                      <span class="sov-cell"><strong>26%</strong><span>SOV (9/34)</span></span>
+                    </button>
+
+                    <button type="button" class="brand-row tabular" role="option" data-brand-row="Notewell" aria-selected="true">
+                      <span class="brand-ident">
+                        <span class="brand-name-line">Notewell <span class="self-tag">Tracked</span></span>
+                        <span class="brand-domain">notewell.io</span>
+                      </span>
+                      <span class="ci-cell">
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:25%;width:45%"></span>
+                          <span class="ci-point" style="left:47%"></span>
+                        </span>
+                        <span class="ci-stat"><strong>47%</strong> [25%–70%] · 15/15 comparable</span>
+                      </span>
+                      <span class="sov-cell"><strong>21%</strong><span>SOV (7/34)</span></span>
+                    </button>
+
+                    <button type="button" class="brand-row tabular" role="option" data-brand-row="Granola" aria-selected="false">
+                      <span class="brand-ident">
+                        <span class="brand-name-line">Granola</span>
+                        <span class="brand-domain">granola.ai</span>
+                      </span>
+                      <span class="ci-cell">
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:25%;width:45%"></span>
+                          <span class="ci-point" style="left:47%"></span>
+                        </span>
+                        <span class="ci-stat"><strong>47%</strong> [25%–70%] · 15/15 comparable</span>
+                      </span>
+                      <span class="sov-cell"><strong>21%</strong><span>SOV (7/34)</span></span>
+                    </button>
+                  </div>
+
+                  <div id="variance-callout-box" class="variance-callout">
+                    <strong>Phrasing sensitivity (Notewell):</strong> 80% / 40% / 20% across 3 wordings of this intent · <strong>25 pt phrasing spread</strong> vs. <strong>19 pt same-prompt rerun spread</strong>.
+                  </div>
+                </div>
+
+                <!-- Right: Answer & Evidence Receipt Inspector -->
+                <div id="receipt-inspector-pane" class="inspector-pane" aria-live="polite">
+                  <div class="receipt-meta-bar">
+                    <span id="inspector-receipt-id" class="receipt-id">#rcpt-4100 · OpenAI Web Search · target=Notewell</span>
+                    <span id="inspector-stance-badge" class="stance-badge stance-positive">Stance: Positive · Recommended pick (rule R1)</span>
+                  </div>
+
+                  <div class="phrasing-box">
+                    <div id="inspector-phrasing-tabs" class="phrasing-tabs" role="group" aria-label="Prompt phrasing selector">
+                      <button type="button" class="phrasing-btn tabular" data-phrasing-idx="0" aria-pressed="true">Phrasing 1 · 4/5 (80%)</button>
+                      <button type="button" class="phrasing-btn tabular" data-phrasing-idx="1" aria-pressed="false">Phrasing 2 · 2/5 (40%)</button>
+                      <button type="button" class="phrasing-btn tabular" data-phrasing-idx="2" aria-pressed="false">Phrasing 3 · 1/5 (20%)</button>
+                    </div>
+                    <p id="inspector-prompt-text" class="prompt-verbatim">
+                      "Best AI meeting notetaker that syncs call notes and MEDDIC fields to HubSpot or Salesforce?"
+                    </p>
+                  </div>
+
+                  <div class="query-trace">
+                    <span class="query-trace-label">Observed Model Web Search Query</span>
+                    <code id="inspector-query-text">best ai meeting notetaker hubspot salesforce meddic sync 2026</code>
+                  </div>
+
+                  <div class="urls-split">
+                    <div class="url-col">
+                      <h4>Returned by Search (search_result)</h4>
+                      <ul id="inspector-returned-urls" class="url-list">
+                        <li class="url-item">www.g2.com/categories/ai-meeting-assistants<span class="url-tag tag-cited">Cited</span></li>
+                        <li class="url-item">fireflies.ai/integrations/hubspot<span class="url-tag tag-cited">Cited</span></li>
+                        <li class="url-item">otter.ai/sales<span class="url-tag tag-cited">Cited</span></li>
+                        <li class="url-item">notewell.io/docs/crm-webhooks<span class="url-tag tag-cited">Cited</span></li>
+                        <li class="url-item">notewell.io/pricing<span class="url-tag tag-gap">Retrieved · Not cited</span></li>
+                      </ul>
+                    </div>
+
+                    <div class="url-col">
+                      <h4>Cited in Final Answer (final_citation)</h4>
+                      <ul id="inspector-cited-urls" class="url-list">
+                        <li class="url-item">
+                          <div>www.g2.com/categories/ai-meeting-assistants<span class="url-tag tag-gap">Citation Gap</span></div>
+                          <div style="color:var(--muted);font-size:10.5px;margin-top:2px;">Citation gap · G2 matrix cites Otter.ai &amp; Fireflies, omits Notewell</div>
+                        </li>
+                        <li class="url-item">
+                          <div>fireflies.ai/integrations/hubspot<span class="url-tag tag-cited">Final citation</span></div>
+                          <div style="color:var(--muted);font-size:10.5px;margin-top:2px;">Competitor HubSpot field matrix cited</div>
+                        </li>
+                        <li class="url-item">
+                          <div>notewell.io/docs/crm-webhooks<span class="url-tag tag-cited">Final citation</span></div>
+                          <div style="color:var(--muted);font-size:10.5px;margin-top:2px;">Docs webhook page cited (while /pricing lacked tier table)</div>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+
+                  <div class="answer-box">
+                    <span class="answer-box-label">Verbatim Model Answer Snippet</span>
+                    <p id="inspector-answer-text" class="answer-snippet">
+                      For structured MEDDIC writeback to HubSpot or Salesforce, <mark class="hl-peer">Fireflies</mark> and <mark class="hl-primary">Notewell</mark> are the strongest fits. <mark class="hl-primary">Notewell</mark> maps custom qualification fields directly to deal properties with speaker-attributed quotes, while <mark class="hl-peer">Fireflies</mark> covers the broadest set of native dialers. <mark class="hl-peer">Otter.ai</mark> works well for standard recap logging, and <mark class="hl-peer">Granola</mark> suits reps who want a lightweight notepad first.
+                    </p>
+                  </div>
+
+                  <button id="bridge-to-outcomes" type="button" class="bridge-btn">
+                    See how shipping a /pricing comparison table moved citations (6% &rarr; 33%) &amp; leads (+86%) &rarr;
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Subtab 2: Before vs. After Page Change (Business Outcomes) -->
+            <div id="sandbox-outcomes-pane" class="outcomes-pane" role="tabpanel" aria-labelledby="subtab-outcomes" hidden>
+              <div class="intervention-banner">
+                <div>
+                  <h3>Shipped Change: Structured SOC 2, Retention &amp; CRM Tier Table on <code class="mono">notewell.io/pricing</code></h3>
+                  <p>intervention_id: intv-09 · Shipped 2026-09-14T16:00Z · Baseline (Aug 31–Sep 13) vs. Review (Sep 16–Sep 29)</p>
+                </div>
+                <span class="stance-badge stance-positive">Status: observed_increase · 9/9 common prompts</span>
+              </div>
+
+              <div class="outcomes-grid">
+                <!-- Left: AI Citation & Mention Shift -->
+                <div class="outcome-card tabular">
+                  <h4>1. AI Search &amp; Citation Shift (OpenAI Web Search Series)</h4>
+
+                  <div class="delta-row">
+                    <div class="delta-head">
+                      <span>Final-Answer Citation Rate (<code class="mono">notewell.io/pricing</code>)</span>
+                      <span class="delta-pill">+27 pts observed</span>
+                    </div>
+                    <div class="delta-bars">
+                      <div class="mini-bar-line">
+                        <span>Baseline</span>
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:2%;width:18%"></span>
+                          <span class="ci-point" style="left:6%"></span>
+                        </span>
+                        <span class="mini-bar-stat">6% [2%–20%] · 2/33</span>
+                      </div>
+                      <div class="mini-bar-line">
+                        <span>After</span>
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:20%;width:30%"></span>
+                          <span class="ci-point" style="left:33%"></span>
+                        </span>
+                        <span class="mini-bar-stat"><strong>33%</strong> [20%–50%] · 11/33</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="delta-row">
+                    <div class="delta-head">
+                      <span>Brand Mention Rate (Pricing &amp; CRM Intents)</span>
+                      <span class="delta-pill">+28 pts observed</span>
+                    </div>
+                    <div class="delta-bars">
+                      <div class="mini-bar-line">
+                        <span>Baseline</span>
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:15%;width:29%"></span>
+                          <span class="ci-point" style="left:27%"></span>
+                        </span>
+                        <span class="mini-bar-stat">27% [15%–44%] · 9/33</span>
+                      </div>
+                      <div class="mini-bar-line">
+                        <span>After</span>
+                        <span class="ci-track" aria-hidden="true">
+                          <span class="ci-band" style="left:38%;width:32%"></span>
+                          <span class="ci-point" style="left:55%"></span>
+                        </span>
+                        <span class="mini-bar-stat"><strong>55%</strong> [38%–70%] · 18/33</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="margin-top:12px;">
+                    <div class="phrasing-tabs" role="group" aria-label="Compare frozen receipts">
+                      <button id="outcome-rcpt-before" type="button" class="phrasing-btn" aria-pressed="false">Baseline Receipt (Sep 10)</button>
+                      <button id="outcome-rcpt-after" type="button" class="phrasing-btn" aria-pressed="true">Post-Change Receipt (Sep 28)</button>
+                    </div>
+                    <div id="outcome-rcpt-body" class="answer-box"></div>
+                  </div>
+                </div>
+
+                <!-- Right: Changed Page vs. Unchanged Comparison Page Leads -->
+                <div class="outcome-card tabular">
+                  <h4>2. Controlled Business Outcomes (Changed vs. Unchanged Page)</h4>
+                  <div class="outcomes-table-wrap">
+                    <table class="outcomes-table">
+                      <thead>
+                        <tr>
+                          <th>Landing Page &amp; Role</th>
+                          <th>Metric (CRM / Stripe)</th>
+                          <th>Baseline (14d)</th>
+                          <th>After (14d)</th>
+                          <th>Observed Delta</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>
+                            <code class="mono">notewell.io/pricing</code><br>
+                            <span class="role-pill role-changed">changed page</span>
+                          </td>
+                          <td>Qualified demo leads</td>
+                          <td>14</td>
+                          <td><strong>26</strong></td>
+                          <td><span class="delta-pill">+12 (+85.7%)</span></td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <code class="mono">notewell.io/product/transcription</code><br>
+                            <span class="role-pill role-control">unchanged control</span>
+                          </td>
+                          <td>Qualified demo leads</td>
+                          <td>19</td>
+                          <td>21</td>
+                          <td style="color:var(--muted);font-family:var(--font-mono);font-size:11.5px;">+2 (+10.5% drift)</td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <code class="mono">notewell.io/pricing</code><br>
+                            <span class="role-pill role-changed">changed page</span>
+                          </td>
+                          <td>Self-serve paid trials</td>
+                          <td>31</td>
+                          <td><strong>49</strong></td>
+                          <td><span class="delta-pill">+18 (+58.1%)</span></td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <code class="mono">notewell.io/product/transcription</code><br>
+                            <span class="role-pill role-control">unchanged control</span>
+                          </td>
+                          <td>Self-serve paid trials</td>
+                          <td>38</td>
+                          <td>41</td>
+                          <td style="color:var(--muted);font-family:var(--font-mono);font-size:11.5px;">+3 (+7.9% drift)</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div class="variance-callout" style="margin-top:14px;">
+                    <strong>Difference-in-change: +10 net qualified demo leads</strong> on <code class="mono">/pricing</code> beyond the unchanged control page's period drift · Logged effort: <code class="mono">95 min</code> · API measurement spend: <code class="mono">$1.42</code>.
+                  </div>
+
+                  <p class="epistemic-note">
+                    <strong>Epistemic boundary:</strong> Pairing an unchanged comparison page bounds background period drift when traffic is comparable; Hearsay records user-supplied CRM outcomes alongside citation receipts without claiming automated causal proof.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Typical $399/mo Tracker View -->
+          <div id="tracker-lie-container" class="tracker-lie-pane" hidden>
+            <div class="lie-banner">
+              <span>Simulating how a typical $399/mo SaaS tracker renders this exact same Notewell dataset:</span>
+              <span>3 methodological flaws exposed below</span>
+            </div>
+
+            <div class="lie-grid tabular">
+              <div class="lie-widget">
+                <div>
+                  <span class="lie-fake-kicker">Blended AI Visibility Score</span>
+                  <div class="lie-big-num">74 <span>/ 100 · +6 pts</span></div>
+                  <p class="lie-sub">"Strong cross-engine brand momentum"</p>
+                </div>
+                <div class="lie-audit-note">
+                  <strong>What this hides</strong>
+                  Merges unsearched raw completions with live web search into an arbitrary index—masking that Notewell dropped to <strong>27% [11%–52%]</strong> on Gemini Grounding.
+                </div>
+              </div>
+
+              <div class="lie-widget">
+                <div>
+                  <span class="lie-fake-kicker">Average AI Position &amp; Volume</span>
+                  <div class="lie-big-num">#2 <span>AI Rank · 14.2k/mo</span></div>
+                  <p class="lie-sub">"Est. 14,200 monthly buyer prompts"</p>
+                </div>
+                <div class="lie-audit-note">
+                  <strong>What this hides</strong>
+                  Hides <strong>25 pt prompt-phrasing spread</strong> (80% down to 20% when reworded) and invents monthly prompt volume data that no provider publishes.
+                </div>
+              </div>
+
+              <div class="lie-widget">
+                <div>
+                  <span class="lie-fake-kicker">Opaque Competitor Leaderboard</span>
+                  <div class="lie-big-num">4 <span>brands scored</span></div>
+                  <p class="lie-sub">Otter.ai (82) · Notewell (74) · Fireflies (71) · Granola (58)</p>
+                </div>
+                <div class="lie-audit-note">
+                  <strong>What this hides</strong>
+                  Zero distinction between retrieved URLs and final citations—so you never see that <code class="mono">g2.com</code> and missing <code class="mono">/pricing</code> tables caused the gap.
+                </div>
+              </div>
+            </div>
+
+            <div class="lie-paywall-row">
+              <div class="lie-paywall-text">
+                <strong>"Upgrade to Growth ($399/mo) to add Gemini, export reports, or inspect raw answer text."</strong> — Or run Hearsay locally under MIT with every surface and receipt unlocked.
+              </div>
+              <button id="switch-back-hearsay" type="button" class="btn-primary">
+                Switch back to Hearsay View ($0 MIT) &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. Concise Methodology Strip -->
+      <section id="methodology" class="section-block" aria-labelledby="method-title">
+        <div class="section-head">
+          <div class="section-title-group">
+            <h2 id="method-title">Measurement discipline built into the schema</h2>
+            <p>Every number links to an immutable execution profile, sample denominator, and stored receipt.</p>
+          </div>
+          <a href="https://github.com/melonwer/hearsay/blob/main/METHODOLOGY.md">Read full METHODOLOGY.md &rarr;</a>
+        </div>
+
+        <div class="method-grid">
+          <article class="method-card">
+            <h3>01 · Intervals &amp; phrasing spread</h3>
+            <p>Rewording a buyer question moves brand overlap far more than re-asking one prompt (<a href="https://arxiv.org/pdf/2605.27440">arXiv:2605.27440</a>). Hearsay pools multi-phrasing intents, publishes Wilson 95% intervals, and flags samples under n=5.</p>
+          </article>
+
+          <article class="method-card">
+            <h3>02 · Unblended real surfaces</h3>
+            <p>OpenAI Responses search, Claude web search, Gemini grounding, and authenticated Codex or Claude Code CLIs stay in separate series. Missing or timed-out searches never enter denominators as brand absences.</p>
+          </article>
+
+          <article class="method-card">
+            <h3>03 · Citation gaps to controlled leads</h3>
+            <p>Search queries, retrieved URLs, and final-answer citations are stored in separate layers so you can ship targeted page fixes and review lead deltas against an unchanged comparison page.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <span>Hearsay · Local-first, zero-dependency AI visibility measurement. Not affiliated with OpenAI, Anthropic, Google, or Perplexity.</span>
+        <ul class="footer-links">
+          <li><a href="https://github.com/melonwer/hearsay">Repository</a></li>
+          <li><a href="https://github.com/melonwer/hearsay/blob/main/METHODOLOGY.md">Methodology</a></li>
+          <li><a href="https://github.com/melonwer/hearsay/blob/main/skill/SKILL.md">Agent Skill</a></li>
+          <li><a href="https://github.com/melonwer/hearsay/blob/main/SECURITY.md">Security</a></li>
+          <li><a href="https://github.com/melonwer/hearsay/blob/main/LICENSE">MIT License</a></li>
+        </ul>
+      </div>
+    </footer>
   </body>
 </html>
