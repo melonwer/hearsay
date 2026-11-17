@@ -435,19 +435,37 @@
     }
 
     var mentionedInSnippet = answerText.indexOf(selectedBrand) !== -1;
+    var isCaveatedInSnippet = mentionedInSnippet && (
+      (intentId === 'botfree' && (selectedBrand === 'Fireflies' || selectedBrand === 'Otter.ai')) ||
+      (intentId === 'soc2' && selectedBrand === 'Granola') ||
+      (intentId === 'revops' && phrasingIdx < 2 && selectedBrand === 'Granola')
+    );
+
     var statusBadgeClass = 'stance-neutral';
-    var statusBadgeText = selectedBrand + ' \u00b7 Mentioned with caveats';
+    var statusBadgeText = selectedBrand + ' \u00b7 Caveated mention';
     var takeawayTone = 'is-warn';
 
     if (!mentionedInSnippet) {
       statusBadgeClass = 'stance-absent';
       statusBadgeText = selectedBrand + ' \u00b7 Left out here';
       takeawayTone = 'is-gap';
-    } else if (brandHits / den >= 0.6) {
+    } else if (isCaveatedInSnippet) {
+      statusBadgeClass = 'stance-neutral';
+      statusBadgeText = selectedBrand + ' \u00b7 Caveated mention';
+      takeawayTone = 'is-warn';
+    } else if (brandPhrasingPct >= 60) {
       statusBadgeClass = 'stance-positive';
       statusBadgeText = selectedBrand + ' \u00b7 Recommended here';
       takeawayTone = 'is-pos';
+    } else {
+      statusBadgeClass = 'stance-neutral';
+      statusBadgeText = selectedBrand +
+        (brandPhrasingPct <= 25 ? ' \u00b7 Slipped here (' : ' \u00b7 Mixed here (') +
+        brandHits + '/' + den + ' runs)';
+      takeawayTone = 'is-warn';
     }
+
+    var w3NotewellRatio = cell.hits['Notewell'][2] / surfaceObj.perPhrasingN[2];
 
     var takeawayHtml = buildTakeawayHtml(
       selectedBrand,
@@ -458,10 +476,14 @@
       brandHits,
       den,
       brandPhrasingPct,
-      overallPct
+      overallPct,
+      w3NotewellRatio
     );
 
     return {
+      inspectorHeading: selectedBrand === 'Notewell'
+        ? 'Exact AI Receipt & Why You Won or Lost'
+        : 'Exact AI Receipt & Why ' + selectedBrand + ' Won or Lost',
       statusBadgeClass: statusBadgeClass,
       statusBadgeText: statusBadgeText,
       checkedPages: checkedPages,
@@ -474,8 +496,9 @@
     };
   }
 
-  function buildTakeawayHtml(brand, intentId, phrasingIdx, surfaceLabel, mentioned, hits, den, pPct, overallPct) {
-    var runStat = hits + '/' + den + ' runs (' + pPct + '%)';
+  function buildTakeawayHtml(brand, intentId, phrasingIdx, surfaceLabel, mentioned, hits, den, pPct, overallPct, w3NotewellRatio) {
+    var runStat = hits + '/' + den + ' runs, ' + pPct + '%';
+    var overallAndHere = overallPct + '% overall \u00b7 ' + runStat + ' here';
 
     if (brand === 'Notewell') {
       if (!mentioned) {
@@ -494,7 +517,7 @@
         }
         if (intentId === 'revops') {
           return (
-            '<strong>Why Notewell vanished here (' + esc(runStat) + '):</strong> As soon as the buyer dropped technical keywords like &ldquo;MEDDIC&rdquo;, ' +
+            '<strong>Why Notewell vanished here (' + esc(runStat) + '):</strong> Without niche technical keywords like &ldquo;MEDDIC&rdquo;, ' +
             esc(surfaceLabel) + ' leaned on G2 and <code class="mono">notewell.io/pricing</code>&mdash;finding no 25-seat CRM comparison table on your site and omitting you.'
           );
         }
@@ -505,17 +528,40 @@
       }
 
       if (intentId === 'revops') {
+        if (phrasingIdx === 0) {
+          var w3Hint = w3NotewellRatio < 0.5
+            ? 'try clicking <strong>Wording 3</strong> above to see Notewell vanish.'
+            : 'try clicking <strong>Wording 3</strong> above to see Notewell drop to 50% when buyers ask about 25-seat pricing.';
+          return (
+            '<strong>Why Notewell won a spot here (' + esc(runStat) + '):</strong> Because the buyer explicitly asked for MEDDIC field sync, AI pulled your webhook docs (<code class="mono">notewell.io/docs/crm-webhooks</code>). ' +
+            '<strong>Hidden risk:</strong> AI still skipped <code class="mono">notewell.io/pricing</code> and G2 omits you&mdash;' + w3Hint
+          );
+        }
+        if (phrasingIdx === 1) {
+          return (
+            '<strong>Why Notewell held on as a runner-up (' + esc(runStat) + '):</strong> ' + esc(surfaceLabel) + ' still cited <code class="mono">notewell.io/docs/crm-webhooks</code> for HubSpot mapping, ' +
+            'but G2&rsquo;s comparison grid pushed Fireflies &amp; Otter.ai ahead of you on broad CRM prompts.'
+          );
+        }
         return (
-          '<strong>Why Notewell won a spot here (' + esc(runStat) + '):</strong> Because the buyer explicitly asked for HubSpot/Salesforce field sync, AI pulled your webhook docs (<code class="mono">notewell.io/docs/crm-webhooks</code>). ' +
-          '<strong>Hidden risk:</strong> AI still skipped <code class="mono">notewell.io/pricing</code> and G2 omits you&mdash;try clicking <strong>Wording 3</strong> above to see Notewell vanish.'
+          '<strong>Why Notewell slipped to half of runs on Wording 3 (' + esc(runStat) + '):</strong> ' + esc(surfaceLabel) + ' found your webhook docs to confirm self-serve CRM setup, ' +
+          'but skipped <code class="mono">notewell.io/pricing</code> in half the checks because your 25-seat tier lacked a parseable HTML table.'
         );
       }
+
       if (intentId === 'botfree') {
+        if (pPct < 60) {
+          return (
+            '<strong>Why Notewell slipped to half of runs here (' + esc(runStat) + '):</strong> <code class="mono">notewell.io/product/transcription</code> covers local audio capture, ' +
+            'but Zapier&rsquo;s top roundup omits Notewell&mdash;costing you half of runs when buyers ask broadly about Zoom &amp; Google Meet.'
+          );
+        }
         return (
           '<strong>Why Notewell co-led here (' + esc(runStat) + '):</strong> <code class="mono">notewell.io/product/transcription</code> clearly explains local system-audio recording without a visible Zoom bot. ' +
           '<strong>Next fix:</strong> Get added to Zapier&rsquo;s meeting-assistant roundup so you stop losing runs when buyers reword the question.'
         );
       }
+
       return (
         '<strong>Why Notewell made this shortlist (' + esc(runStat) + '):</strong> AI found SOC 2 Type II on <code class="mono">notewell.io/security</code>, ' +
         'but still skipped <code class="mono">notewell.io/pricing</code>&mdash;click <strong>Wording 2</strong> or <strong>Wording 3</strong> above to see how fast you disappear on retention &amp; SSO pricing questions.'
@@ -525,18 +571,30 @@
     if (brand === 'Fireflies') {
       if (intentId === 'botfree') {
         return (
-          '<strong>Why Fireflies only got a caveated mention (' + esc(runStat) + ', ' + overallPct + '% overall):</strong> ' +
+          '<strong>Why Fireflies only got a caveated mention (' + esc(overallAndHere) + '):</strong> ' +
           'Its SEO blog post (<code class="mono">fireflies.ai/blog/record-zoom-without-bot</code>) ranked in web search, so AI mentioned it&mdash;but warned buyers that Fireflies joins calls as a visible bot by default.'
         );
       }
       if (intentId === 'soc2') {
+        if (pPct < 60) {
+          return (
+            '<strong>Why Fireflies slipped on Wording 3 (' + esc(overallAndHere) + '):</strong> ' +
+            '<code class="mono">fireflies.ai/pricing</code> is easy for AI to parse at $19/seat, but gating SAML SSO behind custom Enterprise quotes caused ' + esc(surfaceLabel) + ' to hedge or drop it in half of strict sub-$30 SSO runs.'
+          );
+        }
         return (
-          '<strong>Why Fireflies won (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+          '<strong>Why Fireflies won (' + esc(overallAndHere) + '):</strong> ' +
           '<code class="mono">fireflies.ai/pricing</code> publishes a clean $19/seat HTML comparison table with SOC 2 &amp; retention rows that AI can verify directly, backed by top G2 placement.'
         );
       }
+      if (pPct < 60) {
+        return (
+          '<strong>Why Fireflies slipped on Wording 3 (' + esc(overallAndHere) + '):</strong> ' +
+          'Fireflies leads overall via HubSpot docs and G2, but when buyers explicitly ask to avoid &ldquo;per-seat enterprise bloat&rdquo;, lightweight flat-billing rivals like Granola take share.'
+        );
+      }
       return (
-        '<strong>Why Fireflies won (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        '<strong>Why Fireflies won (' + esc(overallAndHere) + '):</strong> ' +
         'Dedicated <code class="mono">fireflies.ai/integrations/hubspot</code> page + clear $19/seat Business pricing table + listed at the top of G2&rsquo;s category matrix.'
       );
     }
@@ -544,18 +602,30 @@
     if (brand === 'Otter.ai') {
       if (intentId === 'botfree') {
         return (
-          '<strong>Why Otter.ai trailed here (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
-          'Buyers specifically asked to avoid a visible Zoom bot; AI only mentions Otter.ai to note that its standard workflow relies on an automated participant bot.'
+          '<strong>Why Otter.ai only got a caveated mention (' + esc(overallAndHere) + '):</strong> ' +
+          'Buyers specifically asked to avoid a visible Zoom bot; AI only mentions Otter.ai to warn that its standard workflow relies on an automated participant bot.'
         );
       }
       if (intentId === 'soc2') {
+        if (pPct < 60) {
+          return (
+            '<strong>Why Otter.ai slipped on this wording (' + esc(overallAndHere) + '):</strong> ' +
+            'Otter.ai ranks well on general SOC 2 searches via G2, but SAML SSO and stricter retention require Enterprise quotes above its $20/seat tier&mdash;dropping it from most strict SSO/retention runs.'
+          );
+        }
         return (
-          '<strong>Why Otter.ai ranked high (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+          '<strong>Why Otter.ai ranked high (' + esc(overallAndHere) + '):</strong> ' +
           'Pairs transparent $20/seat Business pricing with a dedicated <code class="mono">otter.ai/security</code> SOC 2 page and top G2 pricing-grid visibility.'
         );
       }
+      if (pPct < 60) {
+        return (
+          '<strong>Why Otter.ai slipped on this wording (' + esc(overallAndHere) + '):</strong> ' +
+          'Strong G2 presence keeps Otter.ai visible on broad recaps, but thinner technical webhook docs and per-seat Sales pricing cost it runs on technical or anti-bloat prompts.'
+        );
+      }
       return (
-        '<strong>Why Otter.ai stayed visible (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        '<strong>Why Otter.ai stayed visible (' + esc(overallAndHere) + '):</strong> ' +
         'Strong G2 category authority plus a dedicated <code class="mono">otter.ai/sales</code> page kept Otter.ai in the top two whenever buyers asked broad CRM questions.'
       );
     }
@@ -563,19 +633,31 @@
     /* Granola */
     if (intentId === 'botfree') {
       return (
-        '<strong>Why Granola dominated (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        '<strong>Why Granola dominated (' + esc(overallAndHere) + '):</strong> ' +
         'Owns the &ldquo;no meeting bot&rdquo; positioning clearly on <code class="mono">granola.ai</code> AND holds the #1 spot in third-party roundups like Zapier.'
       );
     }
     if (intentId === 'soc2') {
       return (
-        '<strong>Why Granola got a secondary mention (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        '<strong>Why Granola got a caveated mention (' + esc(overallAndHere) + '):</strong> ' +
         'Publishes sub-$30 team pricing and SOC 2 compliance, so AI includes it&mdash;while noting lighter centralized SSO and retention controls for 40-seat teams.'
       );
     }
+    if (phrasingIdx === 2) {
+      if (pPct >= 60) {
+        return (
+          '<strong>Why Granola surged on Wording 3 (' + esc(overallAndHere) + '):</strong> ' +
+          'Buyers asked specifically to avoid &ldquo;per-seat enterprise bloat&rdquo;, where Granola&rsquo;s simple no-contract team pricing shines&mdash;even without native CRM field sync.'
+        );
+      }
+      return (
+        '<strong>Why Granola gained partial traction on Wording 3 (' + esc(overallAndHere) + '):</strong> ' +
+        'Simple no-contract team billing matched the &ldquo;no seat bloat&rdquo; wording in nearly half of runs, though lacking native HubSpot/Salesforce sync capped its upside.'
+      );
+    }
     return (
-      '<strong>Why Granola placed as a niche alternative (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
-      'Positioned as a lightweight notepad synced via Zapier rather than native HubSpot/Salesforce field mapping&mdash;though its simple pricing helped on Wording 3.'
+      '<strong>Why Granola got a caveated mention (' + esc(overallAndHere) + '):</strong> ' +
+      'Positioned as a lightweight notepad synced via Zapier rather than native HubSpot/Salesforce field mapping&mdash;try clicking <strong>Wording 3</strong> to see where its simple pricing gains ground.'
     );
   }
 
@@ -853,7 +935,7 @@
           renderSandbox();
           var inspectorEl = document.getElementById('receipt-inspector-pane');
           if (inspectorEl && window.innerWidth <= 1024 && inspectorEl.scrollIntoView) {
-            inspectorEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            inspectorEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
         });
       });
@@ -885,6 +967,7 @@
 
     /* Render Right Card: Exact AI Receipt & Why You Won or Lost */
     var receipt = getReceipt(surfaceObj, intentObj, state.phrasingIdx, state.brand);
+    var headingEl = document.getElementById('inspector-heading');
     var statusBadgeEl = document.getElementById('inspector-status-badge');
     var phrasingTabsEl = document.getElementById('inspector-phrasing-tabs');
     var promptTextEl = document.getElementById('inspector-prompt-text');
@@ -895,6 +978,9 @@
     var takeawayTitleEl = document.getElementById('inspector-takeaway-title');
     var takeawayTextEl = document.getElementById('inspector-takeaway-text');
 
+    if (headingEl) {
+      headingEl.textContent = receipt.inspectorHeading;
+    }
     if (statusBadgeEl) {
       statusBadgeEl.className = 'stance-badge ' + receipt.statusBadgeClass;
       statusBadgeEl.textContent = receipt.statusBadgeText;

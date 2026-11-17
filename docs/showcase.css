@@ -411,24 +411,31 @@ pre,
 .spec-strip {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 14px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--ink-2);
+  font-size: 12.5px;
 }
 
 .spec-strip li {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
 }
 
-.spec-strip li + li::before {
-  content: "·";
-  margin-right: 8px;
-  color: var(--border-strong);
+.spec-strip li::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  flex-shrink: 0;
 }
 
 /* Video Card */
@@ -968,6 +975,7 @@ pre,
   display: flex;
   flex-direction: column;
   gap: 12px;
+  scroll-margin-top: 80px;
 }
 
 .inspector-head {
