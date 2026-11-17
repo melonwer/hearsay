@@ -83,46 +83,47 @@
   var SURFACES = [
     {
       id: 'openai',
-      label: 'OpenAI Web Search',
-      series: 'series: openai-api · gpt-5.6-luna · responses-search=required',
+      label: 'ChatGPT Search',
       attempted: 15,
       comparable: 15,
       perPhrasingN: [5, 5, 5],
-      coverageNote: '15/15 comparable · verified search'
+      legendSuffix: 'across 15 live checks'
     },
     {
       id: 'anthropic',
       label: 'Claude Search',
-      series: 'series: anthropic-api · claude-sonnet-5 · web_search=auto',
       attempted: 15,
       comparable: 15,
       perPhrasingN: [5, 5, 5],
-      coverageNote: '15/15 comparable · bounded ≤3 searches'
+      legendSuffix: 'across 15 live checks'
     },
     {
       id: 'gemini',
-      label: 'Gemini Grounding',
-      series: 'series: gemini-api · gemini-3.6-flash · google-search-grounding',
+      label: 'Gemini Search',
       attempted: 15,
       comparable: 15,
       perPhrasingN: [5, 5, 5],
-      coverageNote: '15/15 comparable · grounded chunks'
+      legendSuffix: 'across 15 live checks'
     },
     {
       id: 'codex',
-      label: 'Codex CLI',
-      series: 'series: codex-agent · authenticated CLI · web_status=verified',
+      label: 'Codex Agent',
       attempted: 15,
       comparable: 14,
       perPhrasingN: [5, 5, 4],
-      coverageNote: '14/15 comparable · 1 search timeout excluded'
+      legendSuffix: 'across 14 live checks (1 timeout excluded)'
     }
   ];
 
   var INTENTS = [
     {
       id: 'revops',
-      label: 'CRM-Synced Sales Notes',
+      label: 'CRM Sales Notes',
+      previews: [
+        '\u201c\u2026MEDDIC fields to HubSpot\u201d',
+        '\u201c\u2026automatic CRM updates\u201d',
+        '\u201c\u202625-rep team, no bloat\u201d'
+      ],
       phrasings: [
         'Best AI meeting notetaker that syncs call notes and MEDDIC fields to HubSpot or Salesforce?',
         'Which meeting transcription tool do B2B sales teams use for automatic CRM updates?',
@@ -153,7 +154,12 @@
     },
     {
       id: 'botfree',
-      label: 'Bot-Free Executive Capture',
+      label: 'No-Bot Zoom Notes',
+      previews: [
+        '\u201c\u2026no visible Zoom bot\u201d',
+        '\u201c\u2026discreet Mac client calls\u201d',
+        '\u201c\u2026capture locally, no bot\u201d'
+      ],
       phrasings: [
         'AI meeting notes app that records system audio without a visible bot joining Zoom calls?',
         'Best discreet meeting summarizer for client and board conversations on Mac',
@@ -185,6 +191,11 @@
     {
       id: 'soc2',
       label: 'SOC 2 Startup Pricing',
+      previews: [
+        '\u201c\u2026SOC 2 for 40-person team\u201d',
+        '\u201c\u2026zero-retention pricing\u201d',
+        '\u201c\u2026SSO + retention under $30\u201d'
+      ],
       phrasings: [
         'Affordable SOC 2 Type II meeting transcription for a 40-person B2B startup?',
         'AI meeting assistant pricing comparison for teams with strict zero-data-retention rules',
@@ -215,10 +226,6 @@
     }
   ];
 
-  /**
-   * Per-(surface, intent) per-phrasing mention counts [p1, p2, p3] for each brand.
-   * Totals match real multi-phrasing spread (e.g. [4, 2, 1] => 7/15 => 47% [25%-70%]).
-   */
   var COUNTS = {
     openai: {
       revops: {
@@ -267,117 +274,309 @@
   };
 
   /**
-   * Build realistic search-URL vs final-citation evidence and verbatim answer receipt
-   * for the currently selected (surface, intent, phrasingIdx, brand).
+   * Build plain-English pages checked, verbatim AI answer, and brand-specific takeaway
+   * so clicking ANY brand row, ANY wording pill, ANY topic, or ANY assistant is 100% coherent.
    */
-  function getReceipt(surfaceId, intentId, phrasingIdx, selectedBrand) {
+  function getReceipt(surfaceObj, intentObj, phrasingIdx, selectedBrand) {
+    var surfaceId = surfaceObj.id;
+    var intentId = intentObj.id;
     var cell = COUNTS[surfaceId][intentId];
-    var brandHitsInPhrasing = cell.hits[selectedBrand][phrasingIdx];
-    var denomInPhrasing = SURFACES.find(function (s) { return s.id === surfaceId; }).perPhrasingN[phrasingIdx];
+    var den = surfaceObj.perPhrasingN[phrasingIdx];
+    var brandHits = cell.hits[selectedBrand][phrasingIdx];
+    var brandPhrasingPct = Math.round((brandHits / den) * 100);
+
+    var allHitsForBrand = cell.hits[selectedBrand][0] + cell.hits[selectedBrand][1] + cell.hits[selectedBrand][2];
+    var overallPct = Math.round((allHitsForBrand / surfaceObj.comparable) * 100);
+
     var notewellHits = cell.hits['Notewell'][phrasingIdx];
-    var notewellOmitted = notewellHits <= 1 && phrasingIdx >= 1;
+    var notewellIncluded = (notewellHits / den) >= 0.5;
 
-    var rcptNum = 4100 + (SURFACES.findIndex(function (s) { return s.id === surfaceId; }) * 30) +
-      (INTENTS.findIndex(function (i) { return i.id === intentId; }) * 7) + phrasingIdx;
-
-    var returnedUrls = [];
-    var citedUrls = [];
+    var checkedPages = [];
     var answerText = '';
 
     if (intentId === 'revops') {
-      returnedUrls = [
-        { url: 'https://www.g2.com/categories/ai-meeting-assistants', status: 'cited', gap: true },
-        { url: 'https://fireflies.ai/integrations/hubspot', status: 'cited', gap: false },
-        { url: 'https://otter.ai/sales', status: 'cited', gap: false },
-        { url: 'https://notewell.io/docs/crm-webhooks', status: notewellOmitted ? 'uncited' : 'cited', gap: notewellOmitted },
-        { url: 'https://notewell.io/pricing', status: 'uncited', gap: true }
-      ];
-      citedUrls = notewellOmitted
-        ? [
-            { url: 'https://www.g2.com/categories/ai-meeting-assistants', note: 'Citation gap · G2 matrix cites Otter.ai & Fireflies, omits Notewell', isGap: true },
-            { url: 'https://fireflies.ai/integrations/hubspot', note: 'Competitor CRM integration page cited', isGap: false },
-            { url: 'https://otter.ai/sales', note: 'Competitor sales tier page cited', isGap: false }
-          ]
-        : [
-            { url: 'https://www.g2.com/categories/ai-meeting-assistants', note: 'Citation gap · G2 matrix cites Otter.ai & Fireflies, omits Notewell', isGap: true },
-            { url: 'https://fireflies.ai/integrations/hubspot', note: 'Competitor HubSpot field matrix cited', isGap: false },
-            { url: 'https://notewell.io/docs/crm-webhooks', note: 'Docs webhook page cited (while /pricing lacked tier table)', isGap: false }
-          ];
+      if (phrasingIdx === 0) {
+        checkedPages = notewellIncluded
+          ? [
+              { url: 'fireflies.ai/integrations/hubspot', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/docs/crm-webhooks', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'g2.com/categories/ai-meeting-assistants', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+              { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 no pricing table', kind: 'gap' }
+            ]
+          : [
+              { url: 'g2.com/categories/ai-meeting-assistants', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+              { url: 'fireflies.ai/integrations/hubspot', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'otter.ai/sales', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 no CRM tier table', kind: 'gap' }
+            ];
 
-      answerText = notewellOmitted
-        ? 'For a 25-rep B2B sales team that wants CRM updates without enterprise seat minimums, Fireflies and Otter.ai are the two options most consistently cited in G2 comparisons. Fireflies maps call summaries into HubSpot and Salesforce deal stages automatically, while Otter.ai offers a dedicated Sales workspace with live coaching cues; Granola comes up when reps prefer lightweight local notes synced via Zapier.'
-        : 'For structured MEDDIC writeback to HubSpot or Salesforce, Fireflies and Notewell are the strongest fits. Notewell maps custom qualification fields directly to deal properties with speaker-attributed quotes, while Fireflies covers the broadest set of native dialers. Otter.ai works well for standard recap logging, and Granola suits reps who want a lightweight notepad first.';
+        answerText = notewellIncluded
+          ? 'For structured MEDDIC writeback to HubSpot or Salesforce, Fireflies and Notewell are the strongest fits. Notewell maps custom qualification fields directly to deal properties with speaker-attributed quotes, while Fireflies covers the broadest set of native dialers. Otter.ai works well for standard recap logging, and Granola suits reps who want a lightweight notepad synced via Zapier.'
+          : 'Based on G2 sales-assistant comparisons, Otter.ai and Fireflies are the top choices for syncing call notes to HubSpot and Salesforce. Fireflies maps call summaries and MEDDIC fields into deal stages automatically, Otter.ai Sales logs coaching recaps to account records, and Granola fits reps pushing lighter personal notes via Zapier.';
+      } else if (phrasingIdx === 1) {
+        checkedPages = notewellIncluded
+          ? [
+              { url: 'fireflies.ai/integrations/hubspot', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'otter.ai/sales', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/docs/crm-webhooks', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'g2.com/categories/ai-meeting-assistants', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' }
+            ]
+          : [
+              { url: 'g2.com/categories/ai-meeting-assistants', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+              { url: 'fireflies.ai/integrations/hubspot', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'otter.ai/sales', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/docs/crm-webhooks', badge: 'Opened, skipped \u2014 developer docs only', kind: 'gap' }
+            ];
+
+        answerText = notewellIncluded
+          ? 'B2B sales teams most often use Fireflies or Otter.ai for automatic post-call CRM updates, with Notewell as a strong option for custom HubSpot field mapping. Fireflies and Otter.ai lead turnkey sales adoption, while Granola is popular for reps sending lightweight summaries through Zapier.'
+          : 'B2B sales teams most commonly pair Fireflies or Otter.ai with HubSpot and Salesforce for automatic post-call CRM updates. Fireflies logs call summaries, action items, and deal stages out of the box, while Otter.ai Sales syncs coaching recaps directly to CRM records; Granola comes up when reps sync personal notes via Zapier.';
+      } else {
+        checkedPages = notewellIncluded
+          ? [
+              { url: 'fireflies.ai/pricing', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/docs/crm-webhooks', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'granola.ai/pricing', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 no 25-seat tier table', kind: 'gap' }
+            ]
+          : [
+              { url: 'g2.com/categories/ai-meeting-assistants', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+              { url: 'fireflies.ai/pricing', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'otter.ai/sales', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 no pricing table', kind: 'gap' }
+            ];
+
+        answerText = notewellIncluded
+          ? 'For a 25-rep sales team avoiding enterprise contracts, Fireflies Business ($19/seat), Notewell, and Granola offer self-serve rollouts without multi-year seat minimums. Fireflies and Notewell handle direct HubSpot and Salesforce sync, Otter.ai Business ($20/seat) covers standard sales recaps, and Granola keeps per-rep pricing simple.'
+          : 'For a 25-rep B2B sales team that wants CRM updates without enterprise seat minimums, Fireflies ($19/seat) and Otter.ai ($20/seat) are the two options most consistently cited in G2 comparisons. Fireflies maps call summaries into HubSpot and Salesforce automatically, Otter.ai offers a dedicated Sales workspace, and Granola stands out for simple no-contract team billing.';
+      }
     } else if (intentId === 'botfree') {
-      returnedUrls = [
-        { url: 'https://www.granola.ai/', status: 'cited', gap: false },
-        { url: 'https://zapier.com/blog/best-ai-meeting-assistant', status: 'cited', gap: true },
-        { url: 'https://notewell.io/product/transcription', status: notewellOmitted ? 'uncited' : 'cited', gap: notewellOmitted },
-        { url: 'https://fireflies.ai/blog/record-zoom-without-bot', status: 'cited', gap: false },
-        { url: 'https://otter.ai/pricing', status: 'uncited', gap: false }
-      ];
-      citedUrls = notewellOmitted
-        ? [
-            { url: 'https://www.granola.ai/', note: 'Cited as primary Mac bot-free notepad', isGap: false },
-            { url: 'https://zapier.com/blog/best-ai-meeting-assistant', note: 'Citation gap · roundup lists Granola & Fireflies, omits Notewell', isGap: true },
-            { url: 'https://fireflies.ai/blog/record-zoom-without-bot', note: 'Competitor comparison post cited', isGap: false }
-          ]
-        : [
-            { url: 'https://www.granola.ai/', note: 'Mac system-audio capture overview', isGap: false },
-            { url: 'https://zapier.com/blog/best-ai-meeting-assistant', note: 'Citation gap · roundup lists Granola & Otter.ai, omits Notewell', isGap: true },
-            { url: 'https://notewell.io/product/transcription', note: 'Cited for bot-free desktop recorder & searchable archive', isGap: false }
-          ];
+      if (phrasingIdx === 0) {
+        checkedPages = [
+          { url: 'granola.ai', badge: 'Cited in answer', kind: 'cited' },
+          { url: 'notewell.io/product/transcription', badge: 'Cited in answer', kind: 'cited' },
+          { url: 'zapier.com/blog/best-ai-meeting-assistant', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+          { url: 'fireflies.ai/blog/record-zoom-without-bot', badge: 'Cited in answer', kind: 'cited' }
+        ];
+        answerText = 'To record Zoom and Google Meet conversations without a visible bot participant, look at Granola and Notewell first. Granola pairs a Mac menu-bar audio recorder with human bullet notes, whereas Notewell captures system audio locally while preserving multi-call search and action-item sync. Fireflies and Otter.ai remain bot-first unless configured through desktop extensions.';
+      } else if (phrasingIdx === 1) {
+        checkedPages = notewellIncluded
+          ? [
+              { url: 'granola.ai', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/product/transcription', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'zapier.com/blog/best-ai-meeting-assistant', badge: 'Citation gap \u2014 lists Granola, omits Notewell', kind: 'warn' },
+              { url: 'otter.ai/pricing', badge: 'Opened, skipped \u2014 joins calls as bot', kind: 'gap' }
+            ]
+          : [
+              { url: 'granola.ai', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'zapier.com/blog/best-ai-meeting-assistant', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+              { url: 'notewell.io/product/transcription', badge: 'Opened, skipped \u2014 Mac board workflow buried', kind: 'gap' },
+              { url: 'fireflies.ai/blog/record-zoom-without-bot', badge: 'Cited in answer', kind: 'cited' }
+            ];
 
-      answerText = notewellOmitted
-        ? 'If you cannot have a virtual attendee bot appear in board or client Zoom rosters, Granola is the clearest choice on macOS: it captures system audio locally and enhances your typed rough notes after the call. Fireflies and Otter.ai primarily rely on meeting bots by default, though browser-extension workarounds exist with thinner speaker separation.'
-        : 'To record Zoom and Google Meet conversations without a visible bot participant, look at Granola and Notewell first. Granola pairs a Mac menu-bar audio recorder with human bullet notes, whereas Notewell captures system audio locally while preserving multi-call search and action-item sync. Otter.ai and Fireflies remain bot-first unless configured through desktop extensions.';
+        answerText = notewellIncluded
+          ? 'For discreet client and board conversations on Mac, Granola and Notewell both record system audio directly without putting a bot in the participant list. Granola feels like an Apple Notes pad enhanced after the call, while Notewell adds shared folders and CRM follow-ups; Otter.ai and Fireflies typically join as visible meeting bots.'
+          : 'If you cannot have a virtual attendee bot appear in board or client Zoom rosters on Mac, Granola is the standout choice: it captures system audio locally and enhances your rough notes after the call. Fireflies and Otter.ai rely on visible meeting bots by default, though browser-capture workarounds exist.';
+      } else {
+        checkedPages = notewellIncluded
+          ? [
+              { url: 'granola.ai', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/product/transcription', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'zapier.com/blog/best-ai-meeting-assistant', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+              { url: 'fireflies.ai/blog/record-zoom-without-bot', badge: 'Cited in answer', kind: 'cited' }
+            ]
+          : [
+              { url: 'granola.ai', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'zapier.com/blog/best-ai-meeting-assistant', badge: 'Citation gap \u2014 lists Granola & Fireflies, omits Notewell', kind: 'warn' },
+              { url: 'fireflies.ai/blog/record-zoom-without-bot', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/product/transcription', badge: 'Opened, skipped \u2014 Google Meet local capture unclear', kind: 'gap' }
+            ];
+
+        answerText = notewellIncluded
+          ? 'Both Granola and Notewell capture Zoom and Google Meet audio locally from your computer rather than inviting a recording bot. Granola focuses on solo executive notes, Notewell supports searchable team workspaces, and bot-centric tools like Fireflies and Otter.ai require extension workarounds to stay invisible.'
+          : 'To capture Zoom and Google Meet audio locally without an attendee bot, Granola leads current roundups thanks to native device-audio capture. Fireflies and Otter.ai offer Chrome extension capture for Google Meet, though their standard team workflows still center on an automated meeting bot.';
+      }
     } else {
-      returnedUrls = [
-        { url: 'https://www.g2.com/categories/ai-meeting-assistants?tab=pricing', status: 'cited', gap: true },
-        { url: 'https://fireflies.ai/pricing', status: 'cited', gap: false },
-        { url: 'https://otter.ai/security', status: 'cited', gap: false },
-        { url: 'https://notewell.io/pricing', status: notewellOmitted ? 'uncited' : 'cited', gap: true },
-        { url: 'https://www.granola.ai/security', status: 'uncited', gap: false }
-      ];
-      citedUrls = notewellOmitted
-        ? [
-            { url: 'https://fireflies.ai/pricing', note: 'Public Business tier table ($19-$29/seat)', isGap: false },
-            { url: 'https://www.g2.com/categories/ai-meeting-assistants?tab=pricing', note: 'Citation gap · G2 & /pricing lacked parseable Notewell SOC 2 table', isGap: true },
-            { url: 'https://otter.ai/security', note: 'Competitor SOC 2 Type II page cited', isGap: false }
-          ]
-        : [
-            { url: 'https://www.g2.com/categories/ai-meeting-assistants?tab=pricing', note: 'Citation gap · G2 pricing matrix omits Notewell SSO tier', isGap: true },
-            { url: 'https://fireflies.ai/pricing', note: 'Business tier comparison cited', isGap: false },
-            { url: 'https://notewell.io/pricing', note: 'Cited for SOC 2 Type II + zero-retention tier ($22/seat)', isGap: false }
-          ];
+      if (phrasingIdx === 0) {
+        checkedPages = notewellIncluded
+          ? [
+              { url: 'fireflies.ai/pricing', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/security', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'g2.com/categories/ai-meeting-assistants?tab=pricing', badge: 'Citation gap \u2014 pricing grid omits Notewell', kind: 'warn' },
+              { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 SOC 2 missing from plan table', kind: 'gap' }
+            ]
+          : [
+              { url: 'g2.com/categories/ai-meeting-assistants?tab=pricing', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+              { url: 'fireflies.ai/pricing', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'otter.ai/security', badge: 'Cited in answer', kind: 'cited' },
+              { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 no SOC 2 pricing table', kind: 'gap' }
+            ];
 
-      answerText = notewellOmitted
-        ? 'Among SOC 2 Type II meeting assistants with published pricing under $30/seat, Fireflies Business ($19/user/month billed annually) and Otter.ai Business ($20/user/month) publish explicit retention controls, while SAML SSO typically requires stepping up to Enterprise quotes. Granola documents SOC 2 compliance for teams but keeps admin retention controls lighter.'
-        : 'For a 40-person startup needing SOC 2 Type II, zero-training retention, and SSO under $30/seat, Notewell ($22/seat all-in with SAML SSO) and Fireflies Business ($19/seat, SSO on Enterprise) are the main contenders. Otter.ai documents SOC 2 Type II on Business plans, while Granola suits smaller teams with fewer centralized retention rules.';
+        answerText = notewellIncluded
+          ? 'For a 40-person B2B startup needing SOC 2 Type II compliance without enterprise pricing, Fireflies Business ($19/seat), Otter.ai Business ($20/seat), and Notewell ($22/seat) are the clearest options. Notewell and Fireflies both document SOC 2 Type II attestation, while Granola suits smaller teams with lighter admin controls.'
+          : 'Among SOC 2 Type II meeting assistants with published startup pricing on G2, Otter.ai Business ($20/seat) and Fireflies Business ($19/seat) are the easiest to verify upfront, while Granola documents SOC 2 compliance for teams needing lighter centralized admin governance.';
+      } else if (phrasingIdx === 1) {
+        checkedPages = [
+          { url: 'fireflies.ai/pricing', badge: 'Cited in answer', kind: 'cited' },
+          { url: 'otter.ai/security', badge: 'Cited in answer', kind: 'cited' },
+          { url: 'g2.com/categories/ai-meeting-assistants?tab=pricing', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+          { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 no data-retention row', kind: 'gap' }
+        ];
+        answerText = 'When comparing AI meeting assistant pricing for strict zero-data-retention teams, Fireflies Business ($19/seat) and Otter.ai Business ($20/seat) publish explicit zero-training policies alongside team rates. Granola documents no-training defaults on paid plans, whereas custom auto-deletion windows usually require Enterprise quotes.';
+      } else {
+        checkedPages = [
+          { url: 'fireflies.ai/pricing', badge: 'Cited in answer', kind: 'cited' },
+          { url: 'otter.ai/security', badge: 'Cited in answer', kind: 'cited' },
+          { url: 'g2.com/categories/ai-meeting-assistants?tab=pricing', badge: 'Citation gap \u2014 lists rivals, omits Notewell', kind: 'warn' },
+          { url: 'notewell.io/pricing', badge: 'Opened, skipped \u2014 $22 SSO tier buried in prose', kind: 'gap' }
+        ];
+        answerText = 'Among AI meeting assistants under $30/seat, Fireflies Business ($19/seat) and Otter.ai Business ($20/seat) include admin retention rules, though SAML SSO typically requires stepping up to Enterprise quotes. Granola stays under $30/seat for teams but offers fewer centralized SSO and retention controls.';
+      }
     }
 
     var mentionedInSnippet = answerText.indexOf(selectedBrand) !== -1;
-    var stanceClass = 'stance-neutral';
-    var stanceLabel = 'Stance: Neutral · Hedged shortlist (rule H2)';
+    var statusBadgeClass = 'stance-neutral';
+    var statusBadgeText = selectedBrand + ' \u00b7 Mentioned with caveats';
+    var takeawayTone = 'is-warn';
 
     if (!mentionedInSnippet) {
-      stanceClass = 'stance-absent';
-      stanceLabel = 'Stance: Absent · Citation gap (' + brandHitsInPhrasing + '/' + denomInPhrasing + ' in phrasing)';
-    } else if (brandHitsInPhrasing >= 4) {
-      stanceClass = 'stance-positive';
-      stanceLabel = 'Stance: Positive · Recommended pick (rule R1)';
-    } else if (brandHitsInPhrasing >= 3) {
-      stanceClass = 'stance-positive';
-      stanceLabel = 'Stance: Positive · Ranked shortlist (rule R2)';
+      statusBadgeClass = 'stance-absent';
+      statusBadgeText = selectedBrand + ' \u00b7 Left out here';
+      takeawayTone = 'is-gap';
+    } else if (brandHits / den >= 0.6) {
+      statusBadgeClass = 'stance-positive';
+      statusBadgeText = selectedBrand + ' \u00b7 Recommended here';
+      takeawayTone = 'is-pos';
     }
 
+    var takeawayHtml = buildTakeawayHtml(
+      selectedBrand,
+      intentId,
+      phrasingIdx,
+      surfaceObj.label,
+      mentionedInSnippet,
+      brandHits,
+      den,
+      brandPhrasingPct,
+      overallPct
+    );
+
     return {
-      receiptId: '#rcpt-' + rcptNum,
-      stanceClass: stanceClass,
-      stanceLabel: stanceLabel,
-      returnedUrls: returnedUrls,
-      citedUrls: citedUrls,
-      answerText: answerText
+      statusBadgeClass: statusBadgeClass,
+      statusBadgeText: statusBadgeText,
+      checkedPages: checkedPages,
+      answerText: answerText,
+      takeawayTone: takeawayTone,
+      takeawayTitle: selectedBrand === 'Notewell'
+        ? 'Plain-English Takeaway \u00b7 Your Product (Notewell)'
+        : 'Plain-English Takeaway \u00b7 Competitor (' + selectedBrand + ')',
+      takeawayHtml: takeawayHtml
     };
+  }
+
+  function buildTakeawayHtml(brand, intentId, phrasingIdx, surfaceLabel, mentioned, hits, den, pPct, overallPct) {
+    var runStat = hits + '/' + den + ' runs (' + pPct + '%)';
+
+    if (brand === 'Notewell') {
+      if (!mentioned) {
+        if (intentId === 'soc2' && phrasingIdx === 2) {
+          return (
+            '<strong>Why Notewell vanished here (' + esc(runStat) + '):</strong> Notewell actually includes SAML SSO + custom retention at $22/seat, ' +
+            'but AI opened <code class="mono">notewell.io/pricing</code> and G2, found no parseable pricing table, and recommended Fireflies &amp; Otter.ai instead. ' +
+            '<strong>Click the blue button below</strong> to see how fixing <code class="mono">/pricing</code> turned this into +86% demo leads.'
+          );
+        }
+        if (intentId === 'soc2') {
+          return (
+            '<strong>Why Notewell vanished here (' + esc(runStat) + '):</strong> AI opened <code class="mono">notewell.io/pricing</code> and G2, ' +
+            'found no parseable SOC 2 or data-retention row on your pricing page, and recommended Fireflies &amp; Otter.ai instead.'
+          );
+        }
+        if (intentId === 'revops') {
+          return (
+            '<strong>Why Notewell vanished here (' + esc(runStat) + '):</strong> As soon as the buyer dropped technical keywords like &ldquo;MEDDIC&rdquo;, ' +
+            esc(surfaceLabel) + ' leaned on G2 and <code class="mono">notewell.io/pricing</code>&mdash;finding no 25-seat CRM comparison table on your site and omitting you.'
+          );
+        }
+        return (
+          '<strong>Why Notewell vanished here (' + esc(runStat) + '):</strong> Zapier&rsquo;s top roundup omits Notewell, and <code class="mono">notewell.io/product/transcription</code> ' +
+          'buried Mac &amp; Google Meet local capture details below the fold, leaving Granola to win solo.'
+        );
+      }
+
+      if (intentId === 'revops') {
+        return (
+          '<strong>Why Notewell won a spot here (' + esc(runStat) + '):</strong> Because the buyer explicitly asked for HubSpot/Salesforce field sync, AI pulled your webhook docs (<code class="mono">notewell.io/docs/crm-webhooks</code>). ' +
+          '<strong>Hidden risk:</strong> AI still skipped <code class="mono">notewell.io/pricing</code> and G2 omits you&mdash;try clicking <strong>Wording 3</strong> above to see Notewell vanish.'
+        );
+      }
+      if (intentId === 'botfree') {
+        return (
+          '<strong>Why Notewell co-led here (' + esc(runStat) + '):</strong> <code class="mono">notewell.io/product/transcription</code> clearly explains local system-audio recording without a visible Zoom bot. ' +
+          '<strong>Next fix:</strong> Get added to Zapier&rsquo;s meeting-assistant roundup so you stop losing runs when buyers reword the question.'
+        );
+      }
+      return (
+        '<strong>Why Notewell made this shortlist (' + esc(runStat) + '):</strong> AI found SOC 2 Type II on <code class="mono">notewell.io/security</code>, ' +
+        'but still skipped <code class="mono">notewell.io/pricing</code>&mdash;click <strong>Wording 2</strong> or <strong>Wording 3</strong> above to see how fast you disappear on retention &amp; SSO pricing questions.'
+      );
+    }
+
+    if (brand === 'Fireflies') {
+      if (intentId === 'botfree') {
+        return (
+          '<strong>Why Fireflies only got a caveated mention (' + esc(runStat) + ', ' + overallPct + '% overall):</strong> ' +
+          'Its SEO blog post (<code class="mono">fireflies.ai/blog/record-zoom-without-bot</code>) ranked in web search, so AI mentioned it&mdash;but warned buyers that Fireflies joins calls as a visible bot by default.'
+        );
+      }
+      if (intentId === 'soc2') {
+        return (
+          '<strong>Why Fireflies won (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+          '<code class="mono">fireflies.ai/pricing</code> publishes a clean $19/seat HTML comparison table with SOC 2 &amp; retention rows that AI can verify directly, backed by top G2 placement.'
+        );
+      }
+      return (
+        '<strong>Why Fireflies won (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        'Dedicated <code class="mono">fireflies.ai/integrations/hubspot</code> page + clear $19/seat Business pricing table + listed at the top of G2&rsquo;s category matrix.'
+      );
+    }
+
+    if (brand === 'Otter.ai') {
+      if (intentId === 'botfree') {
+        return (
+          '<strong>Why Otter.ai trailed here (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+          'Buyers specifically asked to avoid a visible Zoom bot; AI only mentions Otter.ai to note that its standard workflow relies on an automated participant bot.'
+        );
+      }
+      if (intentId === 'soc2') {
+        return (
+          '<strong>Why Otter.ai ranked high (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+          'Pairs transparent $20/seat Business pricing with a dedicated <code class="mono">otter.ai/security</code> SOC 2 page and top G2 pricing-grid visibility.'
+        );
+      }
+      return (
+        '<strong>Why Otter.ai stayed visible (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        'Strong G2 category authority plus a dedicated <code class="mono">otter.ai/sales</code> page kept Otter.ai in the top two whenever buyers asked broad CRM questions.'
+      );
+    }
+
+    /* Granola */
+    if (intentId === 'botfree') {
+      return (
+        '<strong>Why Granola dominated (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        'Owns the &ldquo;no meeting bot&rdquo; positioning clearly on <code class="mono">granola.ai</code> AND holds the #1 spot in third-party roundups like Zapier.'
+      );
+    }
+    if (intentId === 'soc2') {
+      return (
+        '<strong>Why Granola got a secondary mention (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+        'Publishes sub-$30 team pricing and SOC 2 compliance, so AI includes it&mdash;while noting lighter centralized SSO and retention controls for 40-seat teams.'
+      );
+    }
+    return (
+      '<strong>Why Granola placed as a niche alternative (' + esc(overallPct + '% overall · ' + runStat + ' here') + '):</strong> ' +
+      'Positioned as a lightweight notepad synced via Zapier rather than native HubSpot/Salesforce field mapping&mdash;though its simple pricing helped on Wording 3.'
+    );
   }
 
   function highlightBrands(rawText, primaryBrand) {
@@ -393,13 +592,13 @@
   }
 
   var state = {
-    viewMode: 'hearsay',   // 'hearsay' | 'tracker'
-    subTab: 'benchmark',   // 'benchmark' | 'outcomes'
+    viewMode: 'hearsay',     // 'hearsay' | 'tracker'
+    subTab: 'benchmark',     // 'benchmark' | 'outcomes'
     surface: 'openai',
     intent: 'revops',
     phrasingIdx: 0,
     brand: 'Notewell',
-    outcomeReceipt: 'after' // 'before' | 'after'
+    outcomeReceipt: 'after'  // 'before' | 'after'
   };
 
   /* 1. Theme Toggle */
@@ -434,7 +633,7 @@
       try {
         localStorage.setItem('hearsay-theme', nextTheme);
       } catch (_err) {
-        /* localStorage may be disabled in restricted browsing modes */
+        /* localStorage may be unavailable in restricted contexts */
       }
       syncThemeUi();
     });
@@ -488,8 +687,8 @@
 
         function markCopied() {
           btn.setAttribute('data-copied', 'true');
-          btn.textContent = 'Copied';
-          if (liveRegion) liveRegion.textContent = 'Copied snippet to clipboard.';
+          btn.textContent = 'Copied!';
+          if (liveRegion) liveRegion.textContent = 'Copied to clipboard.';
           setTimeout(function () {
             btn.removeAttribute('data-copied');
             btn.textContent = originalLabel;
@@ -524,7 +723,7 @@
     document.body.removeChild(ta);
   }
 
-  /* 3. Sandbox & "$399/mo Tracker Lie" Mode Rendering */
+  /* 3. Sandbox & "$399/mo Fake Score" Comparison Rendering */
   function renderSandbox() {
     var hearsayBtn = document.getElementById('mode-hearsay-btn');
     var trackerBtn = document.getElementById('mode-tracker-btn');
@@ -550,17 +749,10 @@
     var subOutcomesBtn = document.getElementById('subtab-outcomes');
     var benchmarkPane = document.getElementById('sandbox-benchmark-pane');
     var outcomesPane = document.getElementById('sandbox-outcomes-pane');
-    var seriesMeta = document.getElementById('series-meta-display');
 
     var surfaceObj = SURFACES.find(function (s) { return s.id === state.surface; }) || SURFACES[0];
     var intentObj = INTENTS.find(function (i) { return i.id === state.intent; }) || INTENTS[0];
     var cell = COUNTS[surfaceObj.id][intentObj.id];
-
-    if (seriesMeta) {
-      seriesMeta.textContent = state.subTab === 'benchmark'
-        ? surfaceObj.series
-        : 'intervention: intv-09 · notewell.io/pricing vs /product/transcription (14d UTC windows)';
-    }
 
     if (state.subTab === 'benchmark') {
       subBenchmarkBtn.setAttribute('aria-selected', 'true');
@@ -576,21 +768,21 @@
       return;
     }
 
-    /* Update surface pills */
+    /* Update AI assistant pills */
     var surfacePills = Array.prototype.slice.call(document.querySelectorAll('[data-surface]'));
     surfacePills.forEach(function (pill) {
       var active = pill.getAttribute('data-surface') === surfaceObj.id;
       pill.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
 
-    /* Update intent pills */
+    /* Update buyer topic pills */
     var intentPills = Array.prototype.slice.call(document.querySelectorAll('[data-intent]'));
     intentPills.forEach(function (pill) {
       var active = pill.getAttribute('data-intent') === intentObj.id;
       pill.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
 
-    /* Compute brand metrics with real Wilson 95% intervals */
+    /* Compute brand metrics with exact Wilson 95% intervals */
     var totalPanelMentions = 0;
     var computedRows = BRANDS.map(function (b) {
       var arr = cell.hits[b.id];
@@ -612,7 +804,10 @@
 
     var coverageEl = document.getElementById('rates-coverage-note');
     if (coverageEl) {
-      coverageEl.textContent = surfaceObj.coverageNote;
+      coverageEl.innerHTML =
+        '<span class="legend-dot" aria-hidden="true"></span>Dot = observed rate · ' +
+        '<span class="legend-bar" aria-hidden="true"></span>Bar = 95% likely range ' +
+        esc(surfaceObj.legendSuffix);
     }
 
     var rowsContainer = document.getElementById('brand-rows-container');
@@ -627,23 +822,26 @@
 
         return (
           '<button type="button" class="brand-row tabular" role="option" data-brand-row="' + esc(row.brand.id) + '" aria-selected="' + (selected ? 'true' : 'false') + '">' +
-            '<span class="brand-ident">' +
-              '<span class="brand-name-line">' +
-                esc(row.brand.name) +
-                (row.brand.isSelf ? ' <span class="self-tag">Tracked</span>' : '') +
+            '<span class="brand-row-top">' +
+              '<span class="brand-ident">' +
+                '<span class="brand-name">' + esc(row.brand.name) + '</span>' +
+                (row.brand.isSelf ? '<span class="self-tag">Your Product</span>' : '') +
+                '<span class="brand-domain">' + esc(row.brand.domain) + '</span>' +
               '</span>' +
-              '<span class="brand-domain">' + esc(row.brand.domain) + '</span>' +
+              '<span class="brand-meta-right">' +
+                '<span class="share-pill">' + pct(sov) + ' share</span>' +
+                '<span class="inspect-cue' + (selected ? ' is-active' : '') + '">' + (selected ? 'Inspecting &rarr;' : 'Inspect &rarr;') + '</span>' +
+              '</span>' +
             '</span>' +
             '<span class="ci-cell">' +
               '<span class="ci-track" aria-hidden="true">' +
                 '<span class="ci-band" style="left:' + loPct + '%;width:' + bandWidth + '%"></span>' +
                 '<span class="ci-point" style="left:' + pPct + '%"></span>' +
               '</span>' +
-              '<span class="ci-stat"><strong>' + pPct + '%</strong> [' + loPct + '%–' + hiPct + '%] · ' + surfaceObj.comparable + '/' + surfaceObj.attempted + ' comparable</span>' +
-            '</span>' +
-            '<span class="sov-cell">' +
-              '<strong>' + pct(sov) + '</strong>' +
-              '<span>SOV (' + row.mentioned + '/' + totalPanelMentions + ')</span>' +
+              '<span class="ci-stat-row">' +
+                '<span class="ci-main"><strong>' + pPct + '%</strong> (' + row.mentioned + ' of ' + surfaceObj.comparable + ' answers)</span>' +
+                '<span class="ci-range">Likely ' + loPct + '%–' + hiPct + '%</span>' +
+              '</span>' +
             '</span>' +
           '</button>'
         );
@@ -661,48 +859,61 @@
       });
     }
 
+    /* Dynamic plain-English wording swing callout per selected brand */
     var varianceEl = document.getElementById('variance-callout-box');
+    var selectedArr = cell.hits[state.brand];
+    var phrasingPercents = selectedArr.map(function (hits, idx) {
+      return Math.round((hits / surfaceObj.perPhrasingN[idx]) * 100);
+    });
+    var maxPhrasingPct = Math.max.apply(null, phrasingPercents);
+    var minPhrasingPct = Math.min.apply(null, phrasingPercents);
+
     if (varianceEl) {
-      var selectedArr = cell.hits[state.brand];
       var spreads = computeIntentSpreads(selectedArr, surfaceObj.perPhrasingN);
-      var pRates = selectedArr.map(function (hits, idx) {
-        return Math.round((hits / surfaceObj.perPhrasingN[idx]) * 100) + '%';
-      });
-      varianceEl.innerHTML =
-        '<strong>Phrasing sensitivity (' + esc(state.brand) + '):</strong> ' +
-        pRates.join(' / ') + ' across 3 wordings of this intent · ' +
-        '<strong>' + spreads.phrasingSpreadPts + ' pt phrasing spread</strong> vs. ' +
-        '<strong>' + spreads.rerunSpreadPts + ' pt same-prompt rerun spread</strong>.';
+      if (maxPhrasingPct > minPhrasingPct) {
+        varianceEl.innerHTML =
+          '<strong>Wording matters:</strong> Rewording this same buyer question swings <strong>' + esc(state.brand) + '</strong> from ' +
+          '<strong>' + maxPhrasingPct + '% down to ' + minPhrasingPct + '%</strong> ' +
+          '(&plusmn;' + spreads.phrasingSpreadPts + ' pts from wording alone)&mdash;click the 3 wordings on the right to see why.';
+      } else {
+        varianceEl.innerHTML =
+          '<strong>Steady across wordings:</strong> <strong>' + esc(state.brand) + '</strong> holds steady at ' +
+          '<strong>' + maxPhrasingPct + '%</strong> across all 3 buyer wordings ' +
+          '(&plusmn;0 pts wording swing)&mdash;click the 3 wordings on the right to compare.';
+      }
     }
 
-    /* Render Receipt Inspector */
-    var receipt = getReceipt(surfaceObj.id, intentObj.id, state.phrasingIdx, state.brand);
-    var rcptIdEl = document.getElementById('inspector-receipt-id');
-    var stanceEl = document.getElementById('inspector-stance-badge');
+    /* Render Right Card: Exact AI Receipt & Why You Won or Lost */
+    var receipt = getReceipt(surfaceObj, intentObj, state.phrasingIdx, state.brand);
+    var statusBadgeEl = document.getElementById('inspector-status-badge');
     var phrasingTabsEl = document.getElementById('inspector-phrasing-tabs');
     var promptTextEl = document.getElementById('inspector-prompt-text');
     var queryTextEl = document.getElementById('inspector-query-text');
-    var returnedListEl = document.getElementById('inspector-returned-urls');
-    var citedListEl = document.getElementById('inspector-cited-urls');
+    var pagesListEl = document.getElementById('inspector-pages-list');
     var answerEl = document.getElementById('inspector-answer-text');
+    var takeawayStepEl = document.getElementById('inspector-takeaway-step');
+    var takeawayTitleEl = document.getElementById('inspector-takeaway-title');
+    var takeawayTextEl = document.getElementById('inspector-takeaway-text');
 
-    if (rcptIdEl) {
-      rcptIdEl.textContent = receipt.receiptId + ' · ' + surfaceObj.label + ' · target=' + state.brand;
-    }
-    if (stanceEl) {
-      stanceEl.className = 'stance-badge ' + receipt.stanceClass;
-      stanceEl.textContent = receipt.stanceLabel;
+    if (statusBadgeEl) {
+      statusBadgeEl.className = 'stance-badge ' + receipt.statusBadgeClass;
+      statusBadgeEl.textContent = receipt.statusBadgeText;
     }
 
     if (phrasingTabsEl) {
-      var brandArr = cell.hits[state.brand];
       phrasingTabsEl.innerHTML = intentObj.phrasings.map(function (_txt, idx) {
-        var hits = brandArr[idx];
+        var hits = selectedArr[idx];
         var den = surfaceObj.perPhrasingN[idx];
+        var thisPct = Math.round((hits / den) * 100);
         var active = idx === state.phrasingIdx;
+        var isDropped = (maxPhrasingPct - thisPct >= 30) && thisPct <= 25;
+        var statLabel = hits + '/' + den + ' runs (' + thisPct + '%' + (isDropped ? ' \u2014 Dropped!' : '') + ')';
+
         return (
           '<button type="button" class="phrasing-btn tabular" data-phrasing-idx="' + idx + '" aria-pressed="' + (active ? 'true' : 'false') + '">' +
-            'Phrasing ' + (idx + 1) + ' · ' + hits + '/' + den + ' (' + Math.round((hits / den) * 100) + '%)' +
+            '<span class="phrasing-kicker">Wording ' + (idx + 1) + '</span>' +
+            '<span class="phrasing-preview">' + esc(intentObj.previews[idx]) + '</span>' +
+            '<span class="phrasing-stat' + (isDropped ? ' is-dropped' : '') + '">' + esc(statLabel) + '</span>' +
           '</button>'
         );
       }).join('');
@@ -716,34 +927,22 @@
     }
 
     if (promptTextEl) {
-      promptTextEl.textContent = '"' + intentObj.phrasings[state.phrasingIdx] + '"';
+      promptTextEl.textContent = '\u201c' + intentObj.phrasings[state.phrasingIdx] + '\u201d';
     }
 
     if (queryTextEl) {
-      var q = intentObj.queries[surfaceObj.id][state.phrasingIdx];
-      queryTextEl.textContent = q;
+      queryTextEl.textContent = intentObj.queries[surfaceObj.id][state.phrasingIdx];
     }
 
-    if (returnedListEl) {
-      returnedListEl.innerHTML = receipt.returnedUrls.map(function (u) {
-        var tagHtml = u.status === 'cited'
-          ? '<span class="url-tag tag-cited">Cited</span>'
-          : (u.gap
-              ? '<span class="url-tag tag-gap">Retrieved · Not cited</span>'
-              : '<span class="url-tag tag-uncited">Not cited</span>');
-        return '<li class="url-item">' + esc(u.url.replace(/^https?:\/\//, '')) + tagHtml + '</li>';
-      }).join('');
-    }
-
-    if (citedListEl) {
-      citedListEl.innerHTML = receipt.citedUrls.map(function (c) {
-        var gapBadge = c.isGap
-          ? '<span class="url-tag tag-gap">Citation Gap</span>'
-          : '<span class="url-tag tag-cited">Final citation</span>';
+    if (pagesListEl) {
+      pagesListEl.innerHTML = receipt.checkedPages.map(function (item) {
+        var tagCls = item.kind === 'cited'
+          ? 'tag-cited'
+          : (item.kind === 'warn' ? 'tag-warn' : 'tag-gap');
         return (
-          '<li class="url-item">' +
-            '<div>' + esc(c.url.replace(/^https?:\/\//, '')) + gapBadge + '</div>' +
-            '<div style="color:var(--muted);font-size:10.5px;margin-top:2px;">' + esc(c.note) + '</div>' +
+          '<li class="checked-page-item">' +
+            '<span class="checked-page-url">' + esc(item.url) + '</span>' +
+            '<span class="url-tag ' + tagCls + '">' + esc(item.badge) + '</span>' +
           '</li>'
         );
       }).join('');
@@ -751,6 +950,16 @@
 
     if (answerEl) {
       answerEl.innerHTML = highlightBrands(receipt.answerText, state.brand);
+    }
+
+    if (takeawayStepEl) {
+      takeawayStepEl.className = 'flow-step takeaway-step ' + receipt.takeawayTone;
+    }
+    if (takeawayTitleEl) {
+      takeawayTitleEl.textContent = receipt.takeawayTitle;
+    }
+    if (takeawayTextEl) {
+      takeawayTextEl.innerHTML = receipt.takeawayHtml;
     }
   }
 
@@ -766,9 +975,9 @@
 
     if (isAfter) {
       box.innerHTML =
-        '<div class="receipt-meta-bar" style="margin-bottom:8px;">' +
-          '<span class="receipt-id">#rcpt-4891 · 2026-09-28T07:02Z · Post-change review snapshot</span>' +
-          '<span class="stance-badge stance-positive">Cited: notewell.io/pricing#soc2-comparison</span>' +
+        '<div class="outcome-rcpt-head">' +
+          '<span class="outcome-rcpt-date">Sep 28 · After fixing /pricing</span>' +
+          '<span class="stance-badge stance-positive">Cited notewell.io/pricing directly</span>' +
         '</div>' +
         '<p class="answer-snippet">' +
           highlightBrands(
@@ -778,9 +987,9 @@
         '</p>';
     } else {
       box.innerHTML =
-        '<div class="receipt-meta-bar" style="margin-bottom:8px;">' +
-          '<span class="receipt-id">#rcpt-3912 · 2026-09-10T07:04Z · Frozen baseline snapshot</span>' +
-          '<span class="stance-badge stance-absent">Citation gap · notewell.io/pricing retrieved (#4), not cited</span>' +
+        '<div class="outcome-rcpt-head">' +
+          '<span class="outcome-rcpt-date">Sep 10 · Before fixing /pricing</span>' +
+          '<span class="stance-badge stance-absent">Opened notewell.io/pricing — skipped (no table)</span>' +
         '</div>' +
         '<p class="answer-snippet">' +
           highlightBrands(
@@ -788,6 +997,15 @@
             'Notewell'
           ) +
         '</p>';
+    }
+  }
+
+  function scrollSandboxIntoViewIfNeeded() {
+    var shell = document.getElementById('sandbox-shell');
+    if (!shell || !shell.getBoundingClientRect) return;
+    var rect = shell.getBoundingClientRect();
+    if (rect.top < 70 || rect.top > window.innerHeight * 0.65) {
+      shell.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }
 
@@ -812,29 +1030,43 @@
       backToHearsayBtn.addEventListener('click', function () {
         state.viewMode = 'hearsay';
         renderSandbox();
+        scrollSandboxIntoViewIfNeeded();
       });
     }
 
     var subBenchmarkBtn = document.getElementById('subtab-benchmark');
     var subOutcomesBtn = document.getElementById('subtab-outcomes');
     var bridgeOutcomesBtn = document.getElementById('bridge-to-outcomes');
+    var backToStep1Btn = document.getElementById('back-to-step1');
 
     if (subBenchmarkBtn) {
       subBenchmarkBtn.addEventListener('click', function () {
+        state.viewMode = 'hearsay';
         state.subTab = 'benchmark';
         renderSandbox();
       });
     }
     if (subOutcomesBtn) {
       subOutcomesBtn.addEventListener('click', function () {
+        state.viewMode = 'hearsay';
         state.subTab = 'outcomes';
         renderSandbox();
       });
     }
     if (bridgeOutcomesBtn) {
       bridgeOutcomesBtn.addEventListener('click', function () {
+        state.viewMode = 'hearsay';
         state.subTab = 'outcomes';
         renderSandbox();
+        scrollSandboxIntoViewIfNeeded();
+      });
+    }
+    if (backToStep1Btn) {
+      backToStep1Btn.addEventListener('click', function () {
+        state.viewMode = 'hearsay';
+        state.subTab = 'benchmark';
+        renderSandbox();
+        scrollSandboxIntoViewIfNeeded();
       });
     }
 
