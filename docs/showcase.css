@@ -41,13 +41,13 @@ body {
   text-align: center;
 }
 .monument-title {
-  font-size: 100px;
+  font-size: clamp(48px, 10vw, 100px);
   font-weight: 800;
   letter-spacing: -0.045em;
   margin-bottom: 12px;
 }
 .monument-subline {
-  font-size: 24px;
+  font-size: clamp(18px, 4vw, 24px);
   color: var(--ink-muted);
 }
 
@@ -205,9 +205,14 @@ body {
 }
 .install-doors {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 20px;
   margin-top: 24px;
+}
+@media (min-width: 600px) {
+  .install-doors {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 .install-door {
   padding: 24px;
