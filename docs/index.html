@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="no-js">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="description" content="Find out why AI recommends your competitors instead of you. Open-source AI answer receipts, buyer phrasing analysis, and before-and-after lead tracking.">
     <meta name="theme-color" content="#ffffff">
     <meta property="og:title" content="Hearsay — Find out why AI recommends your competitors instead of you">
@@ -12,331 +12,428 @@
     <meta property="og:image" content="https://melonwer.github.io/hearsay/social-preview.png">
     <meta name="twitter:card" content="summary_large_image">
     <title>Hearsay — Find out why AI recommends your competitors instead of you</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23111315'/%3E%3Ctext x='16' y='23.5' text-anchor='middle' font-family='-apple-system,BlinkMacSystemFont,sans-serif' font-size='22' font-weight='700' fill='%23ffffff'%3Eh%3C/text%3E%3C/svg%3E">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d1d1f'/%3E%3Ctext x='16' y='23.5' text-anchor='middle' font-family='-apple-system,BlinkMacSystemFont,sans-serif' font-size='22' font-weight='700' fill='%23ffffff'%3Eh%3C/text%3E%3C/svg%3E">
+
+    <!-- Motion gate: set before first paint so pinned scenes never flash their end state. -->
+    <script>
+      (function (root) {
+        var c = root.classList;
+        var PIN = '(min-width: 960px) and (min-height: 640px), (max-width: 959px) and (min-height: 740px)';
+        window.HEARSAY_PIN_QUERY = PIN;
+        c.remove('no-js');
+        c.add('js');
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          c.add('motion');
+          if (window.matchMedia(PIN).matches) c.add('pin');
+        }
+      })(document.documentElement);
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700;800&display=swap">
     <link rel="stylesheet" href="showcase.css">
+
+    <script src="vendor/gsap.min.js" defer></script>
+    <script src="vendor/ScrollTrigger.min.js" defer></script>
+    <script src="vendor/lenis.min.js" defer></script>
     <script src="showcase.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#dialogue-stage">Skip to interactive story</a>
+    <a class="skip-link" href="#install">Skip to install</a>
 
-    <main id="main-content">
-      <!-- Act I: Monumental White Opening -->
-      <header class="act-opening" aria-labelledby="hero-title">
-        <div class="opening-inner">
-          <h1 id="hero-title" class="monument-title" aria-label="Hearsay"><!-- JS splits into .letter spans --></h1>
-          <p class="monument-subline">Find out why AI recommends your competitors instead of you.</p>
-          <div class="scroll-cue" aria-hidden="true"></div>
+    <div class="backdrop" aria-hidden="true"></div>
+
+    <nav class="local-nav" aria-label="Hearsay">
+      <div class="local-nav-inner">
+        <a class="nav-brand" href="#top">Hearsay</a>
+        <div class="nav-actions">
+          <a class="nav-link" href="https://github.com/melonwer/hearsay">GitHub</a>
+          <a class="nav-cta" href="#install">Get Hearsay</a>
         </div>
-      </header>
+      </div>
+    </nav>
 
-      <!-- Act II: The Conversation You Never See -->
-      <section id="dialogue-stage" class="act-dialogue" aria-labelledby="hook-heading">
-        <div class="stage-column">
-          <div class="chat-window reveal-on-scroll" role="region" aria-label="Live buyer question in an AI assistant">
-            <div class="chat-topbar">
-              <div class="segmented-pill" role="tablist" aria-label="Select AI assistant">
-                <button type="button" class="pill-btn is-active" role="tab" aria-selected="true" data-model="chatgpt">ChatGPT</button>
-                <button type="button" class="pill-btn" role="tab" aria-selected="false" data-model="claude">Claude</button>
-                <button type="button" class="pill-btn" role="tab" aria-selected="false" data-model="gemini">Gemini</button>
-              </div>
-              <span class="scenario-note">Your company: <strong>Notewell</strong></span>
+    <main id="top">
+
+      <!-- ===================================================
+           Scene 1 — The conversation you never see (pinned)
+           =================================================== -->
+      <section id="conversation" class="scene scene-conversation" data-theme="light" aria-labelledby="hero-title">
+        <div class="scene-pin conversation-pin">
+
+          <header class="hero-layer">
+            <div class="hero-echoes" aria-hidden="true">
+              <span class="echo" style="--x:-36vw;--y:-26vh">Otter or Fireflies for 40 seats?</span>
+              <span class="echo" style="--x:30vw;--y:-30vh">best SOC 2 meeting recorder</span>
+              <span class="echo" style="--x:-30vw;--y:24vh">meeting notes tool with SAML SSO</span>
+              <span class="echo" style="--x:34vw;--y:20vh">cheapest SOC 2 transcription?</span>
+              <span class="echo echo-far" style="--x:-8vw;--y:-36vh">zero-retention meeting recorder?</span>
+              <span class="echo echo-far" style="--x:6vw;--y:34vh">what should our team buy</span>
+            </div>
+            <div class="hero-copy">
+              <h1 id="hero-title" class="hero-title">Hearsay</h1>
+              <p class="hero-subline">Find out why AI recommends your competitors instead of you.</p>
+            </div>
+            <div class="scroll-cue" aria-hidden="true"><span></span></div>
+          </header>
+
+          <div class="stage-layer">
+            <div class="caption-stack">
+              <p class="caption" data-caption="0">Every day, buyers ask AI what to buy.</p>
+              <p class="caption" data-caption="1">It searches the web, opens a few pages, and writes a shortlist.</p>
+              <p class="caption" data-caption="2">Notewell has SOC 2 Type II, SAML SSO, and $22 seat pricing. Buyers never saw its name.</p>
+              <h2 class="caption caption-hook" data-caption="3">Your product checks every box. Why did AI leave&nbsp;you&nbsp;out?</h2>
             </div>
 
-            <div class="chat-body">
-              <div class="turn-buyer">
-                <div class="buyer-bubble buyer-bubble-anim">
-                  <p>Which SOC 2 meeting recorder should our 40-person team buy?</p>
+            <div class="device chat-window" id="story-chat" role="region" aria-label="A buyer question in an AI assistant">
+              <div class="chat-topbar">
+                <div class="segmented" role="tablist" aria-label="Choose an AI assistant">
+                  <span class="segmented-thumb" aria-hidden="true"></span>
+                  <button type="button" class="seg-btn is-active" role="tab" aria-selected="true" data-model="chatgpt">ChatGPT</button>
+                  <button type="button" class="seg-btn" role="tab" aria-selected="false" data-model="claude">Claude</button>
+                  <button type="button" class="seg-btn" role="tab" aria-selected="false" data-model="gemini">Gemini</button>
                 </div>
+                <span class="scenario-note">Example company: <strong>Notewell</strong></span>
               </div>
 
-              <div class="turn-assistant" id="live-assistant-turn" aria-live="polite">
-                <div class="assistant-meta">
-                  <span class="assistant-dot" data-model-dot="chatgpt" aria-hidden="true"></span>
-                  <strong class="assistant-name" id="chat-model-label">ChatGPT</strong>
-                  <span class="assistant-sub" id="chat-search-status">Searched the web</span>
+              <div class="chat-body">
+                <div class="turn-buyer">
+                  <p class="buyer-bubble"><span class="type-target" data-type>Which SOC 2 meeting recorder should our 40-person team buy?</span><span class="caret" aria-hidden="true"></span></p>
                 </div>
 
-                <div class="assistant-prose" id="chat-answer-prose">
-                  <p>For a 40-person team needing SOC 2 Type II compliance without enterprise lock-in, two options stand out:</p>
-                  <ul class="rec-list stagger-children">
-                    <li>
-                      <strong>Fireflies.ai</strong> — Business tier ($19/seat/mo) includes SOC 2 Type II, unlimited storage, and automatic CRM logging.
-                    </li>
-                    <li>
-                      <strong>Otter.ai</strong> — Business plan ($20/seat/mo) includes SOC 2 Type II compliance, shared team spaces, and admin controls.
-                    </li>
-                  </ul>
-                </div>
-
-                <div class="assistant-citations">
-                  <span class="cite-chip">Source: <code>g2.com/categories/ai-meeting-assistants</code></span>
-                  <span class="omitted-chip omitted-chip-anim">Notewell (your company) was left out</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="chat-footer-bar">
-              <a class="chat-inspect-jump" href="#forensic-reveal" id="jump-to-receipt">
-                Show what happened behind this answer
-              </a>
-            </div>
-          </div>
-
-          <div class="editorial-beat reveal-on-scroll">
-            <h2 id="hook-heading" class="beat-heading">Your product checks every box.<br>Why did AI leave you out?</h2>
-            <p class="beat-subline">Notewell has SOC 2 Type II, SAML SSO, and $22/seat pricing. Yet buyers never saw your name.</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Act III: Forensic Reveal -->
-      <section id="forensic-reveal" class="act-forensic" aria-labelledby="forensic-heading">
-        <div class="stage-column">
-          <div class="forensic-header-bar">
-            <button
-              type="button"
-              id="forensic-toggle-btn"
-              class="forensic-toggle-btn"
-              aria-expanded="true"
-              aria-controls="forensic-drawer"
-            >
-              <span id="forensic-toggle-label">Show what happened behind this answer</span>
-              <svg class="chevron-icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
-                <path d="M5 7.5L10 12.5L15 7.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-
-            <div class="segmented-pill segmented-pill-compact" role="group" aria-label="Sync AI assistant receipt">
-              <button type="button" class="pill-btn is-active" data-model="chatgpt">ChatGPT</button>
-              <button type="button" class="pill-btn" data-model="claude">Claude</button>
-              <button type="button" class="pill-btn" data-model="gemini">Gemini</button>
-            </div>
-          </div>
-
-          <div class="forensic-drawer-wrap" id="forensic-drawer-wrap">
-            <div id="forensic-drawer" class="forensic-drawer">
-              <h3 id="forensic-heading" class="visually-hidden">Verbatim search and citation receipt</h3>
-
-              <div class="receipt-ledger stagger-children" aria-live="polite">
-                <div class="ledger-row">
-                  <div class="ledger-key">Exact web search ran</div>
-                  <div class="ledger-val">
-                    <code class="query-pill" id="receipt-query">soc 2 type ii meeting recorder 40 person team pricing</code>
-                  </div>
-                </div>
-
-                <div class="ledger-row">
-                  <div class="ledger-key">
-                    <span>Page opened and skipped</span>
-                    <span class="status-tag status-skipped" id="receipt-self-tag">Skipped</span>
-                  </div>
-                  <div class="ledger-val">
-                    <div class="url-line"><code id="receipt-self-url">notewell.io/pricing</code> <span class="domain-owner">(your site)</span></div>
-                    <p class="ledger-note" id="receipt-self-reason">Opened and read, then discarded because SOC 2 appeared only in paragraph text with no parseable tier table.</p>
-                  </div>
-                </div>
-
-                <div class="ledger-row">
-                  <div class="ledger-key">
-                    <span>Third-party page cited</span>
-                    <span class="status-tag status-cited">Cited</span>
-                  </div>
-                  <div class="ledger-val">
-                    <div class="url-line"><code id="receipt-rival-url">g2.com/categories/ai-meeting-assistants</code></div>
-                    <p class="ledger-note" id="receipt-rival-reason">Comparison grid listed Fireflies and Otter.ai side by side while omitting Notewell.</p>
-                  </div>
-                </div>
-              </div>
-
-              <!-- 3 Buyer Wordings Interactive Strip -->
-              <div class="phrasing-block">
-                <div class="phrasing-header">
-                  <h4 class="phrasing-title">Three ways buyers ask the same question</h4>
-                  <p class="phrasing-caption">Tap any phrasing to see Notewell swing from <strong>4 in 5 answers</strong> down to <strong>0 in 5</strong>.</p>
-                </div>
-
-                <div class="phrasing-list" role="radiogroup" aria-label="Three ways buyers word the question">
-                  <button
-                    type="button"
-                    class="phrasing-option"
-                    role="radio"
-                    aria-checked="false"
-                    data-phrasing="0"
-                  >
-                    <span class="phrasing-quote">"Meeting recorder with SOC 2 Type II and HubSpot webhook sync?"</span>
-                    <span class="phrasing-meter">
-                      <span class="dots" id="dots-0" aria-hidden="true">
-                        <i class="on" style="--dot-index:0"></i><i class="on" style="--dot-index:1"></i><i class="on" style="--dot-index:2"></i><i class="on" style="--dot-index:3"></i><i style="--dot-index:4"></i>
-                      </span>
-                      <strong class="phrasing-rate" id="rate-0">4 in 5 answers</strong>
+                <div class="turn-assistant" aria-live="polite">
+                  <div class="assistant-meta">
+                    <span class="assistant-avatar" data-bind-dot aria-hidden="true"></span>
+                    <strong class="assistant-name" data-bind="label">ChatGPT</strong>
+                    <span class="assistant-status">
+                      <span class="status-searching" aria-hidden="true">Searching the web</span>
+                      <span class="status-done">Searched the web</span>
                     </span>
-                  </button>
+                  </div>
 
-                  <button
-                    type="button"
-                    class="phrasing-option"
-                    role="radio"
-                    aria-checked="false"
-                    data-phrasing="1"
-                  >
-                    <span class="phrasing-quote">"SOC 2 meeting transcription tools with strict zero-retention pricing?"</span>
-                    <span class="phrasing-meter">
-                      <span class="dots" id="dots-1" aria-hidden="true">
-                        <i class="on" style="--dot-index:0"></i><i style="--dot-index:1"></i><i style="--dot-index:2"></i><i style="--dot-index:3"></i><i style="--dot-index:4"></i>
-                      </span>
-                      <strong class="phrasing-rate" id="rate-1">1 in 5 answers</strong>
-                    </span>
-                  </button>
+                  <p class="answer-intro"><span class="swap" data-bind="intro">For a 40-person team needing SOC 2 Type II compliance without enterprise lock-in, two options stand out:</span></p>
 
-                  <button
-                    type="button"
-                    class="phrasing-option is-selected"
-                    role="radio"
-                    aria-checked="true"
-                    data-phrasing="2"
-                  >
-                    <span class="phrasing-quote">"Which SOC 2 meeting recorder should our 40-person team buy?"</span>
-                    <span class="phrasing-meter">
-                      <span class="dots" id="dots-2" aria-hidden="true">
-                        <i style="--dot-index:0"></i><i style="--dot-index:1"></i><i style="--dot-index:2"></i><i style="--dot-index:3"></i><i style="--dot-index:4"></i>
-                      </span>
-                      <strong class="phrasing-rate" id="rate-2">0 in 5 answers</strong>
-                    </span>
-                  </button>
+                  <ol class="rec-list">
+                    <li class="rec"><span class="swap"><strong data-bind="rec0name">Fireflies.ai</strong> <span data-bind="rec0desc">Business tier ($19/seat/mo) includes SOC 2 Type II, unlimited storage, and automatic CRM logging.</span></span></li>
+                    <li class="rec"><span class="swap"><strong data-bind="rec1name">Otter.ai</strong> <span data-bind="rec1desc">Business plan ($20/seat/mo) includes SOC 2 Type II compliance, shared team spaces, and admin controls.</span></span></li>
+                  </ol>
+
+                  <div class="citations">
+                    <span class="chip chip-source">Source: <code data-bind="source">g2.com/categories/ai-meeting-assistants</code></span>
+                    <span class="chip chip-omitted">Notewell (your company) was left out</span>
+                  </div>
                 </div>
+              </div>
+
+              <div class="chat-footer">
+                <a class="inspect-link" href="#receipt">Show what happened behind this answer</a>
               </div>
             </div>
           </div>
 
-          <!-- 1-Glance Contrast Strip -->
-          <div class="contrast-strip reveal-on-scroll" role="note" aria-label="Comparison with paid score trackers">
-            <p class="contrast-headline">
-              $399/mo trackers give you a made-up "74/100 score." Hearsay gives you the receipt.
-            </p>
-            <p class="contrast-sub">
-              A blended vanity score hides which prompt failed and which page AI skipped. A receipt tells you what to ship on Monday.
-            </p>
-          </div>
         </div>
       </section>
 
-      <!-- Act IV: Ship the Fix. Watch the Answer Change. -->
-      <section id="fix-stage" class="act-fix" aria-labelledby="fix-heading">
-        <div class="stage-column">
-          <div class="section-intro reveal-on-scroll">
-            <h2 id="fix-heading" class="beat-heading">Ship the fix. Watch the answer change.</h2>
-            <p class="beat-subline">Notewell added a clean HTML pricing and SOC 2 table to <code>notewell.io/pricing</code>. Flip the switch on the exact same question.</p>
-          </div>
+      <!-- ===================================================
+           Scene 2 — The receipt (dark, pinned)
+           =================================================== -->
+      <section id="receipt" class="scene scene-receipt" data-theme="dark" aria-labelledby="receipt-heading">
+        <div class="scene-intro">
+          <h2 id="receipt-heading" class="display" data-split>Hearsay shows you what happened behind the answer.</h2>
+        </div>
 
-          <div class="chat-window fix-chat-window reveal-on-scroll" role="region" aria-label="Before and after page fix comparison">
-            <div class="chat-topbar">
-              <div class="segmented-pill fix-toggle-pill" role="group" aria-label="Toggle before or after page fix">
-                <button type="button" class="pill-btn" id="btn-before-fix" aria-pressed="false" data-fix="before">Before fix</button>
-                <button type="button" class="pill-btn is-active" id="btn-after-fix" aria-pressed="true" data-fix="after">After fix</button>
-              </div>
-              <span class="fix-state-caption" id="fix-state-caption">SOC 2 tier table live on <code>notewell.io/pricing</code></span>
+        <div class="scene-pin receipt-pin">
+          <div class="receipt-grid">
+            <div class="receipt-steps-wrap">
+            <span class="rstep-rail" aria-hidden="true"><span></span></span>
+            <ol class="receipt-steps">
+              <li class="rstep is-active" data-rstep="0">
+                <span class="rstep-num" aria-hidden="true">1</span>
+                <div class="rstep-text">
+                  <h3>The exact search it ran</h3>
+                  <p>Word for word, the query the assistant sent to the web.</p>
+                </div>
+              </li>
+              <li class="rstep" data-rstep="1">
+                <span class="rstep-num" aria-hidden="true">2</span>
+                <div class="rstep-text">
+                  <h3>The page it opened, then threw away</h3>
+                  <p>Your pricing page was read and discarded. Hearsay keeps the reason.</p>
+                </div>
+              </li>
+              <li class="rstep" data-rstep="2">
+                <span class="rstep-num" aria-hidden="true">3</span>
+                <div class="rstep-text">
+                  <h3>The page it trusted instead</h3>
+                  <p>The third-party page that made the shortlist, and what it said.</p>
+                </div>
+              </li>
+            </ol>
             </div>
 
-            <div class="chat-body">
-              <div class="turn-buyer">
-                <div class="buyer-bubble">
-                  <p>Which SOC 2 meeting recorder should our 40-person team buy?</p>
+            <div class="printer">
+              <div class="printer-head">
+                <div class="segmented segmented-dark" role="group" aria-label="Show the receipt for another AI assistant">
+                  <span class="segmented-thumb" aria-hidden="true"></span>
+                  <button type="button" class="seg-btn is-active" aria-pressed="true" data-model="chatgpt">ChatGPT</button>
+                  <button type="button" class="seg-btn" aria-pressed="false" data-model="claude">Claude</button>
+                  <button type="button" class="seg-btn" aria-pressed="false" data-model="gemini">Gemini</button>
                 </div>
+                <span class="printer-slot" aria-hidden="true"></span>
               </div>
 
-              <div class="turn-assistant" id="fix-assistant-turn" aria-live="polite">
-                <div class="assistant-meta">
-                  <span class="assistant-dot" data-model-dot="chatgpt" aria-hidden="true"></span>
-                  <strong class="assistant-name">ChatGPT</strong>
-                  <span class="assistant-sub" id="fix-search-sub">Cited notewell.io/pricing directly</span>
-                </div>
+              <div class="paper-window">
+                <article class="paper" aria-label="Answer receipt" aria-live="polite">
+                  <header class="paper-head">
+                    <span class="paper-brand">Hearsay</span>
+                    <span class="paper-sub">Answer receipt</span>
+                    <span class="paper-meta"><span data-bind="label">ChatGPT</span><span>18 Nov 2026</span></span>
+                  </header>
 
-                <div class="assistant-prose" id="fix-answer-prose">
-                  <p>For a 40-person team needing self-serve SOC 2 Type II compliance and predictable seat pricing, three tools fit well:</p>
-                  <ul class="rec-list stagger-children">
-                    <li class="rec-highlight rec-highlight-anim">
-                      <strong>Notewell</strong> — Team plan ($22/seat/mo) includes SOC 2 Type II, SAML SSO, and zero-retention controls for 40-seat teams.
-                    </li>
-                    <li>
-                      <strong>Fireflies.ai</strong> — Business tier ($19/seat/mo) includes SOC 2 Type II and CRM call logging.
-                    </li>
-                    <li>
-                      <strong>Otter.ai</strong> — Business plan ($20/seat/mo) offers SOC 2 Type II and shared workspaces.
-                    </li>
-                  </ul>
-                </div>
+                  <div class="paper-row paper-asked">
+                    <span class="paper-key">Buyer asked</span>
+                    <p>Which SOC 2 meeting recorder should our 40-person team buy?</p>
+                  </div>
 
-                <div class="assistant-citations" id="fix-citations">
-                  <span class="cite-chip cite-chip-cobalt">Cited: <code>notewell.io/pricing</code></span>
-                  <span class="cite-chip">Cited: <code>g2.com/categories/ai-meeting-assistants</code></span>
-                </div>
-              </div>
-            </div>
+                  <div class="paper-row" data-line="search">
+                    <span class="paper-key"><b>1</b> Exact web search ran</span>
+                    <p class="paper-query">“<span data-bind="query" data-type-query>soc 2 type ii meeting recorder 40 person team pricing</span>”</p>
+                  </div>
 
-            <div class="outcome-strip stagger-children">
-              <div class="outcome-item">
-                <strong class="outcome-stat" data-count-to="33" data-count-from="6">6% to 33%</strong>
-                <span class="outcome-desc">AI citation rate on buyer pricing prompts after adding the table</span>
-              </div>
-              <div class="outcome-item">
-                <strong class="outcome-stat">+10 net demo leads</strong>
-                <span class="outcome-desc">26 leads on the fixed page (+12) vs +2 normal drift on an untouched control page</span>
+                  <div class="paper-row" data-line="skipped">
+                    <span class="paper-key"><b>2</b> Page opened and skipped</span>
+                    <p class="paper-url">notewell.io/pricing <em>(your site)</em></p>
+                    <p class="paper-note" data-bind="skip">Opened and read, then discarded because SOC 2 appeared only in paragraph text with no parseable tier table.</p>
+                    <span class="stamp" aria-label="Status: skipped">Skipped</span>
+                  </div>
+
+                  <div class="paper-row" data-line="cited">
+                    <span class="paper-key"><b>3</b> Third-party page cited</span>
+                    <p class="paper-url"><mark class="marker">g2.com/categories/ai-meeting-assistants</mark></p>
+                    <p class="paper-note" data-bind="cited">Comparison grid listed Fireflies and Otter.ai side by side while omitting Notewell.</p>
+                  </div>
+
+                  <footer class="paper-foot">
+                    <div class="paper-total"><span>Result</span><strong>Notewell left out</strong></div>
+                    <span class="paper-saved">Saved to SQLite on your computer</span>
+                    <span class="barcode" aria-hidden="true"></span>
+                  </footer>
+                </article>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <!-- Act V: The 51-Second Film & Frictionless Install -->
-      <section id="film-and-install" class="act-closing" aria-labelledby="install-heading">
-        <div class="stage-column">
-          <div class="film-block reveal-on-scroll">
-            <div class="section-intro">
-              <h2 class="beat-heading">See the whole story in 51 seconds.</h2>
+      <!-- ===================================================
+           Scene 3 — Three wordings (dark, interactive)
+           =================================================== -->
+      <section id="wording" class="scene scene-wording" data-theme="dark" aria-labelledby="wording-heading">
+        <div class="column">
+          <h2 id="wording-heading" class="display" data-split>Same buyer. Same need. Three ways to ask.</h2>
+          <p class="lede">The wording alone swings Notewell from 4 in 5 answers down to 0 in 5. Tap a wording to compare.</p>
+
+          <div class="wording-grid">
+            <div class="wording-list" role="radiogroup" aria-label="Three ways buyers word the same question">
+              <button type="button" class="wording" role="radio" aria-checked="false" data-phrasing="0" data-rate="4">
+                <span class="wording-quote">“Meeting recorder with SOC 2 Type II and HubSpot webhook sync?”</span>
+                <span class="wording-meter">
+                  <span class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+                  <span class="wording-rate">4 in 5 answers</span>
+                </span>
+              </button>
+              <button type="button" class="wording" role="radio" aria-checked="false" data-phrasing="1" data-rate="1">
+                <span class="wording-quote">“SOC 2 meeting transcription tools with strict zero-retention pricing?”</span>
+                <span class="wording-meter">
+                  <span class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+                  <span class="wording-rate">1 in 5 answers</span>
+                </span>
+              </button>
+              <button type="button" class="wording is-selected" role="radio" aria-checked="true" data-phrasing="2" data-rate="0">
+                <span class="wording-quote">“Which SOC 2 meeting recorder should our 40-person team buy?”</span>
+                <span class="wording-meter">
+                  <span class="dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+                  <span class="wording-rate">0 in 5 answers</span>
+                </span>
+              </button>
             </div>
 
-            <figure class="cinema-frame">
-              <video
-                controls
-                playsinline
-                preload="none"
-                poster="film-poster.webp"
-                aria-label="Hearsay 51-second launch film: The conversation you never see"
-              >
-                <source src="hearsay-launch.mp4" type="video/mp4">
-                <a href="hearsay-launch.mp4">Download the 51-second Hearsay launch film (MP4)</a>
-              </video>
+            <div class="readout" aria-live="polite">
+              <span class="readout-num" id="readout-num">0</span>
+              <span class="readout-label">in 5 answers<br>include Notewell</span>
+              <span class="readout-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           Scene 4 — Score vs. receipt (dark, scrubbed text)
+           =================================================== -->
+      <section id="contrast" class="scene scene-contrast" data-theme="dark" aria-label="Comparison with paid score trackers">
+        <div class="column">
+          <p class="scrub-text" data-scrub-text>$399-a-month trackers give you a made-up <s class="strike">74/100</s> score. Hearsay gives you the receipt. A blended score hides which question failed and which page AI skipped. A receipt tells you what to ship on Monday.</p>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           Scene 5 — Ship the fix (light)
+           =================================================== -->
+      <section id="fix" class="scene scene-fix" data-theme="mist" aria-labelledby="fix-heading">
+        <div class="column column-wide">
+          <div class="scene-heading">
+            <h2 id="fix-heading" class="display" data-split>Ship the fix. Watch the answer change.</h2>
+            <p class="lede">Notewell added a plain HTML pricing table with SOC 2 to <code>notewell.io/pricing</code>. Same question, same assistant.</p>
+          </div>
+
+          <div class="fix-grid">
+            <figure class="page-mock" id="page-mock">
+              <div class="browser-bar">
+                <span class="browser-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="browser-url">notewell.io/pricing</span>
+              </div>
+              <div class="page-body">
+                <p class="page-title">Team plan</p>
+                <span class="page-line" aria-hidden="true"></span>
+                <span class="page-line page-line-short" aria-hidden="true"></span>
+                <table class="spec-table">
+                  <caption class="visually-hidden">Notewell Team plan, as a plain HTML table</caption>
+                  <tbody>
+                    <tr><th scope="row">Seat price</th><td>$22 / seat / month</td></tr>
+                    <tr><th scope="row">SOC 2 Type II</th><td>Included</td></tr>
+                    <tr><th scope="row">SAML SSO</th><td>Included</td></tr>
+                    <tr><th scope="row">Zero-retention controls</th><td>Included</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <figcaption>The fix: one table in plain HTML that AI can read.</figcaption>
             </figure>
+
+            <div class="device chat-window fix-chat" id="fix-chat" data-state="before" role="region" aria-label="Before and after the page fix">
+              <div class="chat-topbar">
+                <div class="segmented" role="group" aria-label="Show the answer before or after the fix">
+                  <span class="segmented-thumb" aria-hidden="true"></span>
+                  <button type="button" class="seg-btn is-active" aria-pressed="true" data-fix="before">Before fix</button>
+                  <button type="button" class="seg-btn" aria-pressed="false" data-fix="after">After fix</button>
+                </div>
+                <span class="fix-caption">
+                  <span class="fix-caption-before">SOC 2 only in paragraph text</span>
+                  <span class="fix-caption-after">SOC 2 table live</span>
+                </span>
+              </div>
+
+              <div class="chat-body">
+                <div class="turn-buyer">
+                  <p class="buyer-bubble">Which SOC 2 meeting recorder should our 40-person team buy?</p>
+                </div>
+
+                <div class="turn-assistant" aria-live="polite">
+                  <div class="assistant-meta">
+                    <span class="assistant-avatar" data-bind-dot aria-hidden="true"></span>
+                    <strong class="assistant-name" data-bind="label">ChatGPT</strong>
+                    <span class="assistant-status">
+                      <span class="fix-sub-before">Searched the web</span>
+                      <span class="fix-sub-after">Cited notewell.io/pricing directly</span>
+                    </span>
+                  </div>
+
+                  <div class="fix-intro">
+                    <p class="fix-intro-before">For a 40-person team needing SOC 2 Type II compliance without enterprise lock-in, two options stand out:</p>
+                    <p class="fix-intro-after">For a 40-person team needing self-serve SOC 2 Type II compliance and predictable seat pricing, three tools fit well:</p>
+                  </div>
+
+                  <ol class="rec-list">
+                    <li class="rec rec-notewell">
+                      <div class="rec-notewell-inner">
+                        <span class="swap"><strong>Notewell</strong> Team plan ($22/seat/mo) includes SOC 2 Type II, SAML SSO, and zero-retention controls for 40-seat teams.</span>
+                      </div>
+                    </li>
+                    <li class="rec"><span class="swap"><strong>Fireflies.ai</strong> Business tier ($19/seat/mo) includes SOC 2 Type II and CRM call logging.</span></li>
+                    <li class="rec"><span class="swap"><strong>Otter.ai</strong> Business plan ($20/seat/mo) offers SOC 2 Type II and shared workspaces.</span></li>
+                  </ol>
+
+                  <div class="citations">
+                    <span class="chip chip-cited chip-new">Cited: <code>notewell.io/pricing</code></span>
+                    <span class="chip chip-source"><span class="fix-src-before">Source:</span><span class="fix-src-after">Cited:</span> <code>g2.com/categories/ai-meeting-assistants</code></span>
+                    <span class="chip chip-omitted chip-old">Notewell (your company) was left out</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div class="install-block reveal-on-scroll">
-            <div class="section-intro">
-              <h2 id="install-heading" class="beat-heading">Run Hearsay on your own product.</h2>
-              <p class="beat-subline">MIT licensed, $0, and zero dependencies. Everything stays in SQLite on your computer.</p>
+          <div class="outcomes">
+            <div class="outcome">
+              <p class="outcome-stat"><span data-count-from="6" data-count-to="6">6</span>% to <span data-count-from="6" data-count-to="33">33</span>%</p>
+              <p class="outcome-desc">AI citation rate on buyer pricing prompts after adding the table</p>
+            </div>
+            <div class="outcome">
+              <p class="outcome-stat">+<span data-count-from="0" data-count-to="10">10</span> net demo leads</p>
+              <p class="outcome-desc">26 leads on the fixed page (+12) vs +2 normal drift on an untouched control page</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           Scene 6 — Film
+           =================================================== -->
+      <section id="film" class="scene scene-film" data-theme="light" aria-labelledby="film-heading">
+        <div class="column">
+          <h2 id="film-heading" class="display display-center" data-split>See the whole story in 51&nbsp;seconds.</h2>
+        </div>
+        <div class="film-stage">
+          <figure class="cinema-frame" id="cinema-frame">
+            <video
+              controls
+              playsinline
+              preload="none"
+              poster="film-poster.webp"
+              aria-label="Hearsay 51-second launch film: The conversation you never see"
+            >
+              <source src="hearsay-launch.mp4" type="video/mp4">
+              <a href="hearsay-launch.mp4">Download the 51-second Hearsay launch film (MP4)</a>
+            </video>
+            <button type="button" class="play-btn" aria-label="Play the 51-second film">
+              <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor"/></svg>
+              <span>Play film</span>
+            </button>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ===================================================
+           Scene 7 — Install
+           =================================================== -->
+      <section id="install" class="scene scene-install" data-theme="light" aria-labelledby="install-heading">
+        <div class="column">
+          <div class="scene-heading scene-heading-center">
+            <h2 id="install-heading" class="display display-center" data-split>Run Hearsay on your own product.</h2>
+            <p class="lede">MIT licensed, $0, and zero dependencies. Everything stays in SQLite on your computer.</p>
+          </div>
+
+          <div class="doors">
+            <div class="door">
+              <h3 class="door-title">Paste one sentence into Claude Code or Codex</h3>
+              <p class="door-desc">Your coding agent sets up Hearsay, drafts buyer questions, and asks before running.</p>
+              <div class="copy-box">
+                <code id="agent-prompt-text">Install Hearsay from https://github.com/melonwer/hearsay and study my product, check available providers, and show me the buyer questions and cost plan before running.</code>
+              </div>
+              <button type="button" class="action-btn action-btn-primary" data-copy-target="agent-prompt-text" data-default-label="Copy prompt">
+                <span class="action-label">Copy prompt</span>
+              </button>
             </div>
 
-            <div class="install-doors stagger-children">
-              <div class="install-door">
-                <h3 class="door-title">Paste one sentence into Claude Code or Codex</h3>
-                <p class="door-desc">Your coding agent sets up Hearsay, drafts buyer questions, and asks before running.</p>
-                <div class="copy-box">
-                  <code id="agent-prompt-text">Install Hearsay from https://github.com/melonwer/hearsay and study my product, check available providers, and show me the buyer questions and cost plan before running.</code>
-                </div>
-                <button type="button" class="action-btn action-btn-primary" data-copy-target="agent-prompt-text" data-default-label="Copy prompt">
-                  Copy prompt
-                </button>
+            <div class="door">
+              <h3 class="door-title">Run locally in your browser</h3>
+              <p class="door-desc">Requires only Node.js 22.13 or newer. Explore the live Notewell workspace in one click.</p>
+              <div class="copy-box copy-box-cmd">
+                <code id="local-cmd-text">git clone https://github.com/melonwer/hearsay &amp;&amp; cd hearsay &amp;&amp; node server.js</code>
               </div>
-
-              <div class="install-door">
-                <h3 class="door-title">Run locally in your browser</h3>
-                <p class="door-desc">Requires only Node.js 22.13 or newer. Explore the live Notewell workspace in one click.</p>
-                <div class="copy-box copy-box-cmd">
-                  <code id="local-cmd-text">git clone https://github.com/melonwer/hearsay &amp;&amp; cd hearsay &amp;&amp; node server.js</code>
-                </div>
-                <button type="button" class="action-btn action-btn-secondary" data-copy-target="local-cmd-text" data-default-label="Copy command">
-                  Copy command
-                </button>
-              </div>
+              <button type="button" class="action-btn action-btn-secondary" data-copy-target="local-cmd-text" data-default-label="Copy command">
+                <span class="action-label">Copy command</span>
+              </button>
             </div>
           </div>
         </div>
@@ -344,7 +441,7 @@
     </main>
 
     <footer class="site-footer">
-      <div class="stage-column footer-inner">
+      <div class="column footer-inner">
         <span class="footer-brand">Hearsay</span>
         <div class="footer-links">
           <a href="https://github.com/melonwer/hearsay">GitHub repository</a>
