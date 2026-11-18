@@ -3,7 +3,7 @@
   "measurement": {
     "policy": "required",
     "answerStatus": "complete",
-    "at": "2026-10-02T21:47:50.985Z",
+    "at": "2026-11-18T00:30:08.831Z",
     "answer": "Notewell is one option for searching past meeting notes. Review its product documentation to check whether it fits your team's needs.",
     "actions": [
       {
@@ -15,7 +15,7 @@
         ],
         "queryMetadata": "available",
         "providerType": "fictional_demo",
-        "observedAt": "2026-10-02T21:47:50.985Z"
+        "observedAt": "2026-11-18T00:30:08.831Z"
       }
     ],
     "sources": [

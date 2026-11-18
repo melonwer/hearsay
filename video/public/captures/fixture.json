@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "runId": "launch-film-demo",
-  "createdAt": "2026-10-02T21:47:50.985Z",
+  "createdAt": "2026-11-18T00:30:08.831Z",
   "mode": "research_audit",
   "app": {
     "id": "notewell-film-demo",
@@ -50,7 +50,7 @@
     {
       "id": "demo-page",
       "type": "fetched_page",
-      "timestamp": "2026-10-02T21:47:50.985Z",
+      "timestamp": "2026-11-18T00:30:08.831Z",
       "origin": "host_research",
       "capture": "host_reported",
       "sampleId": null,

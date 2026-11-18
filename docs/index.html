@@ -23,15 +23,16 @@
       <!-- Act I: Monumental White Opening -->
       <header class="act-opening" aria-labelledby="hero-title">
         <div class="opening-inner">
-          <h1 id="hero-title" class="monument-title">Hearsay</h1>
+          <h1 id="hero-title" class="monument-title" aria-label="Hearsay"><!-- JS splits into .letter spans --></h1>
           <p class="monument-subline">Find out why AI recommends your competitors instead of you.</p>
+          <div class="scroll-cue" aria-hidden="true"></div>
         </div>
       </header>
 
-      <!-- Act II: The Conversation You Never See (Peeks into Act I below the fold line) -->
+      <!-- Act II: The Conversation You Never See -->
       <section id="dialogue-stage" class="act-dialogue" aria-labelledby="hook-heading">
         <div class="stage-column">
-          <div class="chat-window" role="region" aria-label="Live buyer question in an AI assistant">
+          <div class="chat-window reveal-on-scroll" role="region" aria-label="Live buyer question in an AI assistant">
             <div class="chat-topbar">
               <div class="segmented-pill" role="tablist" aria-label="Select AI assistant">
                 <button type="button" class="pill-btn is-active" role="tab" aria-selected="true" data-model="chatgpt">ChatGPT</button>
@@ -43,7 +44,7 @@
 
             <div class="chat-body">
               <div class="turn-buyer">
-                <div class="buyer-bubble">
+                <div class="buyer-bubble buyer-bubble-anim">
                   <p>Which SOC 2 meeting recorder should our 40-person team buy?</p>
                 </div>
               </div>
@@ -57,7 +58,7 @@
 
                 <div class="assistant-prose" id="chat-answer-prose">
                   <p>For a 40-person team needing SOC 2 Type II compliance without enterprise lock-in, two options stand out:</p>
-                  <ul class="rec-list">
+                  <ul class="rec-list stagger-children">
                     <li>
                       <strong>Fireflies.ai</strong> — Business tier ($19/seat/mo) includes SOC 2 Type II, unlimited storage, and automatic CRM logging.
                     </li>
@@ -69,7 +70,7 @@
 
                 <div class="assistant-citations">
                   <span class="cite-chip">Source: <code>g2.com/categories/ai-meeting-assistants</code></span>
-                  <span class="omitted-chip">Notewell (your company) was left out</span>
+                  <span class="omitted-chip omitted-chip-anim">Notewell (your company) was left out</span>
                 </div>
               </div>
             </div>
@@ -81,7 +82,7 @@
             </div>
           </div>
 
-          <div class="editorial-beat">
+          <div class="editorial-beat reveal-on-scroll">
             <h2 id="hook-heading" class="beat-heading">Your product checks every box.<br>Why did AI leave you out?</h2>
             <p class="beat-subline">Notewell has SOC 2 Type II, SAML SSO, and $22/seat pricing. Yet buyers never saw your name.</p>
           </div>
@@ -112,103 +113,105 @@
             </div>
           </div>
 
-          <div id="forensic-drawer" class="forensic-drawer">
-            <h3 id="forensic-heading" class="visually-hidden">Verbatim search and citation receipt</h3>
+          <div class="forensic-drawer-wrap" id="forensic-drawer-wrap">
+            <div id="forensic-drawer" class="forensic-drawer">
+              <h3 id="forensic-heading" class="visually-hidden">Verbatim search and citation receipt</h3>
 
-            <div class="receipt-ledger" aria-live="polite">
-              <div class="ledger-row">
-                <div class="ledger-key">Exact web search ran</div>
-                <div class="ledger-val">
-                  <code class="query-pill" id="receipt-query">soc 2 type ii meeting recorder 40 person team pricing</code>
+              <div class="receipt-ledger stagger-children" aria-live="polite">
+                <div class="ledger-row">
+                  <div class="ledger-key">Exact web search ran</div>
+                  <div class="ledger-val">
+                    <code class="query-pill" id="receipt-query">soc 2 type ii meeting recorder 40 person team pricing</code>
+                  </div>
+                </div>
+
+                <div class="ledger-row">
+                  <div class="ledger-key">
+                    <span>Page opened and skipped</span>
+                    <span class="status-tag status-skipped" id="receipt-self-tag">Skipped</span>
+                  </div>
+                  <div class="ledger-val">
+                    <div class="url-line"><code id="receipt-self-url">notewell.io/pricing</code> <span class="domain-owner">(your site)</span></div>
+                    <p class="ledger-note" id="receipt-self-reason">Opened and read, then discarded because SOC 2 appeared only in paragraph text with no parseable tier table.</p>
+                  </div>
+                </div>
+
+                <div class="ledger-row">
+                  <div class="ledger-key">
+                    <span>Third-party page cited</span>
+                    <span class="status-tag status-cited">Cited</span>
+                  </div>
+                  <div class="ledger-val">
+                    <div class="url-line"><code id="receipt-rival-url">g2.com/categories/ai-meeting-assistants</code></div>
+                    <p class="ledger-note" id="receipt-rival-reason">Comparison grid listed Fireflies and Otter.ai side by side while omitting Notewell.</p>
+                  </div>
                 </div>
               </div>
 
-              <div class="ledger-row ledger-row-gap">
-                <div class="ledger-key">
-                  <span>Page opened and skipped</span>
-                  <span class="status-tag status-skipped" id="receipt-self-tag">Skipped</span>
+              <!-- 3 Buyer Wordings Interactive Strip -->
+              <div class="phrasing-block">
+                <div class="phrasing-header">
+                  <h4 class="phrasing-title">Three ways buyers ask the same question</h4>
+                  <p class="phrasing-caption">Tap any phrasing to see Notewell swing from <strong>4 in 5 answers</strong> down to <strong>0 in 5</strong>.</p>
                 </div>
-                <div class="ledger-val">
-                  <div class="url-line"><code id="receipt-self-url">notewell.io/pricing</code> <span class="domain-owner">(your site)</span></div>
-                  <p class="ledger-note" id="receipt-self-reason">Opened and read, then discarded because SOC 2 appeared only in paragraph text with no parseable tier table.</p>
-                </div>
-              </div>
 
-              <div class="ledger-row">
-                <div class="ledger-key">
-                  <span>Third-party page cited</span>
-                  <span class="status-tag status-cited">Cited</span>
-                </div>
-                <div class="ledger-val">
-                  <div class="url-line"><code id="receipt-rival-url">g2.com/categories/ai-meeting-assistants</code></div>
-                  <p class="ledger-note" id="receipt-rival-reason">Comparison grid listed Fireflies and Otter.ai side by side while omitting Notewell.</p>
-                </div>
-              </div>
-            </div>
-
-            <!-- 3 Buyer Wordings Interactive Strip -->
-            <div class="phrasing-block">
-              <div class="phrasing-header">
-                <h4 class="phrasing-title">Three ways buyers ask the same question</h4>
-                <p class="phrasing-caption">Tap any phrasing to see Notewell swing from <strong>4 in 5 answers</strong> down to <strong>0 in 5</strong>.</p>
-              </div>
-
-              <div class="phrasing-list" role="radiogroup" aria-label="Three ways buyers word the question">
-                <button
-                  type="button"
-                  class="phrasing-option"
-                  role="radio"
-                  aria-checked="false"
-                  data-phrasing="0"
-                >
-                  <span class="phrasing-quote">“Meeting recorder with SOC 2 Type II and HubSpot webhook sync?”</span>
-                  <span class="phrasing-meter">
-                    <span class="dots" id="dots-0" aria-hidden="true">
-                      <i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i>
+                <div class="phrasing-list" role="radiogroup" aria-label="Three ways buyers word the question">
+                  <button
+                    type="button"
+                    class="phrasing-option"
+                    role="radio"
+                    aria-checked="false"
+                    data-phrasing="0"
+                  >
+                    <span class="phrasing-quote">"Meeting recorder with SOC 2 Type II and HubSpot webhook sync?"</span>
+                    <span class="phrasing-meter">
+                      <span class="dots" id="dots-0" aria-hidden="true">
+                        <i class="on" style="--dot-index:0"></i><i class="on" style="--dot-index:1"></i><i class="on" style="--dot-index:2"></i><i class="on" style="--dot-index:3"></i><i style="--dot-index:4"></i>
+                      </span>
+                      <strong class="phrasing-rate" id="rate-0">4 in 5 answers</strong>
                     </span>
-                    <strong class="phrasing-rate" id="rate-0">4 in 5 answers</strong>
-                  </span>
-                </button>
+                  </button>
 
-                <button
-                  type="button"
-                  class="phrasing-option"
-                  role="radio"
-                  aria-checked="false"
-                  data-phrasing="1"
-                >
-                  <span class="phrasing-quote">“SOC 2 meeting transcription tools with strict zero-retention pricing?”</span>
-                  <span class="phrasing-meter">
-                    <span class="dots" id="dots-1" aria-hidden="true">
-                      <i class="on"></i><i></i><i></i><i></i><i></i>
+                  <button
+                    type="button"
+                    class="phrasing-option"
+                    role="radio"
+                    aria-checked="false"
+                    data-phrasing="1"
+                  >
+                    <span class="phrasing-quote">"SOC 2 meeting transcription tools with strict zero-retention pricing?"</span>
+                    <span class="phrasing-meter">
+                      <span class="dots" id="dots-1" aria-hidden="true">
+                        <i class="on" style="--dot-index:0"></i><i style="--dot-index:1"></i><i style="--dot-index:2"></i><i style="--dot-index:3"></i><i style="--dot-index:4"></i>
+                      </span>
+                      <strong class="phrasing-rate" id="rate-1">1 in 5 answers</strong>
                     </span>
-                    <strong class="phrasing-rate" id="rate-1">1 in 5 answers</strong>
-                  </span>
-                </button>
+                  </button>
 
-                <button
-                  type="button"
-                  class="phrasing-option is-selected"
-                  role="radio"
-                  aria-checked="true"
-                  data-phrasing="2"
-                >
-                  <span class="phrasing-quote">“Which SOC 2 meeting recorder should our 40-person team buy?”</span>
-                  <span class="phrasing-meter">
-                    <span class="dots" id="dots-2" aria-hidden="true">
-                      <i></i><i></i><i></i><i></i><i></i>
+                  <button
+                    type="button"
+                    class="phrasing-option is-selected"
+                    role="radio"
+                    aria-checked="true"
+                    data-phrasing="2"
+                  >
+                    <span class="phrasing-quote">"Which SOC 2 meeting recorder should our 40-person team buy?"</span>
+                    <span class="phrasing-meter">
+                      <span class="dots" id="dots-2" aria-hidden="true">
+                        <i style="--dot-index:0"></i><i style="--dot-index:1"></i><i style="--dot-index:2"></i><i style="--dot-index:3"></i><i style="--dot-index:4"></i>
+                      </span>
+                      <strong class="phrasing-rate" id="rate-2">0 in 5 answers</strong>
                     </span>
-                    <strong class="phrasing-rate" id="rate-2">0 in 5 answers</strong>
-                  </span>
-                </button>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
           <!-- 1-Glance Contrast Strip -->
-          <div class="contrast-strip" role="note" aria-label="Comparison with paid score trackers">
+          <div class="contrast-strip reveal-on-scroll" role="note" aria-label="Comparison with paid score trackers">
             <p class="contrast-headline">
-              $399/mo trackers give you a made-up “74/100 score.” Hearsay gives you the receipt.
+              $399/mo trackers give you a made-up "74/100 score." Hearsay gives you the receipt.
             </p>
             <p class="contrast-sub">
               A blended vanity score hides which prompt failed and which page AI skipped. A receipt tells you what to ship on Monday.
@@ -220,12 +223,12 @@
       <!-- Act IV: Ship the Fix. Watch the Answer Change. -->
       <section id="fix-stage" class="act-fix" aria-labelledby="fix-heading">
         <div class="stage-column">
-          <div class="section-intro">
+          <div class="section-intro reveal-on-scroll">
             <h2 id="fix-heading" class="beat-heading">Ship the fix. Watch the answer change.</h2>
             <p class="beat-subline">Notewell added a clean HTML pricing and SOC 2 table to <code>notewell.io/pricing</code>. Flip the switch on the exact same question.</p>
           </div>
 
-          <div class="chat-window fix-chat-window" role="region" aria-label="Before and after page fix comparison">
+          <div class="chat-window fix-chat-window reveal-on-scroll" role="region" aria-label="Before and after page fix comparison">
             <div class="chat-topbar">
               <div class="segmented-pill fix-toggle-pill" role="group" aria-label="Toggle before or after page fix">
                 <button type="button" class="pill-btn" id="btn-before-fix" aria-pressed="false" data-fix="before">Before fix</button>
@@ -250,8 +253,8 @@
 
                 <div class="assistant-prose" id="fix-answer-prose">
                   <p>For a 40-person team needing self-serve SOC 2 Type II compliance and predictable seat pricing, three tools fit well:</p>
-                  <ul class="rec-list">
-                    <li class="rec-highlight">
+                  <ul class="rec-list stagger-children">
+                    <li class="rec-highlight rec-highlight-anim">
                       <strong>Notewell</strong> — Team plan ($22/seat/mo) includes SOC 2 Type II, SAML SSO, and zero-retention controls for 40-seat teams.
                     </li>
                     <li>
@@ -270,9 +273,9 @@
               </div>
             </div>
 
-            <div class="outcome-strip">
+            <div class="outcome-strip stagger-children">
               <div class="outcome-item">
-                <strong class="outcome-stat">6% to 33%</strong>
+                <strong class="outcome-stat" data-count-to="33" data-count-from="6">6% to 33%</strong>
                 <span class="outcome-desc">AI citation rate on buyer pricing prompts after adding the table</span>
               </div>
               <div class="outcome-item">
@@ -287,7 +290,7 @@
       <!-- Act V: The 51-Second Film & Frictionless Install -->
       <section id="film-and-install" class="act-closing" aria-labelledby="install-heading">
         <div class="stage-column">
-          <div class="film-block">
+          <div class="film-block reveal-on-scroll">
             <div class="section-intro">
               <h2 class="beat-heading">See the whole story in 51 seconds.</h2>
             </div>
@@ -306,13 +309,13 @@
             </figure>
           </div>
 
-          <div class="install-block">
+          <div class="install-block reveal-on-scroll">
             <div class="section-intro">
               <h2 id="install-heading" class="beat-heading">Run Hearsay on your own product.</h2>
               <p class="beat-subline">MIT licensed, $0, and zero dependencies. Everything stays in SQLite on your computer.</p>
             </div>
 
-            <div class="install-doors">
+            <div class="install-doors stagger-children">
               <div class="install-door">
                 <h3 class="door-title">Paste one sentence into Claude Code or Codex</h3>
                 <p class="door-desc">Your coding agent sets up Hearsay, drafts buyer questions, and asks before running.</p>

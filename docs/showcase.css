@@ -1,7 +1,6 @@
 /* 
- * V2: Interactive Live Chat Narrative
- * Crisp gallery-clean canvas.
- * Colors: White canvas, quiet stage, ink, muted ink, cobalt.
+ * V2 Dynamic: Interactive Live Chat Narrative — Animated
+ * Scroll-linked + user-triggered motion. No JS animation libs.
  */
 
 :root {
@@ -13,8 +12,16 @@
   --white: #FFFFFF;
   --pill-bg: #EAEAEA;
   --pill-active: #FFFFFF;
-  
+
   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Motion tokens */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-soft: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --dur-fast: 200ms;
+  --dur-mid: 400ms;
+  --dur-slow: 600ms;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,6 +31,7 @@ body {
   font-family: var(--font-family);
   font-size: 16px;
   line-height: 1.5;
+  overflow-x: hidden;
 }
 
 .stage-column {
@@ -32,30 +40,84 @@ body {
   padding: 0 20px;
 }
 
-/* Opening */
+/* ===== Skip link ===== */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 16px;
+  background: var(--ink);
+  color: var(--white);
+  padding: 8px 16px;
+  border-radius: 4px;
+  z-index: 100;
+  text-decoration: none;
+}
+.skip-link:focus { top: 16px; }
+
+
+/* ============================================
+   ACT I — MONUMENTAL OPENING
+   ============================================ */
+
 .act-opening {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   text-align: center;
+  position: relative;
+  overflow: hidden;
 }
+
+.opening-inner {
+  position: relative;
+}
+
+/* Title: staggered letter reveal via clip-path */
 .monument-title {
   font-size: clamp(48px, 10vw, 100px);
   font-weight: 800;
   letter-spacing: -0.045em;
   margin-bottom: 12px;
 }
+
+.monument-title .letter {
+  display: inline-block;
+}
+
 .monument-subline {
   font-size: clamp(18px, 4vw, 24px);
   color: var(--ink-muted);
 }
 
-/* Chat Stage */
+/* Scroll cue at bottom of opening */
+.scroll-cue {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  height: 32px;
+  background: var(--ink-muted);
+  opacity: 0.3;
+  transition: opacity var(--dur-mid) var(--ease-soft);
+}
+
+.scroll-cue.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+
+/* ============================================
+   ACT II — CHAT DIALOGUE
+   ============================================ */
+
 .act-dialogue {
   padding: 80px 0;
   background-color: var(--stage-bg);
 }
+
 .chat-window {
   background: var(--white);
   border-radius: 16px;
@@ -63,6 +125,7 @@ body {
   overflow: hidden;
   border: 1px solid #EAEAEA;
 }
+
 .chat-topbar {
   padding: 12px 16px;
   border-bottom: 1px solid #EAEAEA;
@@ -70,7 +133,15 @@ body {
   justify-content: space-between;
   align-items: center;
   background: #FAFAFA;
+  flex-wrap: wrap;
+  gap: 8px;
 }
+.scenario-note {
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+/* Segmented pill */
 .segmented-pill {
   background: var(--pill-bg);
   border-radius: 20px;
@@ -84,19 +155,30 @@ body {
   border-radius: 16px;
   font-size: 13px;
   cursor: pointer;
+  font-family: inherit;
+  transition: background var(--dur-fast) var(--ease-soft),
+              box-shadow var(--dur-fast) var(--ease-soft);
+}
+.pill-btn:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
 }
 .pill-btn.is-active {
   background: var(--pill-active);
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
+
+/* Chat body */
 .chat-body { padding: 24px; }
 .turn-buyer, .turn-assistant { margin-bottom: 24px; }
+
 .buyer-bubble {
   background: var(--stage-bg);
   padding: 12px 16px;
   border-radius: 12px;
   display: inline-block;
 }
+
 .assistant-meta {
   display: flex;
   align-items: center;
@@ -109,6 +191,9 @@ body {
   border-radius: 50%;
   background: #333;
 }
+.assistant-name { font-size: 14px; }
+.assistant-sub { font-size: 13px; color: var(--ink-muted); }
+
 .rec-list {
   list-style: none;
   margin-top: 12px;
@@ -121,6 +206,11 @@ body {
   background: var(--stage-bg);
   border-radius: 8px;
 }
+.rec-highlight {
+  border-left: 3px solid var(--cobalt);
+}
+
+/* Citations */
 .assistant-citations {
   margin-top: 16px;
   display: flex;
@@ -133,76 +223,350 @@ body {
   background: #EEE;
   border-radius: 4px;
 }
+.cite-chip-cobalt {
+  background: rgba(0, 102, 204, 0.1);
+  color: var(--cobalt);
+}
+
+.omitted-chip {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: rgba(220, 50, 50, 0.08);
+  color: #B91C1C;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+
+/* Chat footer */
+.chat-footer-bar {
+  padding: 12px 16px;
+  border-top: 1px solid #EAEAEA;
+  background: #FAFAFA;
+}
+.chat-inspect-jump {
+  font-size: 13px;
+  color: var(--cobalt);
+  text-decoration: none;
+}
+.chat-inspect-jump:hover { text-decoration: underline; }
+
+/* Editorial beat */
 .editorial-beat {
   margin-top: 40px;
   text-align: center;
 }
 .beat-heading {
-  font-size: 36px;
+  font-size: clamp(24px, 5vw, 36px);
   font-weight: 700;
   margin-bottom: 16px;
 }
+.beat-subline {
+  font-size: 17px;
+  color: var(--ink-muted);
+  max-width: 600px;
+  margin: 0 auto;
+}
+.section-intro {
+  margin-bottom: 32px;
+}
 
-/* Forensic */
+
+/* ============================================
+   ACT III — FORENSIC REVEAL
+   ============================================ */
+
 .act-forensic { padding: 80px 0; }
+
+.forensic-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.forensic-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--ink);
+}
+.forensic-toggle-btn:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
+}
+.chevron-icon {
+  transition: transform var(--dur-mid) var(--ease-spring);
+}
+.forensic-toggle-btn[aria-expanded="false"] .chevron-icon {
+  transform: rotate(-90deg);
+}
+.segmented-pill-compact {
+  padding: 2px;
+}
+.segmented-pill-compact .pill-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* Animated drawer: grid row collapse */
+.forensic-drawer-wrap {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--dur-mid) var(--ease-spring);
+  margin-top: 16px;
+}
+.forensic-drawer-wrap.is-collapsed {
+  grid-template-rows: 0fr;
+}
 .forensic-drawer {
   background: #FAFAFA;
   padding: 24px;
   border-radius: 12px;
-  margin-top: 16px;
+  overflow: hidden;
+  min-height: 0;
+  transition: padding var(--dur-mid) var(--ease-spring);
 }
+.forensic-drawer-wrap.is-collapsed .forensic-drawer {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Ledger */
+.receipt-ledger { /* container for rows */ }
 .ledger-row {
   display: flex;
   padding: 16px 0;
   border-bottom: 1px solid #EAEAEA;
+  gap: 16px;
 }
-.ledger-key { width: 30%; color: var(--ink-muted); }
-.ledger-val { width: 70%; }
+.ledger-row:last-child { border-bottom: none; }
+.ledger-key {
+  width: 30%;
+  min-width: 120px;
+  color: var(--ink-muted);
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ledger-val {
+  width: 70%;
+  font-size: 14px;
+}
+.ledger-note {
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+.query-pill {
+  background: var(--stage-bg);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.url-line { margin-bottom: 2px; }
+.domain-owner {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+.status-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.01em;
+}
+.status-skipped {
+  background: rgba(220, 50, 50, 0.08);
+  color: #B91C1C;
+}
+.status-cited {
+  background: rgba(0, 102, 204, 0.08);
+  color: var(--cobalt);
+}
+
+/* Phrasing block */
+.phrasing-block {
+  margin-top: 32px;
+}
+.phrasing-header {
+  margin-bottom: 12px;
+}
+.phrasing-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.phrasing-caption {
+  font-size: 14px;
+  color: var(--ink-muted);
+}
+.phrasing-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 .phrasing-option {
-  display: block;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   width: 100%;
   padding: 16px;
-  margin-top: 8px;
   border: 1px solid #EAEAEA;
   background: var(--white);
   border-radius: 8px;
   text-align: left;
   cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  transition: border-color var(--dur-fast) var(--ease-soft),
+              transform var(--dur-fast) var(--ease-bounce);
+  gap: 12px;
+}
+.phrasing-option:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
+}
+.phrasing-option:active {
+  transform: scale(0.985);
 }
 .phrasing-option.is-selected {
   border-color: var(--cobalt);
 }
+.phrasing-quote {
+  flex: 1;
+}
+.phrasing-meter {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.dots {
+  display: flex;
+  gap: 4px;
+}
+.dots i {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #DDD;
+  transition: background var(--dur-fast) var(--ease-soft);
+}
+.dots i.on {
+  background: var(--cobalt);
+}
 .phrasing-rate {
   display: block;
-  margin-top: 8px;
+  font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-/* Fix Stage */
+/* Contrast strip */
+.contrast-strip {
+  margin-top: 40px;
+  padding: 32px;
+  background: var(--ink);
+  color: var(--white);
+  border-radius: 12px;
+  position: relative;
+  overflow: hidden;
+}
+.contrast-strip::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 1px;
+  background: rgba(255,255,255,0.15);
+  transform: translate(-50%, -50%);
+}
+.contrast-headline {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.contrast-sub {
+  font-size: 15px;
+  color: rgba(255,255,255,0.65);
+}
+
+
+/* ============================================
+   ACT IV — FIX STAGE
+   ============================================ */
+
 .act-fix {
   padding: 80px 0;
   background: #F0F4F8;
 }
+.fix-chat-window { /* inherits .chat-window */ }
+.fix-state-caption {
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+.fix-toggle-pill { /* inherits .segmented-pill */ }
+
+/* Before/after cross-fade */
+.fix-answer-state {
+  transition: opacity var(--dur-mid) var(--ease-soft);
+}
+
+/* Outcome strip */
 .outcome-strip {
   display: flex;
   gap: 20px;
   padding: 24px;
   border-top: 1px solid #EAEAEA;
   background: #FFF;
+  border-radius: 0 0 16px 16px;
+}
+.outcome-item {
+  flex: 1;
 }
 .outcome-stat {
   display: block;
   font-size: 20px;
+  font-weight: 700;
   color: var(--cobalt);
+  margin-bottom: 4px;
+}
+.outcome-desc {
+  font-size: 13px;
+  color: var(--ink-muted);
 }
 
-/* Closing */
+
+/* ============================================
+   ACT V — CLOSING
+   ============================================ */
+
 .act-closing { padding: 80px 0; }
+
+.film-block {
+  margin-bottom: 64px;
+}
+.cinema-frame {
+  margin: 0;
+}
 .cinema-frame video {
   width: 100%;
   border-radius: 12px;
   background: #000;
 }
+
+.install-block { /* container */ }
 .install-doors {
   display: grid;
   grid-template-columns: 1fr;
@@ -218,15 +582,32 @@ body {
   padding: 24px;
   border: 1px solid #EAEAEA;
   border-radius: 12px;
+  background: var(--white);
+}
+.door-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.door-desc {
+  font-size: 14px;
+  color: var(--ink-muted);
+  margin-bottom: 16px;
 }
 .copy-box {
   background: #F0F0F0;
   padding: 12px;
   margin: 16px 0;
   border-radius: 6px;
-  font-family: monospace;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 13px;
+  word-break: break-word;
 }
+.copy-box-cmd {
+  background: var(--ink);
+  color: #E0E0E0;
+}
+
 .action-btn {
   width: 100%;
   padding: 12px;
@@ -234,10 +615,221 @@ body {
   border: none;
   cursor: pointer;
   font-weight: 600;
+  font-size: 14px;
+  font-family: inherit;
+  transition: transform var(--dur-fast) var(--ease-bounce);
+}
+.action-btn:active {
+  transform: scale(0.97);
+}
+.action-btn:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
 }
 .action-btn-primary { background: var(--cobalt); color: white; }
-.action-btn-secondary { background: var(--pill-bg); }
+.action-btn-secondary { background: var(--pill-bg); color: var(--ink); }
+
+
+/* ============================================
+   FOOTER
+   ============================================ */
+
+.site-footer {
+  padding: 32px 0;
+  border-top: 1px solid #EAEAEA;
+}
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.footer-brand {
+  font-weight: 700;
+  font-size: 15px;
+}
+.footer-links {
+  display: flex;
+  gap: 20px;
+}
+.footer-links a {
+  font-size: 13px;
+  color: var(--ink-muted);
+  text-decoration: none;
+}
+.footer-links a:hover { color: var(--ink); }
+.footer-links a:focus-visible {
+  outline: 2px solid var(--cobalt);
+  outline-offset: 2px;
+}
+
+
+/* ============================================
+   UTILITY
+   ============================================ */
 
 .visually-hidden {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0;
+  position: absolute; width: 1px; height: 1px; padding: 0;
+  margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0;
+}
+
+
+/* ============================================
+   SCROLL-LINKED MOTION
+   All wrapped in prefers-reduced-motion check.
+   ============================================ */
+
+@media (prefers-reduced-motion: no-preference) {
+
+  /* --- Title letter entrance --- */
+  .monument-title .letter {
+    opacity: 0;
+    transform: translateY(20px);
+    animation: letter-rise var(--dur-slow) var(--ease-spring) forwards;
+    animation-delay: var(--delay, 0ms);
+  }
+  @keyframes letter-rise {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* --- Subline fade --- */
+  .monument-subline {
+    opacity: 0;
+    transform: translateY(8px);
+    animation: fade-up var(--dur-mid) var(--ease-soft) 800ms forwards;
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* --- Scroll cue pulse --- */
+  .scroll-cue {
+    animation: cue-pulse 2s ease-in-out infinite;
+  }
+  @keyframes cue-pulse {
+    0%, 100% { transform: translateX(-50%) scaleY(1); opacity: 0.3; }
+    50%      { transform: translateX(-50%) scaleY(1.3); opacity: 0.5; }
+  }
+
+  /* --- Scroll-driven reveals --- */
+  /* These use IntersectionObserver via JS (see showcase.js).
+     Elements start hidden, JS adds .is-visible. */
+
+  .reveal-on-scroll {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+    transition: opacity var(--dur-mid) var(--ease-soft),
+                transform var(--dur-mid) var(--ease-spring);
+  }
+  .reveal-on-scroll.is-visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  /* Buyer bubble: spring entrance */
+  .buyer-bubble-anim {
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity 300ms var(--ease-soft),
+                transform 500ms var(--ease-bounce);
+  }
+  .buyer-bubble-anim.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Stagger children (rec-list items, ledger rows, install doors) */
+  .stagger-children > * {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 300ms var(--ease-soft),
+                transform 400ms var(--ease-spring);
+  }
+  .stagger-children.is-visible > * {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .stagger-children.is-visible > *:nth-child(1) { transition-delay: 0ms; }
+  .stagger-children.is-visible > *:nth-child(2) { transition-delay: 60ms; }
+  .stagger-children.is-visible > *:nth-child(3) { transition-delay: 120ms; }
+  .stagger-children.is-visible > *:nth-child(4) { transition-delay: 180ms; }
+  .stagger-children.is-visible > *:nth-child(5) { transition-delay: 240ms; }
+  .stagger-children.is-visible > *:nth-child(6) { transition-delay: 300ms; }
+
+  /* Omitted chip: attention pulse */
+  .omitted-chip-anim {
+    opacity: 0;
+    transition: opacity 300ms var(--ease-soft),
+                border-color 600ms var(--ease-soft);
+  }
+  .omitted-chip-anim.is-visible {
+    opacity: 1;
+    animation: attention-pulse 800ms var(--ease-soft) 200ms;
+  }
+  @keyframes attention-pulse {
+    0%   { border-color: transparent; }
+    30%  { border-color: #DC3232; }
+    100% { border-color: transparent; }
+  }
+
+  /* Contrast strip rule grow */
+  .contrast-strip.is-visible::before {
+    animation: rule-grow 600ms var(--ease-spring) forwards;
+  }
+  @keyframes rule-grow {
+    from { width: 0; }
+    to   { width: 80%; }
+  }
+
+  /* Fix: Notewell highlight border animate */
+  .rec-highlight-anim {
+    border-left: 3px solid transparent;
+    transition: border-color var(--dur-mid) var(--ease-soft);
+  }
+  .rec-highlight-anim.is-highlighted {
+    border-left-color: var(--cobalt);
+  }
+
+  /* Phrasing dot fill animation */
+  .dots i {
+    transition: background 150ms var(--ease-soft);
+    transition-delay: calc(var(--dot-index, 0) * 80ms);
+  }
+}
+
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+
+@media (max-width: 600px) {
+  .beat-heading {
+    font-size: 24px;
+  }
+  .ledger-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .ledger-key, .ledger-val {
+    width: 100%;
+  }
+  .outcome-strip {
+    flex-direction: column;
+  }
+  .phrasing-option {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .phrasing-meter {
+    align-items: flex-start;
+    flex-direction: row;
+    gap: 8px;
+  }
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
