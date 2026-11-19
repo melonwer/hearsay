@@ -2252,6 +2252,27 @@ export async function checkSite(rawUrl, options = {}) {
 
         const crossHost = nextParsed.hostname.toLowerCase() !== hopParsed.hostname.toLowerCase();
         const geoLikely = detectGeoLikely(hopParsed, nextParsed, res.headers);
+        await res.body?.cancel().catch(() => {});
+
+        if (visited.has(nextParsed.href)) {
+          hops.push({
+            status: res.status,
+            url: currentUrl,
+            location,
+            resolvedUrl: nextParsed.href,
+            crossHost,
+            geoLikely,
+          });
+          loopDetected = true;
+          loopTarget = nextParsed.href;
+          finalResponse = res;
+          break;
+        }
+        if (hops.length >= maxRedirects) {
+          maxHopsExceeded = true;
+          finalResponse = res;
+          break;
+        }
         hops.push({
           status: res.status,
           url: currentUrl,
@@ -2260,21 +2281,6 @@ export async function checkSite(rawUrl, options = {}) {
           crossHost,
           geoLikely,
         });
-
-        await res.body?.cancel().catch(() => {});
-
-        if (visited.has(nextParsed.href)) {
-          loopDetected = true;
-          loopTarget = nextParsed.href;
-          finalResponse = res;
-          break;
-        }
-        if (hops.length >= maxRedirects) {
-          maxHopsExceeded = true;
-          currentUrl = nextParsed.href;
-          finalResponse = res;
-          break;
-        }
         visited.add(nextParsed.href);
         currentUrl = nextParsed.href;
         continue;

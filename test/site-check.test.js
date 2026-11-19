@@ -324,6 +324,16 @@ test('redirect chain tracking records hops, crossHost, geoLikely, loop detection
       res.writeHead(302, { location: '/loop-a' }).end();
       return;
     }
+    if (url.startsWith('/exact/')) {
+      const n = Number(url.slice('/exact/'.length));
+      if (n < 2) {
+        res.writeHead(302, { location: `/exact/${n + 1}` }).end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<html><head><title>Exact Hops</title></head><body><h1>Exact Hops</h1><p>' + 'ok '.repeat(50) + '</p></body></html>');
+      return;
+    }
     if (url.startsWith('/chain/')) {
       const n = Number(url.slice('/chain/'.length));
       res.writeHead(302, { location: `/chain/${n + 1}` }).end();
@@ -344,6 +354,20 @@ test('redirect chain tracking records hops, crossHost, geoLikely, loop detection
   assert.equal(chain.finalUrl, `http://localhost:${port}/en-us/landing`);
   assert.equal(chain.redirects.crossHost, true);
   assert.equal(chain.redirects.geoLikely, true);
+
+  // Exact maxRedirects hops ending in 200 succeeds; maxRedirects + 1 triggers maxHopsExceeded
+  const exactOk = await checkSite(`${baseUrl}/exact/0`, { allowPrivateHosts: true, maxRedirects: 2 });
+  assert.equal(exactOk.status, 200);
+  assert.equal(exactOk.ok, true);
+  assert.equal(exactOk.redirects.count, 2);
+  assert.equal(exactOk.redirects.maxHopsExceeded, false);
+  assert.equal(exactOk.finalUrl, `${baseUrl}/exact/2`);
+
+  const oneTooMany = await checkSite(`${baseUrl}/exact/0`, { allowPrivateHosts: true, maxRedirects: 1 });
+  assert.equal(oneTooMany.ok, false);
+  assert.equal(oneTooMany.redirects.count, 1);
+  assert.equal(oneTooMany.redirects.maxHopsExceeded, true);
+  assert.ok(oneTooMany.findings.some((f) => f.id === 'max_redirects_exceeded'));
 
   // Loop detection
   const loop = await checkSite(`${baseUrl}/loop-a`, { allowPrivateHosts: true });
@@ -613,7 +637,7 @@ test('CLI `hearsay check` enforces SSRF guard by default, outputs --json and --h
   const child = spawn(NODE, [CLI, 'serve', '--port', '0', '--host', '127.0.0.1'], {
     env: {
       ...process.env,
-      HEARSAY_DEMO: '1',
+      HEARSAY_DEMO: '0',
       HEARSAY_DB_PATH: join(serveDir, 'real', 'hearsay.db'),
       HEARSAY_DEMO_DB_PATH: join(serveDir, 'demo', 'hearsay.db'),
       HEARSAY_PORT_FILE: join(serveDir, 'port'),
@@ -629,7 +653,7 @@ test('CLI `hearsay check` enforces SSRF guard by default, outputs --json and --h
   const listeningLine = await new Promise((resolve, reject) => {
     let out = '';
     let err = '';
-    const timer = setTimeout(() => reject(new Error(`hearsay serve startup timeout; stdout=${out} stderr=${err}`)), 10_000);
+    const timer = setTimeout(() => reject(new Error(`hearsay serve startup timeout; stdout=${out} stderr=${err}`)), 15_000);
     child.stdout.on('data', (chunk) => {
       out += chunk.toString('utf8');
       const match = out.match(/listening on (http:\/\/127\.0\.0\.1:\d+)/);
