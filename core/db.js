@@ -794,6 +794,58 @@ export const MIGRATIONS = [
 export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 
 /**
+ * Idempotent DDL for `site_checks` drift storage. Applied during `migrate()`
+ * so fresh and existing databases upgrade seamlessly without invalidating
+ * historical `user_version` migration tests.
+ */
+const SITE_CHECKS_DDL = `
+CREATE TABLE IF NOT EXISTS site_checks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  url TEXT NOT NULL,
+  domain TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'crawl',
+  status TEXT NOT NULL,
+  critical_count INTEGER NOT NULL DEFAULT 0,
+  warning_count INTEGER NOT NULL DEFAULT 0,
+  audited_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  errored_count INTEGER NOT NULL DEFAULT 0,
+  prose_parity_pct REAL,
+  median_payload_ratio REAL,
+  content_hash TEXT NOT NULL,
+  stack_json TEXT NOT NULL DEFAULT '[]',
+  waf_state TEXT,
+  report_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_site_checks_domain_created ON site_checks(domain, created_at DESC);
+`;
+
+/**
+ * Idempotently ensure the `site_checks` table and domain/time index exist.
+ *
+ * @param {Db} db
+ * @returns {void}
+ */
+export function ensureSiteChecksTable(db) {
+  const hasTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'site_checks'")
+    .get();
+  const hasIndex = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_site_checks_domain_created'")
+    .get();
+  if (hasTable && hasIndex) return;
+  db.exec('BEGIN');
+  try {
+    db.exec(SITE_CHECKS_DDL);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/**
  * Create and verify a SQLite-consistent pre-migration backup.
  *
  * @param {Db} db
@@ -958,6 +1010,7 @@ export function migrate(db) {
     if (rebuildsTables) db.exec('PRAGMA foreign_keys = ON');
     current = migration.version;
   }
+  ensureSiteChecksTable(db);
   return current;
 }
 

@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 import { withEnvFile } from '../core/env-file.js';
 import { resolveHearsayUrl } from '../core/port-discovery.js';
-import { checkSite, SiteCheckError } from '../core/site-check.js';
+import { checkSiteV2, SiteCheckError } from '../core/site-check.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // [VERIFY-AT-BUILD]: verified 2026-07-26 against modelcontextprotocol.io/specification/versioning
@@ -138,19 +138,50 @@ function resolveLocalDbPath(env) {
 }
 
 /**
- * Build a concise human-readable summary of a `SiteCheckReport`.
- * @param {import('../core/site-check.js').SiteCheckReport} report
+ * Build a concise human-readable summary of a `SiteCheckV2Report`.
+ * @param {import('../core/site-check.js').SiteCheckV2Report} report
  * @returns {string}
  */
 function formatSiteCheckSummary(report) {
-  const blockedBots = report.robotsTxt.crawlers.filter((c) => !c.allowed).map((c) => c.bot);
+  const blockedBots =
+    report.aiBotsAllowed && Array.isArray(report.aiBotsAllowed.blockedBots) && report.aiBotsAllowed.total > 0
+      ? report.aiBotsAllowed.blockedBots
+      : report.robotsTxt.crawlers.filter((c) => !c.allowed).map((c) => c.bot);
+  const allowedCount =
+    report.aiBotsAllowed && report.aiBotsAllowed.total > 0
+      ? report.aiBotsAllowed.allowed
+      : report.robotsTxt.allowedCount;
+  const totalBots =
+    report.aiBotsAllowed && report.aiBotsAllowed.total > 0
+      ? report.aiBotsAllowed.total
+      : report.robotsTxt.crawlers.length;
   const p = report.payload;
+  const ratio = report.extraction?.forensics?.payloadToProseRatio;
+  const parityStr =
+    typeof report.proseParityPct === 'number' ? `, proseParity=${report.proseParityPct}%` : '';
+  const ratioStr = typeof ratio === 'number' ? `, payloadToProse=${ratio}x` : '';
   const lines = [
     `Hearsay Site Check: ${report.summary.grade.toUpperCase()} (${report.summary.criticalCount} critical, ${report.summary.warningCount} warning, ${report.summary.infoCount} info)`,
-    `URL: ${report.finalUrl} | HTTP ${report.status ?? 'ERR'} | ${report.timingMs}ms | ${report.redirects.count} redirect(s)`,
-    `Payload: ${(p.htmlBytes / 1024).toFixed(1)}KB raw HTML, ${p.visibleWordCount} visible words, CSR=${p.csrRisk.level}, truncation(>30KB=${p.truncationRisks.contentStartsAfter30KB}, >100KB=${p.truncationRisks.coreContentPast100KB}, >300KB=${p.truncationRisks.pageExceeds300KB})`,
-    `robots.txt: ${report.robotsTxt.allowedCount}/${report.robotsTxt.crawlers.length} crawlers allowed${blockedBots.length ? ` (blocked: ${blockedBots.join(', ')})` : ''}`,
+    `URL: ${report.finalUrl} | HTTP ${report.status ?? 'ERR'} | mode=${report.mode} | ${report.timingMs}ms | ${report.redirects.count} redirect(s)`,
+    report.scopeSummary,
+    `Payload: ${(p.htmlBytes / 1024).toFixed(1)}KB raw HTML, ${p.visibleWordCount} visible words, CSR=${p.csrRisk.level}${ratioStr}${parityStr}, truncation(>30KB=${p.truncationRisks.contentStartsAfter30KB}, >100KB=${p.truncationRisks.coreContentPast100KB}, >300KB=${p.truncationRisks.pageExceeds300KB})`,
+    `robots.txt: ${allowedCount}/${totalBots} crawlers allowed${blockedBots.length ? ` (blocked: ${blockedBots.join(', ')})` : ''}`,
   ];
+  const stackLabels = [
+    report.stack?.primaryFramework,
+    report.stack?.primaryCms,
+    report.stack?.primaryCdn,
+    report.stack?.primaryHosting,
+  ].filter((v) => typeof v === 'string' && v !== '');
+  if (stackLabels.length > 0 || (report.waf && report.waf.state !== 'none')) {
+    lines.push(
+      `Stack/WAF: ${stackLabels.length ? stackLabels.join(', ') : 'none detected'} | WAF=${report.waf?.state ?? 'none'}`,
+    );
+  }
+  if (report.competitorXray && Array.isArray(report.competitorXray.competitors) && report.competitorXray.competitors.length > 0) {
+    const domains = report.competitorXray.competitors.map((c) => c.domain).join(', ');
+    lines.push(`Competitor X-Ray: compared against ${domains} (${report.competitorXray.deltas.length} metric deltas)`);
+  }
   if (report.findings.length > 0) {
     lines.push('Findings:');
     for (const f of report.findings.slice(0, 6)) {
@@ -161,7 +192,7 @@ function formatSiteCheckSummary(report) {
 }
 
 /**
- * Run `checkSite` directly inside the MCP server with zero HTTP backend or API keys.
+ * Run `checkSiteV2` directly inside the MCP server with zero HTTP backend or API keys.
  * Respects SSRF private-host guard by default (private hosts are never unlockable via tool args).
  * @param {Record<string, any>} args
  */
@@ -186,11 +217,44 @@ async function runDirectSiteCheck(args) {
     }
     timeoutMs = Math.floor(n);
   }
+  const rawMaxPages = args?.maxPages ?? args?.max_pages;
+  /** @type {number|undefined} */
+  let maxPages;
+  if (rawMaxPages !== undefined && rawMaxPages !== null) {
+    const n = Number(rawMaxPages);
+    if (!Number.isInteger(n) || n < 1 || n > 50) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_arguments', message: 'maxPages must be an integer between 1 and 50' } }) }],
+      };
+    }
+    maxPages = n;
+  }
+  /** @type {string[]|undefined} */
+  let vs;
+  if (args?.vs !== undefined && args?.vs !== null) {
+    if (
+      !Array.isArray(args.vs) ||
+      args.vs.length > 5 ||
+      args.vs.some((/** @type {unknown} */ u) => typeof u !== 'string' || u.trim() === '')
+    ) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_arguments', message: 'vs must be an array of up to 5 non-empty URL strings' } }) }],
+      };
+    }
+    vs = args.vs.map((/** @type {unknown} */ u) => String(u).trim());
+  }
   // Never allow untrusted MCP tool arguments to bypass the SSRF private-host guard.
   const allowPrivateHosts = process.env.HEARSAY_SITE_CHECK_ALLOW_PRIVATE_HOSTS === '1';
   try {
-    const report = await checkSite(rawUrl.trim(), {
+    const report = await checkSiteV2(rawUrl.trim(), {
+      single: args?.single === true,
+      maxPages,
+      vs,
       browser: args?.browser === true,
+      checkCaching: args?.checkCaching === true || args?.check_caching === true,
+      ignoreRobotsForOwnSite: args?.ignoreRobotsForOwnSite === true || args?.ignore_robots_for_own_site === true,
       timeoutMs,
       allowPrivateHosts,
     });
@@ -209,6 +273,104 @@ async function runDirectSiteCheck(args) {
       isError: true,
       content: [{ type: 'text', text: JSON.stringify({ error: { code, message } }) }],
     };
+  }
+}
+
+/**
+ * Open the configured/default local SQLite database read-only and serve
+ * `hearsay_site_check_history` directly when `server.js` is not running.
+ * @param {Record<string, any>} args
+ * @param {Record<string, string|undefined>} env
+ */
+async function runDirectSiteCheckHistory(args, env) {
+  const rawId = args?.id;
+  const rawCompareId = args?.compareWithId ?? args?.compare_with_id;
+  if (rawCompareId !== undefined && rawCompareId !== null && (rawId === undefined || rawId === null)) {
+    return {
+      isError: true,
+      text: JSON.stringify({
+        error: {
+          code: 'invalid_arguments',
+          message: 'id is required when compareWithId is provided',
+        },
+      }),
+    };
+  }
+  const dbPath = resolveLocalDbPath(env);
+  if (!existsSync(dbPath)) {
+    return {
+      isError: true,
+      text: JSON.stringify({
+        error: {
+          code: 'db_unavailable',
+          message: 'Hearsay server is not running and no local SQLite database was found at the configured HEARSAY_DB_PATH. Start `node server.js` or set HEARSAY_DB_PATH.',
+        },
+      }),
+    };
+  }
+  const { DatabaseSync } = await import('node:sqlite');
+  /** @type {import('node:sqlite').DatabaseSync|undefined} */
+  let db;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    db.exec('PRAGMA query_only = ON');
+    db.exec('PRAGMA busy_timeout = 5000');
+    const { listSiteChecks, getSiteCheck, diffSavedSiteChecks } = await import('../core/site-check-store.js');
+    if (rawId !== undefined && rawId !== null && rawCompareId !== undefined && rawCompareId !== null) {
+      const diffResult = diffSavedSiteChecks(db, Number(rawId), Number(rawCompareId));
+      if (!diffResult) {
+        return {
+          isError: true,
+          text: JSON.stringify({
+            error: {
+              code: 'not_found',
+              message: `Saved site check #${rawId} or baseline #${rawCompareId} not found`,
+            },
+          }),
+        };
+      }
+      return {
+        isError: false,
+        text: JSON.stringify({ ...diffResult, dataSource: 'sqlite_readonly' }),
+      };
+    }
+    if (rawId !== undefined && rawId !== null) {
+      const saved = getSiteCheck(db, Number(rawId));
+      if (!saved) {
+        return {
+          isError: true,
+          text: JSON.stringify({
+            error: {
+              code: 'not_found',
+              message: `Saved site check #${rawId} not found`,
+            },
+          }),
+        };
+      }
+      return {
+        isError: false,
+        text: JSON.stringify({ ...saved, dataSource: 'sqlite_readonly' }),
+      };
+    }
+    const items = listSiteChecks(db, {
+      domain: typeof args?.domain === 'string' ? args.domain : undefined,
+      limit: args?.limit !== undefined && args?.limit !== null ? Number(args.limit) : 25,
+    });
+    return {
+      isError: false,
+      text: JSON.stringify({ items, count: items.length, dataSource: 'sqlite_readonly' }),
+    };
+  } catch (err) {
+    const code = err instanceof RangeError ? 'validation' : 'db_error';
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      text: JSON.stringify({ error: { code, message } }),
+    };
+  } finally {
+    if (db) {
+      try { db.close(); } catch { /* ignore close errors */ }
+    }
   }
 }
 
@@ -233,6 +395,7 @@ async function runDirectForensics(kind, args, env) {
   }
   const filters = toForensicFilters(args, kind === 'attrition');
   const { DatabaseSync } = await import('node:sqlite');
+  /** @type {import('node:sqlite').DatabaseSync|undefined} */
   let db;
   try {
     db = new DatabaseSync(dbPath, { readOnly: true });
@@ -685,17 +848,66 @@ const TOOLS = [
     name: 'hearsay_site_check',
     readOnly: true,
     description:
-      'Run Hearsay zero-key technical AI-search pre-flight audit directly on any public http/https URL (zero local server or API keys required). Audits RFC 9309 robots.txt rules for AI crawlers, redirect chains, noindex/canonical headers, raw-HTML byte-offset truncation cliffs (30KB/100KB/300KB), CSR empty-shell risk, and optional headless browser DOM diff. Enforces SSRF private-host guard by default.',
+      'Run Hearsay v2 zero-key AI Crawler X-Ray audit directly on any public http/https URL (zero local server or API keys required). Supports default multi-page key-page crawling (or single-page mode), 18-bot RFC 9309 + Content-Signal robots.txt policy analysis, passive stack/CDN/WAF fingerprinting, Accept: text/markdown negotiation, /llms.txt soft-404 probe, optional conditional GET 304 caching check, optional headless browser Bot-vs-Human Markdown diff, and parallel --vs Competitor X-Ray comparison. Strictly enforces SSRF private-host guard.',
     inputSchema: obj(
       {
         url: { type: 'string', minLength: 1, description: 'Public http:// or https:// URL to audit' },
+        single: { type: 'boolean', description: 'Audit only the target URL instead of multi-page key-page crawl (default false)' },
+        maxPages: { type: 'integer', minimum: 1, maximum: 50, description: 'Maximum key pages to audit in crawl mode (default 15)' },
+        max_pages: { type: 'integer', minimum: 1, maximum: 50, description: 'Alias for maxPages' },
+        vs: {
+          type: 'array',
+          items: { type: 'string', minLength: 1 },
+          maxItems: 5,
+          description: 'Optional competitor URLs (up to 5) for side-by-side Competitor X-Ray comparison',
+        },
         browser: { type: 'boolean', description: 'Compare raw HTML against optional local headless Chromium DOM (default false)' },
+        checkCaching: { type: 'boolean', description: 'Perform conditional GET (If-None-Match / If-Modified-Since) 304 check on homepage (default false)' },
+        check_caching: { type: 'boolean', description: 'Alias for checkCaching' },
+        ignoreRobotsForOwnSite: {
+          type: 'boolean',
+          description: 'Audit own-site pages disallowed by robots.txt while still flagging the rule (default false)',
+        },
+        ignore_robots_for_own_site: { type: 'boolean', description: 'Alias for ignoreRobotsForOwnSite' },
         timeoutMs: { type: 'integer', minimum: 500, maximum: 120000, description: 'Per-request timeout in milliseconds (default 10000)' },
         timeout_ms: { type: 'integer', minimum: 500, maximum: 120000, description: 'Alias for timeoutMs' },
       },
       ['url'],
     ),
     local: (a) => runDirectSiteCheck(a),
+  },
+  {
+    name: 'hearsay_site_check_history',
+    readOnly: true,
+    description:
+      'List saved site-check drift history (optionally filtered by domain), load one saved site check report by ID, or diff two saved site checks (`id` vs `compareWithId`) to detect new critical findings, status regressions, prose-parity drops, and newly blocked AI crawlers. Queries the local server when running or falls back directly to read-only SQLite.',
+    inputSchema: obj({
+      domain: { type: 'string', description: 'Optional domain filter when listing saved site checks (e.g. "example.com")' },
+      limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum saved checks to return when listing (default 25)' },
+      id: { type: 'integer', minimum: 1, description: 'Saved site check ID to load, or the current check ID when compareWithId is also provided' },
+      compareWithId: { type: 'integer', minimum: 1, description: 'Baseline saved site check ID to diff against id' },
+      compare_with_id: { type: 'integer', minimum: 1, description: 'Alias for compareWithId' },
+    }),
+    call: (a) => {
+      const baselineId = a?.compareWithId ?? a?.compare_with_id;
+      if (a?.id !== undefined && a?.id !== null && baselineId !== undefined && baselineId !== null) {
+        return {
+          method: 'GET',
+          path: `/api/check/diff?current=${encodeURIComponent(String(a.id))}&baseline=${encodeURIComponent(String(baselineId))}`,
+        };
+      }
+      if (baselineId !== undefined && baselineId !== null) {
+        return {
+          method: 'GET',
+          path: `/api/check/diff?baseline=${encodeURIComponent(String(baselineId))}`,
+        };
+      }
+      if (a?.id !== undefined && a?.id !== null) {
+        return { method: 'GET', path: `/api/check/${encodeURIComponent(String(a.id))}` };
+      }
+      return { method: 'GET', path: `/api/check/history${query(a, ['domain', 'limit'])}` };
+    },
+    fallback: (a, env) => runDirectSiteCheckHistory(a, env),
   },
   {
     name: 'hearsay_retrieval_attrition',

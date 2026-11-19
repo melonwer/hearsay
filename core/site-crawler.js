@@ -79,6 +79,31 @@ const LOCALE_SEGMENT_RE = /^(?:[a-z]{2}(?:-[a-z]{2})?)$/i;
 
 const DOCS_PREFIXES = new Set(['docs', 'documentation', 'guide', 'guides', 'kb', 'help', 'learn', 'reference', 'api']);
 
+const AUTH_OR_UTILITY_ROOT_SEGMENTS = new Set([
+  'login',
+  'log-in',
+  'signin',
+  'sign-in',
+  'signup',
+  'sign-up',
+  'register',
+  'logout',
+  'log-out',
+  'signout',
+  'sign-out',
+  'auth',
+  'oauth',
+  'oauth2',
+  'sso',
+  'reset-password',
+  'forgot-password',
+  'account',
+  'cart',
+  'checkout',
+  'wp-login.php',
+  'wp-admin',
+]);
+
 const CHALLENGE_TITLE_MARKERS = Object.freeze([
   'just a moment',
   'attention required',
@@ -245,7 +270,7 @@ const TRADITIONAL_SEARCH_BOTS = new Set(['Googlebot', 'Bingbot']);
  * @typedef {Object} SkippedPageEntry
  * @property {string} url
  * @property {string} template
- * @property {'robots_disallowed'|'ssrf_blocked'|'max_pages_cap'|'template_cap'} reason
+ * @property {'robots_disallowed'|'ssrf_blocked'|'max_pages_cap'|'template_cap'|'auth_or_utility_route'} reason
  * @property {string|null} [rule]
  * @property {string|null} [matchedGroup]
  * @property {string|null} [detail]
@@ -342,6 +367,7 @@ const TRADITIONAL_SEARCH_BOTS = new Set(['Googlebot', 'Bingbot']);
  * @property {number} [maxPerTemplate]
  * @property {boolean} [allowPrivateHosts]
  * @property {boolean} [ignoreRobotsForOwnSite]
+ * @property {boolean} [includeAuthRoutes]
  * @property {boolean} [checkCaching]
  * @property {(ctx: PageCheckerContext) => Promise<Partial<CrawledPageResult>>|Partial<CrawledPageResult>} [pageChecker]
  * @property {typeof globalThis.fetch} [fetchImpl]
@@ -362,7 +388,7 @@ const TRADITIONAL_SEARCH_BOTS = new Set(['Googlebot', 'Bingbot']);
  * @property {number} skipped
  * @property {number} errored
  * @property {number} redirectsResolved
- * @property {{robots_disallowed: number, ssrf_blocked: number, max_pages_cap: number, template_cap: number}} skippedByReason
+ * @property {{robots_disallowed: number, ssrf_blocked: number, max_pages_cap: number, template_cap: number, auth_or_utility_route: number}} skippedByReason
  */
 
 /**
@@ -1297,6 +1323,42 @@ export function normalizeUrlTemplate(urlOrPath) {
     }
   }
   return `/${parts.join('/')}`;
+}
+
+/**
+ * Determine whether a pathname (or URL) points to a non-content authentication,
+ * account, cart/checkout, or CMS admin utility route (e.g. `/login`, `/signin`,
+ * `/sign-in`, `/signup`, `/sign-up`, `/register`, `/logout`, `/signout`,
+ * `/auth/*`, `/oauth/*`, `/sso/*`, `/reset-password`, `/forgot-password`,
+ * `/account/*`, `/cart`, `/checkout`, `/wp-login.php`, `/wp-admin/*`).
+ *
+ * Also handles locale-prefixed paths such as `/en/login` or `/en-us/checkout`,
+ * while avoiding false positives on content routes like `/docs/api/authentication`
+ * or `/author/jane`.
+ *
+ * @param {string} pathname
+ * @returns {boolean}
+ */
+export function isAuthOrUtilityPath(pathname) {
+  if (typeof pathname !== 'string' || pathname.trim() === '') return false;
+  let cleanPath = pathname.trim();
+  if (/^https?:\/\//i.test(cleanPath)) {
+    try {
+      cleanPath = new URL(cleanPath).pathname;
+    } catch {
+      return false;
+    }
+  } else {
+    cleanPath = cleanPath.split(/[?#]/)[0] || '/';
+  }
+
+  const segments = cleanPath.split('/').filter(Boolean).map((s) => s.toLowerCase());
+  if (segments.length === 0) return false;
+  if (AUTH_OR_UTILITY_ROOT_SEGMENTS.has(segments[0])) return true;
+  if (segments.length >= 2 && LOCALE_SEGMENT_RE.test(segments[0]) && AUTH_OR_UTILITY_ROOT_SEGMENTS.has(segments[1])) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -2386,6 +2448,7 @@ export async function crawlSitePages(startUrl, options = {}) {
       : DEFAULT_MAX_PER_TEMPLATE;
   const allowPrivateHosts = options.allowPrivateHosts === true;
   const ignoreRobotsForOwnSite = options.ignoreRobotsForOwnSite === true;
+  const includeAuthRoutes = options.includeAuthRoutes === true;
   const checkCaching = options.checkCaching === true;
   const fetchFn = options.fetchImpl ?? globalThis.fetch;
   const lookupFn = options.lookup === null ? null : (options.lookup ?? dnsLookup);
@@ -2487,7 +2550,13 @@ export async function crawlSitePages(startUrl, options = {}) {
         skipped: 0,
         errored: 1,
         redirectsResolved: 0,
-        skippedByReason: { robots_disallowed: 0, ssrf_blocked: 0, max_pages_cap: 0, template_cap: 0 },
+        skippedByReason: {
+          robots_disallowed: 0,
+          ssrf_blocked: 0,
+          max_pages_cap: 0,
+          template_cap: 0,
+          auth_or_utility_route: 0,
+        },
       },
       pages,
       skipped,
@@ -2775,7 +2844,13 @@ export async function crawlSitePages(startUrl, options = {}) {
         skipped: 0,
         errored: 0,
         redirectsResolved: 0,
-        skippedByReason: { robots_disallowed: 0, ssrf_blocked: 0, max_pages_cap: 0, template_cap: 0 },
+        skippedByReason: {
+          robots_disallowed: 0,
+          ssrf_blocked: 0,
+          max_pages_cap: 0,
+          template_cap: 0,
+          auth_or_utility_route: 0,
+        },
       },
       pages,
       skipped,
@@ -2811,10 +2886,56 @@ export async function crawlSitePages(startUrl, options = {}) {
     });
 
     const combinedNav = [...navLinks, ...bodyLinks];
+    /** @type {Set<string>} */
+    const seenAuthSkipped = new Set();
+
+    /**
+     * Filter out discovered auth/utility routes unless `includeAuthRoutes === true`,
+     * recording each skipped route transparently in `skipped`.
+     * @param {string[]} urls
+     * @returns {string[]}
+     */
+    const filterAuthRoutes = (urls) => {
+      if (includeAuthRoutes) return urls;
+      /** @type {string[]} */
+      const kept = [];
+      for (const raw of urls) {
+        const norm = normalizeCandidateUrl(raw, finalOrigin);
+        if (!norm || norm === finalHomeUrl || norm === requestedUrl) {
+          kept.push(raw);
+          continue;
+        }
+        const parsed = new URL(norm);
+        if (parsed.origin !== finalOrigin || STATIC_ASSET_EXT_RE.test(parsed.pathname)) {
+          kept.push(raw);
+          continue;
+        }
+        if (isAuthOrUtilityPath(parsed.pathname)) {
+          if (!seenAuthSkipped.has(norm)) {
+            seenAuthSkipped.add(norm);
+            skipped.push({
+              url: norm,
+              template: normalizeUrlTemplate(parsed.pathname),
+              reason: 'auth_or_utility_route',
+              rule: null,
+              matchedGroup: null,
+              detail: 'Skipped non-content auth/utility route (pass includeAuthRoutes: true to audit)',
+            });
+          }
+          continue;
+        }
+        kept.push(raw);
+      }
+      return kept;
+    };
+
+    const filteredNav = filterAuthRoutes(combinedNav);
+    const filteredSitemap = filterAuthRoutes(sitemapResult.urls);
+
     const selection = selectKeyPages({
       homepageUrl: finalHomeUrl,
-      navLinks: combinedNav,
-      sitemapUrls: sitemapResult.urls,
+      navLinks: filteredNav,
+      sitemapUrls: filteredSitemap,
       maxPages,
       maxPerTemplate,
     });
@@ -2990,6 +3111,7 @@ export async function crawlSitePages(startUrl, options = {}) {
     ssrf_blocked: skipped.filter((s) => s.reason === 'ssrf_blocked').length,
     max_pages_cap: skipped.filter((s) => s.reason === 'max_pages_cap').length,
     template_cap: skipped.filter((s) => s.reason === 'template_cap').length,
+    auth_or_utility_route: skipped.filter((s) => s.reason === 'auth_or_utility_route').length,
   };
 
   const auditedCount = pages.filter((p) => typeof p.status === 'number' && p.status > 0).length;
@@ -3030,6 +3152,7 @@ export async function crawlSitePages(startUrl, options = {}) {
   if (skippedByReason.ssrf_blocked > 0) skipParts.push(`ssrf: ${skippedByReason.ssrf_blocked}`);
   if (skippedByReason.max_pages_cap > 0) skipParts.push(`max_pages_cap: ${skippedByReason.max_pages_cap}`);
   if (skippedByReason.template_cap > 0) skipParts.push(`template_cap: ${skippedByReason.template_cap}`);
+  if (skippedByReason.auth_or_utility_route > 0) skipParts.push(`auth_or_utility_route: ${skippedByReason.auth_or_utility_route}`);
   const skipDetail = skipParts.length > 0 ? ` (${skipParts.join(', ')})` : '';
   const scopeSummary =
     `Scope: ${counts.audited} audited | ${counts.skipped} skipped${skipDetail} | ${counts.errored} errored` +
