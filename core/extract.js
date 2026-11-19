@@ -160,14 +160,8 @@ const VOID_TAGS = new Set([
 ]);
 
 const RAW_TEXT_TAGS = new Set(['script', 'style']);
-
-const BLOCK_TAGS = new Set([
-  'address', 'article', 'aside', 'blockquote', 'br', 'dd', 'details', 'dialog',
-  'div', 'dl', 'dt', 'fieldset', 'figcaption', 'figure', 'footer', 'form',
-  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'li', 'main',
-  'nav', 'ol', 'p', 'pre', 'section', 'summary', 'table', 'tbody', 'td',
-  'tfoot', 'th', 'thead', 'tr', 'ul',
-]);
+const SCRIPT_CLOSE_RE = /<\/script(?=[\s/>]|$)/gi;
+const STYLE_CLOSE_RE = /<\/style(?=[\s/>]|$)/gi;
 
 const CHROME_LANDMARK_TAGS = new Set(['nav', 'header', 'footer', 'aside']);
 const EMBEDDED_TITLE_CONTAINERS = new Set(['svg', 'iframe', 'template', 'noscript']);
@@ -470,28 +464,24 @@ function findTagEnd(html, start) {
 
 /**
  * Finds the closing tag `</tagName...>` for a raw-text element (`script` or `style`),
- * returning the start and end indices of the closing tag, or EOF if unclosed.
+ * scanning forward from `from` in O(N) without copying `html`.
  * @param {string} html
  * @param {number} from
  * @param {string} tagName
  * @returns {{ closeStart: number, closeEnd: number }}
  */
 function findRawTextClose(html, from, tagName) {
-  const lower = html.toLowerCase();
-  const needle = `</${tagName}`;
-  let idx = from;
-  while (idx < html.length) {
-    const pos = lower.indexOf(needle, idx);
-    if (pos === -1) return { closeStart: html.length, closeEnd: html.length };
-    const after = pos + needle.length;
-    const nextChar = lower[after];
-    if (nextChar === '>' || nextChar === undefined || /\s|\//.test(nextChar)) {
-      const end = html.indexOf('>', after);
-      return { closeStart: pos, closeEnd: end === -1 ? html.length : end + 1 };
-    }
-    idx = after;
-  }
-  return { closeStart: html.length, closeEnd: html.length };
+  const re = tagName === 'script'
+    ? SCRIPT_CLOSE_RE
+    : tagName === 'style'
+      ? STYLE_CLOSE_RE
+      : new RegExp(`</${tagName}(?=[\\s/>]|$)`, 'gi');
+  re.lastIndex = from;
+  const match = re.exec(html);
+  if (!match) return { closeStart: html.length, closeEnd: html.length };
+  const closeStart = match.index;
+  const end = html.indexOf('>', closeStart + match[0].length);
+  return { closeStart, closeEnd: end === -1 ? html.length : end + 1 };
 }
 
 /**

@@ -541,3 +541,16 @@ test('analyzeExtractionForensics detects Multi-Section / SaaS Drop Warning and M
   assert.equal(failRes.markdownTruncation.exceeds50k, true);
   assert.equal(failRes.markdownTruncation.exceeds100k, true);
 });
+
+test('linear-time raw-text scanning handles 800 Next.js RSC script chunks without O(N*S) slowdown', () => {
+  const chunk = `<script>self.__next_f.push([1,"${'a'.repeat(1800)}"]);</script>\n`;
+  const html = `<!doctype html><html><head><title>RSC Perf</title></head><body><main><h1>RSC Perf</h1><p>Body prose content.</p></main>${chunk.repeat(800)}</body></html>`;
+  const start = Date.now();
+  const stripped = stripConsentOverlays(html);
+  const f = analyzeExtractionForensics(stripped, undefined, { forceFallback: true });
+  const elapsedMs = Date.now() - start;
+
+  assert.ok(f.nextFlightBytes >= 800 * 1800);
+  assert.ok(f.payloadToProseRatio >= 15);
+  assert.ok(elapsedMs < 500, `expected linear-time scan <500ms, got ${elapsedMs}ms`);
+});
