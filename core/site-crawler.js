@@ -1771,19 +1771,20 @@ function detectPassiveWafState(headers, html, status, visibleCharCount, title) {
   const vercelMitigated = getHeader('x-vercel-mitigated');
   const amznWaf = getHeader('x-amzn-waf-action');
   const datadome = getHeader('x-datadome');
+  const isBlockOrChallengeStatus = status === 403 || status === 429 || status === 202 || status === 503;
 
   if (
     cfMitigated.includes('challenge') ||
     vercelMitigated.includes('challenge') ||
     amznWaf.includes('challenge') ||
     amznWaf.includes('captcha') ||
-    datadome.includes('protected')
+    (datadome.includes('protected') && isBlockOrChallengeStatus)
   ) {
     return 'challenge_or_block_intercepted';
   }
 
   // Hardened HTML challenge check: only when visible text < 1000 chars
-  if (visibleCharCount < CHALLENGE_MAX_TEXT_CHARS && (status === 200 || status === 202 || status === 403 || status === 429 || status === 503)) {
+  if (visibleCharCount < CHALLENGE_MAX_TEXT_CHARS && (status === 200 || isBlockOrChallengeStatus)) {
     const titleLower = (title ?? '').toLowerCase();
     if (CHALLENGE_TITLE_MARKERS.some((marker) => titleLower.includes(marker))) {
       return 'challenge_or_block_intercepted';
@@ -1792,6 +1793,11 @@ function detectPassiveWafState(headers, html, status, visibleCharCount, title) {
     if (CHALLENGE_HTML_MARKERS.some((marker) => htmlLower.includes(marker))) {
       return 'challenge_or_block_intercepted';
     }
+  }
+
+  // DataDome sends `x-datadome: protected` on normal 200 OK responses as passive bot telemetry
+  if (datadome.includes('protected')) {
+    return 'bot_management_active';
   }
 
   // Check Set-Cookie names ONLY (never log or inspect values)

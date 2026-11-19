@@ -744,6 +744,33 @@ test('Hard Infrastructure Gate triggers on transport failure, 403, WAF challenge
   const turnstileCrawl = await crawlSitePages(`${turnstileBase}/`, { single: true, allowPrivateHosts: true });
   assert.equal(turnstileCrawl.hardGate.triggered, false, 'Turnstile cf-chl- must never false-positive as WAF challenge');
   assert.equal(turnstileCrawl.pages[0].wafState, 'edge_detected');
+
+  // End-to-end: DataDome `x-datadome: protected` on healthy 200 OK -> bot_management_active (NOT Hard Gate),
+  // whereas `x-datadome: protected` on 403 -> challenge_or_block_intercepted (trips Hard Gate)
+  const { baseUrl: ddOkBase } = await startFixtureServer(t, (req, res) => {
+    if (req.url === '/robots.txt' || req.url === '/sitemap.xml') {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html', 'x-datadome': 'protected' });
+    res.end(htmlPage('DataDome Protected OK', 'DataDome Protected OK'));
+  });
+  const ddOkCrawl = await crawlSitePages(`${ddOkBase}/`, { single: true, allowPrivateHosts: true });
+  assert.equal(ddOkCrawl.hardGate.triggered, false, 'x-datadome: protected on 200 OK must not trip Hard Gate');
+  assert.equal(ddOkCrawl.pages[0].wafState, 'bot_management_active');
+
+  const { baseUrl: ddBlockBase } = await startFixtureServer(t, (req, res) => {
+    if (req.url === '/robots.txt') {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(403, { 'content-type': 'text/html', 'x-datadome': 'protected' });
+    res.end('<html><head><title>Blocked</title></head><body><p>Please enable JS</p></body></html>');
+  });
+  const ddBlockCrawl = await crawlSitePages(`${ddBlockBase}/`, { single: true, allowPrivateHosts: true });
+  assert.equal(ddBlockCrawl.hardGate.triggered, true);
+  assert.equal(ddBlockCrawl.hardGate.reason, 'waf_challenge_intercepted');
+  assert.equal(ddBlockCrawl.pages[0].wafState, 'challenge_or_block_intercepted');
 });
 
 test('compareCompetitors produces full --vs Competitor X-Ray matrix and explicit deltas', () => {
