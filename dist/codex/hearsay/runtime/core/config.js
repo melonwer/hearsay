@@ -43,6 +43,13 @@ export { parseEnvFile, withEnvFile } from './env-file.js';
  * @property {number} timeoutMs per-call timeout
  * @property {boolean} demo demo mode: no live calls, no scheduler, banner shown
  * @property {number} confirmUsd Run-cost confirm threshold in USD (SPEC §3.3); 0 = every run quotes first.
+ * @property {number|null} monthlyUsdCap hard monthly USD spend cap kill-switch, or null when unset
+ * @property {boolean} allowUnverifiedModels opt-in to run unvalidated models on web-search routes
+ * @property {number|null} locationCode optional DataForSEO numeric location_code (e.g. 2840 for US)
+ * @property {string|null} locationCountry optional ISO country code (e.g. 'US', 'GB')
+ * @property {string|null} locationCity optional city name (e.g. 'London')
+ * @property {string|null} languageCode optional language code (e.g. 'en')
+ * @property {{login: string, password: string, enabled: boolean, maskedLogin: string|null, maskedPassword: string|null}} dataforseo BYOK DataForSEO credentials
  * @property {Record<string, string|undefined>} pricingEnv resolved nonsecret price overrides
  * @property {{openai:'off'|'auto'|'required',anthropic:'off'|'auto',gemini:'off'|'auto',perplexity:'legacy'}} apiSearchPolicies
  * @property {Record<ProviderId, ProviderConfig>} providers
@@ -145,6 +152,59 @@ function timeOfDay(value, fallback) {
 }
 
 /**
+ * @param {string|undefined} value
+ * @returns {number|null}
+ */
+function optionalPositiveInt(value) {
+  const s = String(value ?? '').trim();
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * @param {string|undefined} value
+ * @returns {number|null}
+ */
+function optionalPositiveFloat(value) {
+  const s = String(value ?? '').trim();
+  if (s === '') return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * @param {string|undefined} value
+ * @returns {string|null}
+ */
+function optionalString(value) {
+  const s = String(value ?? '').trim();
+  return s === '' ? null : s;
+}
+
+/**
+ * Build a deterministic `location_control` metadata string from geo settings.
+ * Returns `'uncontrolled'` when no location setting is configured.
+ *
+ * @param {{locationCode?: number|null, locationCountry?: string|null, locationCity?: string|null}} cfg
+ * @returns {string}
+ */
+export function formatLocationControl(cfg) {
+  /** @type {string[]} */
+  const parts = [];
+  if (typeof cfg.locationCode === 'number' && Number.isInteger(cfg.locationCode) && cfg.locationCode > 0) {
+    parts.push(`location_code:${cfg.locationCode}`);
+  }
+  if (typeof cfg.locationCountry === 'string' && cfg.locationCountry.trim() !== '') {
+    parts.push(`country:${cfg.locationCountry.trim()}`);
+  }
+  if (typeof cfg.locationCity === 'string' && cfg.locationCity.trim() !== '') {
+    parts.push(`city:${cfg.locationCity.trim()}`);
+  }
+  return parts.length > 0 ? parts.join(';') : 'uncontrolled';
+}
+
+/**
  * Mask a secret for display: keeps a short prefix and the last 3 characters (§11.6).
  * Returns null for empty input so callers never have to special-case "".
  *
@@ -208,13 +268,30 @@ export function buildConfig(env) {
       maskedKey: maskSecret(apiKey),
     };
   }
+  const allowUnverifiedModels = String(env.HEARSAY_ALLOW_UNVERIFIED_MODELS ?? '').trim() === '1';
   const registry = /** @type {Record<ProviderId, ProviderConfig>} */ (providers);
-  if (openaiSearchPolicy !== 'off' && registry.openai.model !== 'gpt-5.6-luna') {
+  if (!allowUnverifiedModels && openaiSearchPolicy !== 'off' && registry.openai.model !== 'gpt-5.6-luna') {
     throw new RangeError(`OpenAI web search is validated for gpt-5.6-luna, not ${registry.openai.model}`);
   }
-  if (anthropicSearchPolicy !== 'off' && registry.anthropic.model !== 'claude-sonnet-5') {
+  if (!allowUnverifiedModels && anthropicSearchPolicy !== 'off' && registry.anthropic.model !== 'claude-sonnet-5') {
     throw new RangeError(`Anthropic web search is validated for claude-sonnet-5, not ${registry.anthropic.model}`);
   }
+
+  const locationCode = optionalPositiveInt(env.HEARSAY_LOCATION_CODE);
+  const rawCountry = optionalString(env.HEARSAY_LOCATION_COUNTRY);
+  const locationCountry = rawCountry ? rawCountry.toUpperCase() : null;
+  const locationCity = optionalString(env.HEARSAY_LOCATION_CITY);
+  const languageCode = optionalString(env.HEARSAY_LANGUAGE_CODE);
+  const monthlyUsdCap = optionalPositiveFloat(env.HEARSAY_MONTHLY_USD_CAP);
+  const dataforseoLogin = String(env.DATAFORSEO_LOGIN ?? '').trim();
+  const dataforseoPassword = String(env.DATAFORSEO_PASSWORD ?? '').trim();
+  const dataforseo = {
+    login: dataforseoLogin,
+    password: dataforseoPassword,
+    enabled: dataforseoLogin !== '' && dataforseoPassword !== '',
+    maskedLogin: maskSecret(dataforseoLogin),
+    maskedPassword: maskSecret(dataforseoPassword),
+  };
 
   const demo = String(env.HEARSAY_DEMO ?? '').trim() === '1';
   const realDbPath = String(env.HEARSAY_DB_PATH ?? '').trim() || './data/hearsay.db';
@@ -245,6 +322,13 @@ export function buildConfig(env) {
     timeoutMs: intIn(env.HEARSAY_TIMEOUT_MS, 45000, 1000, 600000),
     demo,
     confirmUsd: floatIn(env.HEARSAY_CONFIRM_USD, 1, 0),
+    monthlyUsdCap,
+    allowUnverifiedModels,
+    locationCode,
+    locationCountry,
+    locationCity,
+    languageCode,
+    dataforseo,
     pricingEnv,
     apiSearchPolicies: {
       openai: /** @type {'off'|'auto'|'required'} */ (openaiSearchPolicy),

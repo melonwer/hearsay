@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { resolve } from 'node:path';
-import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { discoverAgents, previewResearchRun, runResearchPanel, renderSavedReport, compareSavedRuns, readJson } from '../core/research-workspace.js';
 import { previewResearchSchedule, enableResearchSchedule, disableResearchSchedule, readResearchSchedule, researchScheduleTick } from '../core/research-schedule.js';
 import { ResearchError } from '../core/research-contract.js';
 import { studyCommand, STUDY_HELP } from '../core/study-cli.js';
 import { inspectSetup, saveSetup } from '../core/plugin-setup.js';
+import { checkSite, renderSiteCheckHtml, renderSiteCheckText, SiteCheckError } from '../core/site-check.js';
 
 const HELP = `Hearsay: standalone research helpers and optional account measurements
 
+hearsay check <url> [--json] [--html FILE] [--timeout MS] [--browser]
+                                                 Zero-key technical AI crawlability & payload pre-flight audit
+hearsay serve [--port PORT] [--host HOST]        Start the local Hearsay dashboard HTTP server
 hearsay doctor [--project DIR] [--host HOST] [--host-capabilities FILE] [--check-tavily]
 hearsay setup [inspect] [--project DIR]           Read-only local inspection, JSON
 hearsay setup save --project DIR --input FILE    Save non-secret inferred profile
@@ -39,11 +43,62 @@ async function main() {
     study: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' }, author: { type: 'string' }, url: { type: 'string' }, source: { type: 'string' }, change: { type: 'string' }, reason: { type: 'string' }, 'account-directory': { type: 'string' },
     host: { type: 'string' }, 'host-capabilities': { type: 'string' },
     'check-tavily': { type: 'boolean' },
+    html: { type: 'string' }, timeout: { type: 'string' }, browser: { type: 'boolean' }, 'allow-private-hosts': { type: 'boolean' }, port: { type: 'string' },
   } });
   if (values.help || !positionals.length) { process.stdout.write(HELP); return; }
   const [command, action] = positionals;
   let result;
-  if (command === 'doctor' || (command === 'setup' && (!action || action === 'inspect'))) {
+  if (command === 'check') {
+    const targetUrl = action ?? values.url;
+    if (!targetUrl) throw new ResearchError('invalid_arguments', 'check requires a URL: hearsay check <url>');
+    /** @type {number|undefined} */
+    let timeoutMs;
+    if (values.timeout !== undefined) {
+      timeoutMs = Number(values.timeout);
+      if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+        throw new ResearchError('invalid_arguments', '--timeout must be a positive number of milliseconds');
+      }
+    }
+    const report = await checkSite(targetUrl, {
+      timeoutMs,
+      browser: Boolean(values.browser),
+      allowPrivateHosts: Boolean(values['allow-private-hosts']),
+    });
+    if (values.html) {
+      const htmlPath = resolve(values.html);
+      mkdirSync(dirname(htmlPath), { recursive: true });
+      writeFileSync(htmlPath, renderSiteCheckHtml(report), 'utf8');
+    }
+    if (values.json) {
+      process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+    } else {
+      process.stdout.write(renderSiteCheckText(report) + '\n');
+      if (values.html) process.stdout.write(`\nHTML report written to ${resolve(values.html)}\n`);
+    }
+    return;
+  } else if (command === 'serve') {
+    if (action) throw new ResearchError('invalid_arguments', 'serve takes no positional action');
+    /** @type {number|undefined} */
+    let port;
+    if (values.port !== undefined) {
+      port = Number(values.port);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+        throw new ResearchError('invalid_arguments', '--port must be an integer between 0 and 65535');
+      }
+    }
+    const { startServer, VERSION, startupGuidance } = await import('../server.js');
+    const app = await startServer({
+      ...(port !== undefined ? { port } : {}),
+      ...(values.host ? { host: values.host } : {}),
+    });
+    process.stdout.write(`Hearsay v${VERSION} listening on http://${app.config.host}:${app.port}\n`);
+    const guidance = startupGuidance(app.config);
+    if (guidance) process.stdout.write(`${guidance}\n`);
+    const shutdown = () => { void app.close().finally(() => process.exit(0)); };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+    return;
+  } else if (command === 'doctor' || (command === 'setup' && (!action || action === 'inspect'))) {
     if (command === 'doctor' && action) throw new ResearchError('invalid_arguments', 'Doctor takes no action');
     result = await inspectSetup({ project: values.project, host: values.host, checkTavily: values['check-tavily'], hostCapabilities: values['host-capabilities'] ? readJson(values['host-capabilities']) : undefined });
   } else if (command === 'setup') {
@@ -86,7 +141,12 @@ async function main() {
 }
 main().catch((error) => {
   const code = error.code ?? 'execution_failed';
-  const status = /consent|selection|review_required/.test(code) ? 3 : /auth|unsupported_profile/.test(code) ? 4 : /locked|conflict/.test(code) ? 6 : code === 'scheduler_unavailable' ? 7 : error instanceof ResearchError || code.startsWith('ERR_PARSE_ARGS') ? 2 : 5;
-  process.stderr.write(JSON.stringify({ error: { code, message: error instanceof ResearchError ? error.message : 'Command failed; check paths, saved configuration and executable readiness' } }) + '\n');
+  const status = error instanceof SiteCheckError
+    ? (code === 'invalid_url' || code === 'ssrf_blocked' || code === 'invalid_arguments' ? 2 : 5)
+    : /consent|selection|review_required/.test(code) ? 3 : /auth|unsupported_profile/.test(code) ? 4 : /locked|conflict/.test(code) ? 6 : code === 'scheduler_unavailable' ? 7 : error instanceof ResearchError || code.startsWith('ERR_PARSE_ARGS') ? 2 : 5;
+  const safeMessage = error instanceof ResearchError || error instanceof SiteCheckError
+    ? error.message
+    : 'Command failed; check paths, saved configuration and executable readiness';
+  process.stderr.write(JSON.stringify({ error: { code, message: safeMessage } }) + '\n');
   process.exitCode = status;
 });

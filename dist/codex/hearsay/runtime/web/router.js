@@ -117,7 +117,9 @@ const STATUS_CODE = {
   415: 'unsupported_media_type',
   422: 'unprocessable',
   500: 'internal_error',
+  502: 'bad_gateway',
   503: 'not_ready',
+  504: 'gateway_timeout',
 };
 
 /**
@@ -352,6 +354,22 @@ export function createRouter({ publicDir }) {
   }
 
   /**
+   * Replace an existing `(method, pattern)` handler in place, or append if absent.
+   * Keeps the route table free of duplicate registrations.
+   * @param {string} method
+   * @param {string} pattern
+   * @param {Handler} handler
+   * @returns {void}
+   */
+  function replace(method, pattern, handler) {
+    const upper = method.toUpperCase();
+    const entry = { method: upper, pattern, segs: segments(pattern), handler };
+    const idx = routes.findIndex((route) => route.method === upper && route.pattern === pattern);
+    if (idx >= 0) routes[idx] = entry;
+    else routes.push(entry);
+  }
+
+  /**
    * @param {Req} req
    * @param {Res} res
    * @returns {Promise<void>}
@@ -425,7 +443,7 @@ export function createRouter({ publicDir }) {
     }
   }
 
-  return { add, handle, routes };
+  return { add, replace, handle, routes };
 }
 
 /**

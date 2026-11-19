@@ -1,10 +1,10 @@
 import { intentEvidenceReport, listEvidenceIntents } from '../../core/evidence-report.js';
 import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metrics.js';
-import { deriveOpportunityCandidates, listOpportunities } from '../../core/opportunities.js';
+import { citationPersistenceReport, deriveOpportunityCandidates, listOpportunities } from '../../core/opportunities.js';
 import { compareIntervention } from '../../core/intervention-comparison.js';
 import { summarizeResearchCitationGaps } from '../../core/research-report.js';
 import { deriveStudyReport } from '../../core/study-report.js';
-import { emptyState, html, layout, raw, SURFACE_LABEL } from '../layout.js';
+import { emptyState, html, layout, pct, rateWithCI, raw, SURFACE_LABEL } from '../layout.js';
 import { listResearchActions } from '../../core/research-store.js';
 import { brandEntity, listStandaloneRunsForHandoff } from '../queries.js';
 import { researchActionCards } from './research.js';
@@ -167,7 +167,7 @@ function selectionUrl(view, patch = {}) {
 }
 
 /** @param {import('./index.js').PageDeps} deps @param {URLSearchParams} params */
-export function buildView({ db }, params) {
+export function buildView({ db, config }, params) {
   const now = new Date();
   const requestedDays = positiveInt(params.get('days'));
   const days = requestedDays !== null && requestedDays <= 3650 ? requestedDays : 30;
@@ -203,10 +203,14 @@ export function buildView({ db }, params) {
       }
     }
   }
+  const citationPersistence = citationPersistenceReport(db, {
+    includeSeeded: Boolean(config?.demo),
+  });
   return {
     researchActions: listResearchActions(db),
     standaloneHandoffs: buildStandaloneHandoffs(db),
     nativeHandoff: buildNativeIntentHandoff(db, series, intentId),
+    citationPersistence,
     days, seriesOptions, series, intents, intentId, candidates, opportunities: selected,
     comparisons, comparisonPlanId, comparisonSnapshotId,
     prefill: {
@@ -667,13 +671,102 @@ function opportunityCard(view, item) {
   </article>`;
 }
 
+/** @param {string} rawUrl @param {string} label */
+function safeExternalLink(rawUrl, label) {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return html`<a href="${parsed.href}" target="_blank" rel="noreferrer noopener nofollow">${label}</a>`;
+    }
+  } catch { /* Stored URL may predate validation. */ }
+  return html`${label}`;
+}
+
+/** @param {string} tier */
+function persistenceTierBadge(tier) {
+  const tone = tier === 'durable'
+    ? 'status-pill-active'
+    : tier === 'recurring'
+      ? 'status-pill-collecting'
+      : tier === 'single_wave_unverified'
+        ? 'status-pill-warn'
+        : 'status-pill-off';
+  return html`<span class="status-pill ${tone}">${tier}</span>`;
+}
+
+/** @param {ReturnType<typeof citationPersistenceReport>|null|undefined} persistence */
+function persistentOffSiteTargetsSection(persistence) {
+  if (!persistence) return '';
+  const { summary, offSiteTargets, domains, urls, limitations } = persistence;
+  const thirdPartyDomains = domains.filter((d) => d.ownership === 'third_party').slice(0, 15);
+  const thirdPartyUrls = (offSiteTargets.length > 0
+    ? offSiteTargets
+    : urls.filter((u) => u.ownership === 'third_party')).slice(0, 20);
+  const showingBrandAbsentOnly = offSiteTargets.length > 0;
+
+  return html`<section class="card" id="persistent-offsite-targets">
+    <h2>Persistent Off-Site Targets</h2>
+    <p class="muted">Third-party domains and pages ranked by multi-wave citation durability across completed runs. Single-wave runs are explicitly marked <code>single_wave_unverified</code> rather than claiming durability.</p>
+    <dl class="kv">
+      <dt>Completed waves</dt>
+      <dd>${summary.totalWaves} wave${summary.totalWaves === 1 ? '' : 's'} (${summary.citedResponses} cited of ${summary.totalResponses} eligible answers)</dd>
+      <dt>Off-site citation share</dt>
+      <dd>${pct(summary.offSiteShare)} · ${rateWithCI(summary.offSiteShareCi)} <span class="muted">(${summary.ownershipCounts.third_party} third-party of ${summary.totalCitations} citations)</span></dd>
+      <dt>Durability tiers</dt>
+      <dd class="pill-group">
+        ${persistenceTierBadge('durable')} <span>${summary.durableCount}</span>
+        ${persistenceTierBadge('recurring')} <span>${summary.recurringCount}</span>
+        ${persistenceTierBadge('single_wave_unverified')} <span>${summary.singleWaveUnverifiedCount}</span>
+        ${persistenceTierBadge('ephemeral')} <span>${summary.ephemeralCount}</span>
+      </dd>
+      <dt>Brand-absent off-site targets</dt>
+      <dd>${summary.offSiteTargetCount} third-party URL${summary.offSiteTargetCount === 1 ? '' : 's'}</dd>
+    </dl>
+
+    ${thirdPartyUrls.length
+      ? html`<h3>${showingBrandAbsentOnly ? 'Ranked third-party off-site targets (brand absent, competitor present)' : 'Ranked third-party cited URLs'}</h3>
+        <div class="table-scroll"><table class="table">
+          <thead><tr><th>Target URL</th><th>Durability</th><th class="num">Waves</th><th class="num">Citations</th><th>Competitor impact</th><th class="num">Brand absent</th></tr></thead>
+          <tbody>${thirdPartyUrls.map((item) => html`<tr>
+            <td>${safeExternalLink(item.url, item.url)}<br /><small class="muted"><code>${item.domain}</code></small></td>
+            <td>${persistenceTierBadge(item.tier)}</td>
+            <td class="num">${item.wavesSeen}/${item.totalWaves} <small class="muted">(${pct(item.persistenceRate)})</small></td>
+            <td class="num">${item.citationCount}</td>
+            <td>${item.competitorRecommendations} rec · ${item.competitorMentions} mentions${item.recommendedCompetitorNames.length ? html`<br /><small class="muted">Recommended: ${item.recommendedCompetitorNames.join(', ')}</small>` : item.competitorNames.length ? html`<br /><small class="muted">Mentioned: ${item.competitorNames.join(', ')}</small>` : ''}</td>
+            <td class="num">${item.brandAbsentCount}</td>
+          </tr>`)}</tbody>
+        </table></div>`
+      : html`<p class="muted">No third-party cited targets recorded across completed waves yet.</p>`}
+
+    ${thirdPartyDomains.length
+      ? html`<details open><summary>Third-party domains by durability (${thirdPartyDomains.length})</summary>
+        <div class="table-scroll"><table class="table">
+          <thead><tr><th>Domain</th><th>Durability</th><th class="num">Waves</th><th class="num">URLs</th><th class="num">Citations</th><th>Competitor impact</th></tr></thead>
+          <tbody>${thirdPartyDomains.map((d) => html`<tr>
+            <td><code>${d.domain}</code></td>
+            <td>${persistenceTierBadge(d.tier)}</td>
+            <td class="num">${d.wavesSeen}/${d.totalWaves} <small class="muted">(${pct(d.persistenceRate)})</small></td>
+            <td class="num">${d.urlCount}</td>
+            <td class="num">${d.citationCount}</td>
+            <td>${d.competitorRecommendations} rec · ${d.competitorMentions} mentions${d.recommendedCompetitorNames.length ? html` <small class="muted">(${d.recommendedCompetitorNames.join(', ')})</small>` : ''}</td>
+          </tr>`)}</tbody>
+        </table></div>
+      </details>`
+      : ''}
+
+    ${limitations.length
+      ? html`<details><summary>Persistence scope &amp; limitations (${limitations.length})</summary><ul>${limitations.map((note) => html`<li>${note}</li>`)}</ul></details>`
+      : ''}
+  </section>`;
+}
+
 /** @param {import('../layout.js').ShellCtx} ctx @param {ReturnType<typeof buildView>} view */
 export function render(ctx, view) {
   let body = html`<p class="muted">Review observed evidence, choose a next step, and record who owns it. These entries are hypotheses and decisions, not claims about how an engine ranks pages.</p>${researchActionCards(view.researchActions ?? [])}${standaloneCitationGapSection(view.standaloneHandoffs ?? [])}${selector(view)}`;
   if (!view.series || view.intentId === null) {
     body = html`${body}${emptyState({ title: 'No evidence for this selection',
       line: 'Choose a measurement series and buyer intent with completed comparable answers.',
-      hint: 'Opportunities become available after a panel run stores answer receipts.' })}`;
+      hint: 'Opportunities become available after a panel run stores answer receipts.' })}${view.citationPersistence?.summary?.totalWaves ? persistentOffSiteTargetsSection(view.citationPersistence) : ''}`;
   } else {
     const pending = view.opportunities.filter((item) => item.status === 'pending');
     const active = view.opportunities.filter((item) => !['pending', 'dismissed', 'no_action', 'combined'].includes(item.status));
@@ -681,6 +774,7 @@ export function render(ctx, view) {
     body = html`${body}
       <p class="muted opportunity-scope">Exact series ${view.series.id} · ${SURFACE_LABEL[view.series.surface] ?? view.series.surface} · benchmark ${view.series.benchmarkRevisionId ?? 'legacy'} · ${view.series.start} to ${view.series.end} UTC, end exclusive</p>
       ${candidateSection(view)}
+      ${persistentOffSiteTargetsSection(view.citationPersistence)}
       ${pending.length ? html`<section aria-label="Pending assistant proposals"><h2>Pending assistant proposals</h2>
         <p class="muted">These are assistant-authored hypotheses. Review and accept one before it joins the shortlist.</p>
         ${pending.map((item) => opportunityCard(view, item))}

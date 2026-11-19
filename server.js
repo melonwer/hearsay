@@ -186,7 +186,7 @@ const SETTINGS_ENV_KEYS = /** @type {const} */ ([
 
 const SEARCH_POLICY_VALUES = new Set(['off', 'auto', 'required', 'legacy']);
 const UTC_SECOND_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
-const ACCENT_COLOR_RE = /^#[0-9a-fA-F]{3,8}$/;
+const ACCENT_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const ISO_COUNTRY_RE = /^[A-Za-z]{2}$/;
 const LANGUAGE_CODE_RE = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?$/;
 
@@ -730,9 +730,9 @@ function registerWave2Routes(router, deps) {
         ...whiteLabel,
       });
       const renderFn =
-        typeof exportMod.renderClientReport === 'function'
-          ? exportMod.renderClientReport
-          : exportMod.renderClientReportHtml;
+        typeof exportMod.renderClientReportHtml === 'function'
+          ? exportMod.renderClientReportHtml
+          : exportMod.renderClientReport;
       const htmlBody = renderFn(report, whiteLabel);
 
       const slug =

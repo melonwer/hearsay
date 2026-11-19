@@ -1,10 +1,20 @@
 import { createHash } from 'node:crypto';
 import { all, get, isoNow, run, transaction } from './db.js';
-import { intentEvidenceReport } from './evidence-report.js';
-import { resolveMeasurementSeries } from './metrics.js';
+import {
+  chunkedInQuery, classifyUrlOwnership, intentEvidenceReport, loadActiveEntities,
+  queryForensicResponses, resolveEffectiveMentions, responseSeriesIdentity,
+} from './evidence-report.js';
+import { sourceGroupingUrl } from './measurement-contract.js';
+import { resolveMeasurementSeries, wilson } from './metrics.js';
 
 /** @typedef {import('node:sqlite').DatabaseSync} Db */
 /** @typedef {import('./metrics.js').MeasurementSeries} Series */
+/** @typedef {import('./evidence-report.js').ForensicFilters} ForensicFilters */
+/** @typedef {import('./evidence-report.js').UrlOwnership} UrlOwnership */
+/** @typedef {'durable'|'recurring'|'single_wave_unverified'|'ephemeral'} PersistenceTier */
+/** @typedef {{tier:PersistenceTier,wavesSeen:number,totalWaves:number,persistenceRate:number,
+ *   ownership:UrlOwnership,citationCount:number,competitorRecommendations:number,
+ *   brandAbsentCount:number}} CandidateCitationPersistence */
 /** @typedef {{responseId:number,mentionId:number,interpretationId:number,correctionId:number|null,stance:string}} StanceReviewRef */
 /** @typedef {{responseIds:number[],queryIds:number[],sourceIds:number[],citationIds:number[],stanceReviews?:StanceReviewRef[]}} EvidenceIds */
 /** @typedef {{candidateKey:string,candidateType:string,intentId:number,buyerRelevance:string,
@@ -15,7 +25,7 @@ import { resolveMeasurementSeries } from './metrics.js';
  * origin:string,author:string,missingEvidence:string[],claimClassification:string,
  * dismissalReason:string|null,combinedIntoId:number|null,resurfacedExplanation:string|null,
  * support:{responseCount:number,completedRunCount:number},existingOpportunityId:number|null,
- * newResponseIds:number[]}} Candidate */
+ * newResponseIds:number[],citationPersistence?:CandidateCitationPersistence|null}} Candidate */
 
 const EFFORT = ['unknown', 'low', 'medium', 'high'];
 const CONTROL = ['owned', 'third_party', 'product'];
@@ -239,6 +249,20 @@ export function deriveOpportunityCandidates(db, input) {
     if (!list) { list = []; byIntent.set(intentId, list); }
     if (completed.has(answer.id)) list.push(answer);
   }
+  /** @type {Map<string, CandidateCitationPersistence>} */
+  const persistenceByUrl = new Map();
+  for (const item of citationPersistenceReport(db, { series, includeSeeded: true }).urls) {
+    persistenceByUrl.set(item.url, {
+      tier: item.tier,
+      wavesSeen: item.wavesSeen,
+      totalWaves: item.totalWaves,
+      persistenceRate: item.persistenceRate,
+      ownership: item.ownership,
+      citationCount: item.citationCount,
+      competitorRecommendations: item.competitorRecommendations,
+      brandAbsentCount: item.brandAbsentCount,
+    });
+  }
   /** @type {Candidate[]} */
   const result = [];
   for (const [intentId, answers] of byIntent) {
@@ -268,6 +292,8 @@ export function deriveOpportunityCandidates(db, input) {
         newResponseIds = newResponseIds.filter((id) => laterIds.has(id));
         if (!newResponseIds.length) return;
       }
+      const canonicalTarget = targetUrl ? (sourceGroupingUrl(targetUrl) ?? targetUrl) : null;
+      const citationPersistence = canonicalTarget ? (persistenceByUrl.get(canonicalTarget) ?? null) : null;
       result.push({ candidateKey: candidateKeyValue, candidateType: type, intentId,
         buyerRelevance: intentLabel, seriesId: series.id, series, windowStart: series.start,
         windowEnd: series.end, benchmarkRevisionId: series.benchmarkRevisionId,
@@ -280,7 +306,8 @@ export function deriveOpportunityCandidates(db, input) {
         claimClassification: 'observation', dismissalReason: null, combinedIntoId: null,
         resurfacedExplanation: prior && newResponseIds.length
           ? `New supporting answer ${newResponseIds.join(', ')} appeared in this selection.` : null,
-        support, existingOpportunityId: prior ? Number(prior.id) : null, newResponseIds });
+        support, existingOpportunityId: prior ? Number(prior.id) : null, newResponseIds,
+        citationPersistence });
     };
     if (brandId !== null) {
       const answerById = new Map(answers.map((answer) => [answer.id, answer]));
@@ -822,4 +849,368 @@ export function combineOpportunities(db, input) {
     event(db, target.id, 'combined_source', { sourceId: source.id, evidence: source.evidence }, author, at);
   });
   return getOpportunity(db, target.id);
+}
+
+const PERSISTENCE_TIER_RANK = /** @type {const} */ ({
+  durable: 0,
+  recurring: 1,
+  single_wave_unverified: 2,
+  ephemeral: 3,
+});
+
+/**
+ * Classify multi-wave citation persistence. Refuses to fabricate durability on a single wave.
+ * @param {number} wavesSeen
+ * @param {number} totalWaves
+ * @returns {PersistenceTier}
+ */
+function persistenceTier(wavesSeen, totalWaves) {
+  if (totalWaves < 2) return 'single_wave_unverified';
+  if (wavesSeen * 5 >= totalWaves * 3) return 'durable';
+  if (wavesSeen >= 2) return 'recurring';
+  return 'ephemeral';
+}
+
+/**
+ * Forensics Analyzer 3: Multi-Wave Citation Persistence & Off-Site Outreach Targets.
+ *
+ * Groups completed runs (`runs.status = 'done'`) into chronological measurement waves
+ * and tracks persistence across waves for every cited domain and canonical URL in
+ * `answer_citations`. Computes competitor mentions, competitor recommendations (respecting
+ * latest human `mention_corrections`), and brand-absent counts, ranking third-party
+ * `offSiteTargets` by durability tier, persistence rate, competitor recommendations, and
+ * citation count.
+ *
+ * @param {Db} db
+ * @param {ForensicFilters} [filters]
+ */
+export function citationPersistenceReport(db, filters = {}) {
+  const f = filters ?? {};
+  const { entities, byId, brand } = loadActiveEntities(db);
+  const responses = queryForensicResponses(db, f, { completedRunsOnly: true });
+
+  /** @type {Map<number, {runId:number,startedAt:string,finishedAt:string|null,responseCount:number,citedResponseIds:Set<number>,citationCount:number}>} */
+  const waveMap = new Map();
+  /** @type {Map<number, Record<string, unknown>>} */
+  const responseById = new Map();
+  /** @type {Map<string, {provider:string,model:string,surface:string|null}>} */
+  const distinctSeries = new Map();
+
+  for (const row of responses) {
+    const rid = Number(row.id);
+    const runId = Number(row.run_id);
+    responseById.set(rid, row);
+    const sid = responseSeriesIdentity(row);
+    if (!distinctSeries.has(sid)) {
+      distinctSeries.set(sid, {
+        provider: String(row.provider),
+        model: String(row.model),
+        surface: row.surface === null || row.surface === undefined ? null : String(row.surface),
+      });
+    }
+    let wave = waveMap.get(runId);
+    if (!wave) {
+      wave = {
+        runId,
+        startedAt: String(row.run_started_at ?? row.created_at),
+        finishedAt: row.run_finished_at === null || row.run_finished_at === undefined ? null : String(row.run_finished_at),
+        responseCount: 0,
+        citedResponseIds: new Set(),
+        citationCount: 0,
+      };
+      waveMap.set(runId, wave);
+    }
+    wave.responseCount += 1;
+  }
+
+  const orderedWaves = [...waveMap.values()].sort(
+    (a, b) => a.startedAt.localeCompare(b.startedAt) || a.runId - b.runId,
+  );
+  const waveOrderIndex = new Map(orderedWaves.map((w, idx) => [w.runId, idx]));
+  const totalWaves = orderedWaves.length;
+
+  const responseIds = responses.map((row) => Number(row.id));
+  const rawCitations = chunkedInQuery(
+    db,
+    'SELECT id, response_id, url, provenance, ordinal FROM answer_citations WHERE response_id IN (',
+    responseIds,
+    ') ORDER BY response_id, ordinal, id',
+  );
+
+  const citedResponseIdSet = new Set(rawCitations.map((c) => Number(c.response_id)));
+  const citedResponseRows = responses.filter((r) => citedResponseIdSet.has(Number(r.id)));
+  const mentionsByResponse = resolveEffectiveMentions(db, citedResponseRows, byId);
+
+  /**
+   * @typedef {{domain:string,url:string,rawUrl:string,ownership:UrlOwnership,
+   *   entityId:number|null,entityName:string|null,waveRunIds:Set<number>,
+   *   responseIds:Set<number>,citationCount:number,firstSeenAt:string,lastSeenAt:string}} UrlAccum
+   */
+  /**
+   * @typedef {{domain:string,ownership:UrlOwnership,entityId:number|null,entityName:string|null,
+   *   waveRunIds:Set<number>,responseIds:Set<number>,urls:Set<string>,citationCount:number,
+   *   firstSeenAt:string,lastSeenAt:string}} DomainAccum
+   */
+  /** @type {Map<string, UrlAccum>} */
+  const urlMap = new Map();
+  /** @type {Map<string, DomainAccum>} */
+  const domainMap = new Map();
+
+  const ownershipCounts = {
+    brand_owned: 0,
+    competitor_owned: 0,
+    third_party: 0,
+  };
+
+  for (const c of rawCitations) {
+    const rid = Number(c.response_id);
+    const resp = responseById.get(rid);
+    if (!resp) continue;
+    const runId = Number(resp.run_id);
+    const createdAt = String(resp.created_at);
+    const rawUrl = String(c.url);
+    const info = classifyUrlOwnership(rawUrl, null, entities, byId);
+    if (!info.domain) continue;
+
+    ownershipCounts[info.ownership] += 1;
+    const wave = waveMap.get(runId);
+    if (wave) {
+      wave.citedResponseIds.add(rid);
+      wave.citationCount += 1;
+    }
+
+    let uAcc = urlMap.get(info.canonicalUrl);
+    if (!uAcc) {
+      uAcc = {
+        domain: info.domain,
+        url: info.canonicalUrl,
+        rawUrl,
+        ownership: info.ownership,
+        entityId: info.entityId,
+        entityName: info.entityName,
+        waveRunIds: new Set(),
+        responseIds: new Set(),
+        citationCount: 0,
+        firstSeenAt: createdAt,
+        lastSeenAt: createdAt,
+      };
+      urlMap.set(info.canonicalUrl, uAcc);
+    }
+    uAcc.waveRunIds.add(runId);
+    uAcc.responseIds.add(rid);
+    uAcc.citationCount += 1;
+    if (createdAt < uAcc.firstSeenAt) uAcc.firstSeenAt = createdAt;
+    if (createdAt > uAcc.lastSeenAt) uAcc.lastSeenAt = createdAt;
+
+    let dAcc = domainMap.get(info.domain);
+    if (!dAcc) {
+      dAcc = {
+        domain: info.domain,
+        ownership: info.ownership,
+        entityId: info.entityId,
+        entityName: info.entityName,
+        waveRunIds: new Set(),
+        responseIds: new Set(),
+        urls: new Set(),
+        citationCount: 0,
+        firstSeenAt: createdAt,
+        lastSeenAt: createdAt,
+      };
+      domainMap.set(info.domain, dAcc);
+    }
+    dAcc.waveRunIds.add(runId);
+    dAcc.responseIds.add(rid);
+    dAcc.urls.add(info.canonicalUrl);
+    dAcc.citationCount += 1;
+    if (createdAt < dAcc.firstSeenAt) dAcc.firstSeenAt = createdAt;
+    if (createdAt > dAcc.lastSeenAt) dAcc.lastSeenAt = createdAt;
+  }
+
+  /** @param {Set<number>} responseIdSet */
+  const summarizeMentions = (responseIdSet) => {
+    let competitorMentions = 0;
+    let competitorRecommendations = 0;
+    let brandAbsentCount = 0;
+    /** @type {Set<string>} */
+    const competitorNames = new Set();
+    /** @type {Set<string>} */
+    const recommendedCompetitorNames = new Set();
+
+    for (const rid of responseIdSet) {
+      const rMentions = mentionsByResponse.get(rid) ?? [];
+      /** @type {Set<number>} */
+      const mentionedCompIds = new Set();
+      /** @type {Set<number>} */
+      const positiveCompIds = new Set();
+      let brandPresent = false;
+
+      for (const m of rMentions) {
+        if (m.isSelf) {
+          brandPresent = true;
+        } else {
+          mentionedCompIds.add(m.entityId);
+          competitorNames.add(m.entityName);
+          if (m.isPositive) {
+            positiveCompIds.add(m.entityId);
+            recommendedCompetitorNames.add(m.entityName);
+          }
+        }
+      }
+
+      competitorMentions += mentionedCompIds.size;
+      competitorRecommendations += positiveCompIds.size;
+      if (brand && mentionedCompIds.size > 0 && !brandPresent) {
+        brandAbsentCount += 1;
+      }
+    }
+
+    return {
+      competitorMentions,
+      competitorRecommendations,
+      brandAbsentCount,
+      competitorNames: [...competitorNames].sort(),
+      recommendedCompetitorNames: [...recommendedCompetitorNames].sort(),
+    };
+  };
+
+  /** @param {Set<number>} runIds */
+  const sortedWaveRunIds = (runIds) => [...runIds].sort(
+    (a, b) => (waveOrderIndex.get(a) ?? 0) - (waveOrderIndex.get(b) ?? 0),
+  );
+
+  const urls = [...urlMap.values()].map((acc) => {
+    const wavesSeen = acc.waveRunIds.size;
+    const persistenceRate = totalWaves > 0 ? wavesSeen / totalWaves : 0;
+    const tier = persistenceTier(wavesSeen, totalWaves);
+    const mentionStats = summarizeMentions(acc.responseIds);
+    return {
+      domain: acc.domain,
+      url: acc.url,
+      rawUrl: acc.rawUrl,
+      ownership: acc.ownership,
+      entityId: acc.entityId,
+      entityName: acc.entityName,
+      wavesSeen,
+      totalWaves,
+      persistenceRate,
+      citationCount: acc.citationCount,
+      responseCount: acc.responseIds.size,
+      firstSeenAt: acc.firstSeenAt,
+      lastSeenAt: acc.lastSeenAt,
+      competitorMentions: mentionStats.competitorMentions,
+      competitorRecommendations: mentionStats.competitorRecommendations,
+      brandAbsentCount: mentionStats.brandAbsentCount,
+      competitorNames: mentionStats.competitorNames,
+      recommendedCompetitorNames: mentionStats.recommendedCompetitorNames,
+      tier,
+      waveRunIds: sortedWaveRunIds(acc.waveRunIds),
+      responseIds: [...acc.responseIds].sort((a, b) => a - b),
+    };
+  }).sort((a, b) => PERSISTENCE_TIER_RANK[a.tier] - PERSISTENCE_TIER_RANK[b.tier]
+    || b.persistenceRate - a.persistenceRate
+    || b.competitorRecommendations - a.competitorRecommendations
+    || b.citationCount - a.citationCount
+    || a.url.localeCompare(b.url));
+
+  const domains = [...domainMap.values()].map((acc) => {
+    const wavesSeen = acc.waveRunIds.size;
+    const persistenceRate = totalWaves > 0 ? wavesSeen / totalWaves : 0;
+    const tier = persistenceTier(wavesSeen, totalWaves);
+    const mentionStats = summarizeMentions(acc.responseIds);
+    return {
+      domain: acc.domain,
+      ownership: acc.ownership,
+      entityId: acc.entityId,
+      entityName: acc.entityName,
+      wavesSeen,
+      totalWaves,
+      persistenceRate,
+      citationCount: acc.citationCount,
+      responseCount: acc.responseIds.size,
+      urlCount: acc.urls.size,
+      firstSeenAt: acc.firstSeenAt,
+      lastSeenAt: acc.lastSeenAt,
+      competitorMentions: mentionStats.competitorMentions,
+      competitorRecommendations: mentionStats.competitorRecommendations,
+      brandAbsentCount: mentionStats.brandAbsentCount,
+      competitorNames: mentionStats.competitorNames,
+      recommendedCompetitorNames: mentionStats.recommendedCompetitorNames,
+      tier,
+      waveRunIds: sortedWaveRunIds(acc.waveRunIds),
+    };
+  }).sort((a, b) => PERSISTENCE_TIER_RANK[a.tier] - PERSISTENCE_TIER_RANK[b.tier]
+    || b.persistenceRate - a.persistenceRate
+    || b.competitorRecommendations - a.competitorRecommendations
+    || b.citationCount - a.citationCount
+    || a.domain.localeCompare(b.domain));
+
+  const offSiteTargets = urls
+    .filter((item) => item.ownership === 'third_party' && item.brandAbsentCount > 0)
+    .sort((a, b) => PERSISTENCE_TIER_RANK[a.tier] - PERSISTENCE_TIER_RANK[b.tier]
+      || b.persistenceRate - a.persistenceRate
+      || b.competitorRecommendations - a.competitorRecommendations
+      || b.citationCount - a.citationCount
+      || a.url.localeCompare(b.url));
+
+  const totalCitations = ownershipCounts.brand_owned + ownershipCounts.competitor_owned + ownershipCounts.third_party;
+  const durableCount = urls.filter((item) => item.tier === 'durable').length;
+  const recurringCount = urls.filter((item) => item.tier === 'recurring').length;
+  const ephemeralCount = urls.filter((item) => item.tier === 'ephemeral').length;
+  const singleWaveUnverifiedCount = urls.filter((item) => item.tier === 'single_wave_unverified').length;
+  const durableDomainCount = domains.filter((item) => item.tier === 'durable').length;
+
+  const ephemeralChurnRate = totalWaves >= 2 && urls.length > 0 ? ephemeralCount / urls.length : null;
+  const ephemeralChurnCi = totalWaves >= 2 ? wilson(ephemeralCount, urls.length) : wilson(0, 0);
+  const offSiteShare = totalCitations > 0 ? ownershipCounts.third_party / totalCitations : null;
+  const offSiteShareCi = wilson(ownershipCounts.third_party, totalCitations);
+
+  /** @type {string[]} */
+  const limitations = [];
+  if (!brand) {
+    limitations.push('No active brand entity (is_self = 1) configured; brand-owned classification and brand-absent off-site targets are unavailable.');
+  }
+  if (totalWaves === 0) {
+    limitations.push('No completed runs matched the selected filters.');
+  } else if (totalWaves === 1) {
+    limitations.push('Only 1 completed measurement wave observed; durability cannot be verified on a single wave (all cited URLs and domains are marked single_wave_unverified).');
+  }
+  if (distinctSeries.size > 1) {
+    const labels = [...distinctSeries.values()].map((s) => `${s.provider}/${s.model} (${s.surface ?? 'unknown'})`).join(', ');
+    limitations.push(`Filtered scope spans ${distinctSeries.size} distinct model/series configurations (${labels}); filter by surface, model, or seriesKey for strict single-series persistence tracking.`);
+  }
+
+  return {
+    totalWaves,
+    waves: orderedWaves.map((w) => ({
+      runId: w.runId,
+      startedAt: w.startedAt,
+      finishedAt: w.finishedAt,
+      responseCount: w.responseCount,
+      citedResponseCount: w.citedResponseIds.size,
+      citationCount: w.citationCount,
+    })),
+    domains,
+    urls,
+    offSiteTargets,
+    summary: {
+      totalWaves,
+      totalResponses: responses.length,
+      citedResponses: citedResponseIdSet.size,
+      totalCitations,
+      totalUniqueUrls: urls.length,
+      totalUniqueDomains: domains.length,
+      durableCount,
+      recurringCount,
+      ephemeralCount,
+      singleWaveUnverifiedCount,
+      durableDomainCount,
+      ephemeralChurnRate,
+      ephemeralChurnCi,
+      offSiteShare,
+      offSiteShareCi,
+      offSiteTargetCount: offSiteTargets.length,
+      ownershipCounts,
+    },
+    limitations,
+  };
 }

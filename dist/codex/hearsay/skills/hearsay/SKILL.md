@@ -1,6 +1,6 @@
 ---
 name: hearsay
-description: Set up and run Hearsay through conversation. Infer the product from existing context, inspect tools and credentials, propose buyer questions and an approved schedule, and track website studies with saved evidence. Extra providers and the dashboard are optional.
+description: Open-source AI-search forensics and measurement in your current agent. Run zero-key technical crawlability pre-flight audits (`hearsay check`), inspect retrieval attrition, memory-vs-search deltas, and multi-wave citation persistence via MCP or CLI, propose reviewed buyer questions and spend limits, and track website studies with saved evidence.
 ---
 
 # Hearsay
@@ -12,6 +12,19 @@ On first use or when setup is incomplete, read [conversational setup](references
 For ongoing website improvement, read [website studies](references/studies.md) first. Inspect the product, generate and rank sourced buyer angles, and propose one editable plan. The founder approves the actual collection scope or suggests changes. Preserve page versions, occurrences, analyses, change proposals, decisions, outcomes, and reviews. Run the approved routine work and report the next action. A collector alone leaves assistant analysis due.
 
 Save work in the workspace at `.hearsay/<app-id>/`. Use a stable app slug and check saved identity before reusing it. Keep apps and histories separate. Read [the evidence contract](references/evidence.md) and copy [project.json](templates/project.json) and [evidence.json](templates/evidence.json). Templates are not research evidence.
+
+## Technical pre-flight & forensics
+
+When a site URL is available, run a zero-key technical pre-flight audit before attributing visibility gaps to copy or prompts:
+
+- **CLI pre-flight:** Run `hearsay check <url> [--json] [--html FILE] [--browser] [--timeout MS]` (or the installed runtime `bin/hearsay.js check <url>`) to inspect RFC 9309 `robots.txt` rules across 9 AI/search crawlers, raw-HTML UTF-8 byte-offset truncation cliffs (`30 KB` / `100 KB` / `300 KB`), redirect chains, `noindex`/canonical headers, CSR empty-shell risk, and optional local headless `--browser` DOM hydration diffs. Always surface the honest User-Agent (`HearsaySiteCheck/0.1`) and IP/rDNS WAF disclaimer — never claim a local check proves Cloudflare/Akamai/Fastly reachability.
+- **Forensics MCP tools:** When Hearsay's MCP server (`mcp/server.mjs`) is connected, use these 4 read-only tools (they work directly with zero running `server.js` — `hearsay_site_check` runs in-process and the 3 SQLite analyzers fall back to the local Hearsay DB when the HTTP server is stopped):
+  - `hearsay_site_check` — zero-key crawlability, truncation-cliff, and CSR pre-flight check (SSRF-guarded by default).
+  - `hearsay_retrieval_attrition` — compares retrieved `source_observations` against final `answer_citations` by domain ownership (`brand_owned`, `competitor_owned`, `third_party`) with Wilson 95% intervals and flags **Own-Site Hijack** receipts where your URL is cited while a competitor gets the positive recommendation.
+  - `hearsay_memory_vs_search` — paired parametric memory (`off` / `not_used`) vs. verified grounded retrieval delta strictly within each `(provider, model)` (`memory_anchored`, `search_dependent`, `memory_displaced`, `absent_in_both`); never blends models or fabricates deltas for unpaired prompts.
+  - `hearsay_citation_persistence` — multi-wave citation persistence (`wavesSeen / totalWaves`: `durable`, `recurring`, `ephemeral`, or `single_wave_unverified` on 1 wave) and ranked brand-absent third-party `offSiteTargets` for earned-media outreach.
+
+Keep every forensic report epistemically honest: report Wilson 95% intervals and `n`, never invent a blended 0–100 score, never claim durability from 1 wave (`single_wave_unverified`), and keep mentions, citations, and positive stance distinct.
 
 ## First report
 

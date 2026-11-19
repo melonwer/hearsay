@@ -759,13 +759,13 @@ test('GET /api/export/report validates and forwards white-label options cleanly'
       },
       renderClientReportHtml: (report, opts) => {
         captured.renderOpts = opts;
-        return realClientExport.renderClientReportHtml(report);
+        return realClientExport.renderClientReportHtml(report, opts);
       },
     },
   });
 
-  // Invalid accent_color (CSS injection) -> 400
-  for (const badColor of ['red', '#fff;background:url(evil)', 'javascript:alert(1)', '#12']) {
+  // Invalid accent_color (CSS injection and invalid CSS hex lengths) -> 400
+  for (const badColor of ['red', '#fff;background:url(evil)', 'javascript:alert(1)', '#12', '#12345', '#1234567']) {
     const res = await fetch(
       `${ctx.base}/api/export/report?accent_color=${encodeURIComponent(badColor)}`,
     );
@@ -781,6 +781,9 @@ test('GET /api/export/report validates and forwards white-label options cleanly'
   assert.match(res.headers.get('content-disposition') ?? '', /^inline;/);
   const body = await res.text();
   assert.match(body, /<!doctype html>/i);
+  assert.match(body, /Northstar SEO/);
+  assert.match(body, /#2a78d6/);
+  assert.match(body, /Prepared for Acme/);
 
   assert.equal(captured.buildOpts?.brandLabel, 'Northstar SEO');
   assert.equal(captured.buildOpts?.accentColor, '#2a78d6');

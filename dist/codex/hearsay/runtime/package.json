@@ -1,7 +1,7 @@
 {
   "name": "hearsay",
   "version": "0.1.0",
-  "description": "App visibility research in your current agent, with optional account measurements, scheduling and dashboard imports.",
+  "description": "Open-source AI-search forensics and measurement for technical SEOs and builders: zero-key crawlability pre-flight audits, retrieval-to-citation attrition, memory-vs-search deltas, and multi-wave citation persistence.",
   "license": "MIT",
   "type": "module",
   "bin": {

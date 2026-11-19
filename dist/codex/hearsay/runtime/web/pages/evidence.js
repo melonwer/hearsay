@@ -1,12 +1,20 @@
-import { answerEvidence, intentEvidenceReport, listEvidenceIntents,
-  listQueryThemes } from '../../core/evidence-report.js';
+import {
+  answerEvidence,
+  intentEvidenceReport,
+  listEvidenceIntents,
+  listQueryThemes,
+  memoryVsRetrievalDelta,
+  retrievalAttritionReport,
+} from '../../core/evidence-report.js';
 import { listMeasurementSeries, resolveMeasurementSeries } from '../../core/metrics.js';
-import { emptyState, html, layout, raw, SURFACE_LABEL } from '../layout.js';
+import { emptyState, html, layout, pct, rateWithCI, raw, SURFACE_LABEL } from '../layout.js';
 import { searchSuggestions, originalGrounding } from '../gemini-grounding.js';
 
 const LAYERS = [
   ['all', 'All layers'], ['questions', 'Buyer questions'], ['queries', 'Observed search queries'],
-  ['sources', 'Source observations'], ['citations', 'Answer citations'], ['answers', 'Answer receipts'],
+  ['sources', 'Source observations'], ['citations', 'Answer citations'],
+  ['attrition', 'Retrieval attrition & hijacks'], ['memory_vs_search', 'Memory vs. search delta'],
+  ['answers', 'Answer receipts'],
 ];
 const SOURCE_LAYERS = [
   ['all', 'All source observations'], ['search_result', 'Search results'],
@@ -50,7 +58,7 @@ function opportunityUrl(view, patch = {}) {
 }
 
 /** @param {import('./index.js').PageDeps} deps @param {URLSearchParams} params */
-export function buildView({ db }, params) {
+export function buildView({ db, config }, params) {
   const now = new Date();
   const requestedDays = positiveInt(params.get('days'));
   const days = requestedDays !== null && requestedDays <= 3650 ? requestedDays : 30;
@@ -81,8 +89,21 @@ export function buildView({ db }, params) {
   const requestedReceiptFilter = params.get('receipt_filter') ?? 'all';
   const receiptFilter = RECEIPT_FILTERS.includes(requestedReceiptFilter)
     ? requestedReceiptFilter : 'all';
+  const includeSeeded = Boolean(config?.demo);
+  const attritionFilters = {
+    ...(series && series.searchPolicy !== 'off' ? { series } : {}),
+    ...(exactRange ?? {}),
+    includeSeeded,
+    limit: 15,
+  };
+  const attrition = retrievalAttritionReport(db, attritionFilters);
+  const memoryDelta = memoryVsRetrievalDelta(db, {
+    ...(exactRange ?? {}),
+    includeSeeded,
+  });
   return { days, exactRange, seriesOptions, series, intents, intentId, report, layer,
-    sourceLayer, receiptFilter, requestedReceiptId, themes: listQueryThemes(db) };
+    sourceLayer, receiptFilter, requestedReceiptId, themes: listQueryThemes(db),
+    attrition, memoryDelta };
 }
 
 /** @param {string} url @param {string} label */
@@ -285,13 +306,197 @@ function receipts(view, report) {
   </section>`;
 }
 
+/** @param {number|null|undefined} delta */
+function signedPts(delta) {
+  if (delta === null || delta === undefined || !Number.isFinite(delta)) return '—';
+  const pts = Math.round(delta * 1000) / 10;
+  if (pts === 0) return '0.0 pts';
+  return `${pts > 0 ? '+' : ''}${pts.toFixed(1)} pts`;
+}
+
+/** @param {string} cls */
+function deltaClassPill(cls) {
+  const tone = cls === 'memory_anchored'
+    ? 'status-pill-active'
+    : cls === 'search_dependent'
+      ? 'status-pill-collecting'
+      : cls === 'memory_displaced'
+        ? 'status-pill-warn'
+        : 'status-pill-off';
+  return html`<span class="status-pill ${tone}">${cls}</span>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function attritionPanel(view) {
+  const report = view.attrition;
+  if (!report) return '';
+  const ownershipRows = [
+    ['Brand-owned', report.byOwnership.brand_owned],
+    ['Competitor-owned', report.byOwnership.competitor_owned],
+    ['Third-party', report.byOwnership.third_party],
+  ];
+
+  return html`<section class="card" id="retrieval-attrition">
+    <h2>Retrieved-but-Dropped ("Attrition") &amp; Own-Site Hijacks</h2>
+    <p class="muted">Compares sources retrieved during web search against URLs actually cited in the final answer. High attrition means search found a page that the answer synthesizer left out.</p>
+    <dl class="kv">
+      <dt>Search-grounded answers</dt>
+      <dd>${report.n} eligible (${report.answersWithSourceObservations} with source observations · ${report.answersWithCitations} with citations)</dd>
+      <dt>Overall attrition rate</dt>
+      <dd>${rateWithCI(report.attritionRate)} <span class="muted">(${report.droppedObservations} dropped of ${report.retrievedObservations} retrieved observations)</span></dd>
+      <dt>Unique URLs</dt>
+      <dd>${report.totalUniqueRetrievedUrls} retrieved · ${report.totalUniqueCitedUrls} cited · ${report.totalUniqueDroppedUrls} dropped at least once</dd>
+      <dt>Own-site hijacks</dt>
+      <dd><strong>${report.hijacks.count}</strong> of ${report.hijacks.ownCitedAnswers} own-cited answer${report.hijacks.ownCitedAnswers === 1 ? '' : 's'} (${rateWithCI(report.hijacks.rate)})</dd>
+    </dl>
+
+    ${report.retrievedObservations > 0 || report.citedObservations > 0
+      ? html`<h3>Attrition by domain ownership</h3>
+        <div class="evidence-table-wrap"><table class="table">
+          <thead><tr><th>Ownership</th><th class="num">Unique retrieved</th><th class="num">Unique cited</th><th class="num">Unique dropped</th><th class="num">Attrition rate (95% CI)</th></tr></thead>
+          <tbody>${ownershipRows.map(([label, bucket]) => html`<tr>
+            <td><strong>${label}</strong></td>
+            <td class="num">${bucket.uniqueRetrievedUrls}</td>
+            <td class="num">${bucket.uniqueCitedUrls}</td>
+            <td class="num">${bucket.uniqueDroppedUrls}</td>
+            <td class="num">${rateWithCI(bucket.attritionRate)}</td>
+          </tr>`)}</tbody>
+        </table></div>`
+      : ''}
+
+    <h3>Dropped brand URLs</h3>
+    ${report.topDroppedBrandUrls.length
+      ? html`<div class="evidence-table-wrap"><table class="table">
+          <thead><tr><th>Brand URL</th><th class="num">Retrieved</th><th class="num">Cited</th><th class="num">Dropped</th><th class="num">Drop rate</th><th>Receipts</th></tr></thead>
+          <tbody>${report.topDroppedBrandUrls.map((row) => html`<tr>
+            <td>${safeLink(row.url, row.url)}</td>
+            <td class="num">${row.retrievedCount}</td>
+            <td class="num">${row.citedCount}</td>
+            <td class="num">${row.droppedCount}</td>
+            <td class="num">${pct(row.dropRate)}</td>
+            <td>${row.droppedResponseIds.map((id) => `#${id}`).join(', ')}</td>
+          </tr>`)}</tbody>
+        </table></div>`
+      : html`<p class="muted">No dropped brand-owned URLs observed in this scope.</p>`}
+
+    <h3>Dropped third-party URLs</h3>
+    ${report.topDroppedThirdPartyUrls.length
+      ? html`<div class="evidence-table-wrap"><table class="table">
+          <thead><tr><th>Third-party URL</th><th>Domain</th><th class="num">Retrieved</th><th class="num">Cited</th><th class="num">Dropped</th><th class="num">Drop rate</th></tr></thead>
+          <tbody>${report.topDroppedThirdPartyUrls.map((row) => html`<tr>
+            <td>${safeLink(row.url, row.url)}</td>
+            <td><code>${row.domain ?? 'unknown'}</code></td>
+            <td class="num">${row.retrievedCount}</td>
+            <td class="num">${row.citedCount}</td>
+            <td class="num">${row.droppedCount}</td>
+            <td class="num">${pct(row.dropRate)}</td>
+          </tr>`)}</tbody>
+        </table></div>`
+      : html`<p class="muted">No dropped third-party URLs observed in this scope.</p>`}
+
+    <div id="own-site-hijacks">
+      <h3>Own-Site Hijacks</h3>
+      <p class="muted">Answers where your own page was cited while a competitor received a positive recommendation and your brand did not.</p>
+      ${report.hijacks.receipts.length
+        ? html`<div class="evidence-table-wrap"><table class="table">
+            <thead><tr><th>Receipt</th><th>Question</th><th>Model</th><th>Your cited page(s)</th><th>Recommended competitor(s)</th><th>Brand stance</th></tr></thead>
+            <tbody>${report.hijacks.receipts.map((item) => html`<tr>
+              <td>#${item.responseId}</td>
+              <td>${item.promptText}</td>
+              <td><code>${item.provider}/${item.model}</code></td>
+              <td>${item.ownCitedUrls.map((u) => html`<div>${safeLink(u, u)}</div>`)}</td>
+              <td>${item.recommendedCompetitors.map((name) => html`<span class="status-pill status-pill-warn">${name}</span> `)}</td>
+              <td>${item.brandStance ?? 'absent'}</td>
+            </tr>`)}</tbody>
+          </table></div>`
+        : html`<p class="muted">No own-site hijacks detected in this scope.</p>`}
+    </div>
+
+    ${report.limitations.length
+      ? html`<details><summary>Scope &amp; limitations (${report.limitations.length})</summary><ul>${report.limitations.map((note) => html`<li>${note}</li>`)}</ul></details>`
+      : ''}
+  </section>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function memoryVsSearchPanel(view) {
+  const delta = view.memoryDelta;
+  if (!delta) return '';
+
+  return html`<section class="card" id="memory-vs-search">
+    <h2>Parametric Memory vs. Grounded Retrieval Delta</h2>
+    <p class="muted">Strict same-<code>(provider, model)</code> paired comparison on identical prompts: parametric memory (<code>search_policy='off'</code> / <code>not_used</code>) vs. verified live retrieval. Models are never blended across providers or unshared prompts.</p>
+    <p class="muted small">${delta.summary.pairedModels} paired model${delta.summary.pairedModels === 1 ? '' : 's'} · ${delta.summary.unpairedModels} unpaired · ${delta.summary.totalPairedPrompts} paired prompt${delta.summary.totalPairedPrompts === 1 ? '' : 's'}</p>
+
+    ${delta.pairs.length === 0
+      ? html`<p class="muted">No parametric memory or verified live-retrieval responses available yet for paired comparison.</p>`
+      : delta.pairs.map((pair) => {
+          const isPaired = pair.status === 'paired';
+          const statusLabel = pair.status === 'paired'
+            ? 'Paired'
+            : pair.status === 'memory_only'
+              ? 'Unpaired · memory only'
+              : pair.status === 'grounded_only'
+                ? 'Unpaired · grounded only'
+                : 'Unpaired · no prompt overlap';
+          const statusTone = isPaired ? 'status-pill-active' : 'status-pill-warn';
+          return html`<article class="card">
+            <div class="health-lane-head">
+              <h3><code>${pair.provider} / ${pair.model}</code></h3>
+              <span class="status-pill ${statusTone}">${statusLabel}</span>
+            </div>
+            ${!isPaired
+              ? html`<p class="muted">Unpaired notice: ${pair.provider}/${pair.model} has ${pair.unpaired.memoryOnlyPromptCount} memory-only prompt${pair.unpaired.memoryOnlyPromptCount === 1 ? '' : 's'} and ${pair.unpaired.groundedOnlyPromptCount} grounded-only prompt${pair.unpaired.groundedOnlyPromptCount === 1 ? '' : 's'} with 0 overlapping prompts. Run the same prompts in both memory (<code>search_policy='off'</code>) and verified search modes on this exact model to compute a valid delta.</p>`
+              : html`
+                <p class="muted small">${pair.pairedPromptCount} paired prompt${pair.pairedPromptCount === 1 ? '' : 's'} · ${pair.memoryResponseCount} memory responses vs. ${pair.groundedResponseCount} grounded responses${pair.unpaired.memoryOnlyPromptCount > 0 || pair.unpaired.groundedOnlyPromptCount > 0 ? html` · excluded unpaired prompts: ${pair.unpaired.memoryOnlyPromptCount} memory-only, ${pair.unpaired.groundedOnlyPromptCount} grounded-only` : ''}</p>
+                ${pair.brand
+                  ? html`<dl class="kv">
+                      <dt>Brand mention rate</dt>
+                      <dd>Memory ${rateWithCI(pair.brand.memoryMentionRate)} &rarr; Grounded ${rateWithCI(pair.brand.groundedMentionRate)} (<strong>${signedPts(pair.brand.deltaMentionRate)}</strong>)</dd>
+                      <dt>Positive stance rate</dt>
+                      <dd>Memory ${rateWithCI(pair.brand.memoryPositiveRate)} &rarr; Grounded ${rateWithCI(pair.brand.groundedPositiveRate)} (<strong>${signedPts(pair.brand.deltaPositiveRate)}</strong>)</dd>
+                      <dt>Grounded citation rate</dt>
+                      <dd>${rateWithCI(pair.brand.groundedCitationRate)}</dd>
+                      <dt>Prompt shift tags</dt>
+                      <dd class="pill-group">
+                        ${deltaClassPill('memory_anchored')} <span>${pair.classificationSummary.memory_anchored}</span>
+                        ${deltaClassPill('search_dependent')} <span>${pair.classificationSummary.search_dependent}</span>
+                        ${deltaClassPill('memory_displaced')} <span>${pair.classificationSummary.memory_displaced}</span>
+                        ${deltaClassPill('absent_in_both')} <span>${pair.classificationSummary.absent_in_both}</span>
+                      </dd>
+                    </dl>`
+                  : html`<p class="muted">Configure an active brand entity to view brand-specific memory vs. search deltas.</p>`}
+                ${pair.brandPromptClassifications.length
+                  ? html`<div class="evidence-table-wrap"><table class="table">
+                      <thead><tr><th>Prompt</th><th>Classification</th><th class="num">Memory mentions</th><th class="num">Grounded mentions</th><th class="num">Grounded citations</th></tr></thead>
+                      <tbody>${pair.brandPromptClassifications.map((row) => html`<tr>
+                        <td>${row.promptText}</td>
+                        <td>${deltaClassPill(row.classification)}</td>
+                        <td class="num">${row.memoryMentioned}/${row.memoryN}</td>
+                        <td class="num">${row.groundedMentioned}/${row.groundedN}</td>
+                        <td class="num">${row.groundedCited}/${row.groundedN}</td>
+                      </tr>`)}</tbody>
+                    </table></div>`
+                  : ''}
+              `}
+          </article>`;
+        })}
+
+    ${delta.limitations.length
+      ? html`<details><summary>Pairing scope &amp; limitations (${delta.limitations.length})</summary><ul>${delta.limitations.map((note) => html`<li>${note}</li>`)}</ul></details>`
+      : ''}
+  </section>`;
+}
+
 /** @param {import('../layout.js').ShellCtx} ctx @param {ReturnType<typeof buildView>} view */
 export function render(ctx, view) {
   let body = selectors(view);
+  const hasForensics = Boolean(view.attrition?.n > 0 || view.memoryDelta?.pairs?.length > 0);
   if (!view.series || !view.report) {
     body = html`${body}${emptyState({ title: 'No evidence for this selection',
       line: 'Choose a measurement series and buyer intent with stored answers.',
-      hint: 'Captured evidence will appear after a panel run completes.' })}`;
+      hint: 'Captured evidence will appear after a panel run completes.' })}
+      ${hasForensics ? html`${attritionPanel(view)}${memoryVsSearchPanel(view)}` : ''}`;
   } else {
     const { series, report } = view;
     body = html`${body}
@@ -302,6 +507,8 @@ export function render(ctx, view) {
       ${view.layer === 'all' || view.layer === 'queries' ? queries(view, report) : ''}
       ${view.layer === 'all' || view.layer === 'sources' ? groupedEvidence(view, report, 'sources') : ''}
       ${view.layer === 'all' || view.layer === 'citations' ? groupedEvidence(view, report, 'citations') : ''}
+      ${view.layer === 'all' || view.layer === 'attrition' ? attritionPanel(view) : ''}
+      ${view.layer === 'all' || view.layer === 'memory_vs_search' ? memoryVsSearchPanel(view) : ''}
       ${view.layer === 'all' || view.layer === 'answers' ? receipts(view, report) : ''}`;
   }
   return layout({ title: 'Evidence', active: '/evidence', ctx, body });

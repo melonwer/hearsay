@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 /**
  * Zero-dependency stdio MCP server (§13, SPEC §2/§6). Newline-delimited JSON-RPC 2.0.
- * stdout carries protocol messages ONLY; logs go to stderr. Data comes from a running
- * Hearsay over HTTP at HEARSAY_URL — this process holds no API keys and opens no DB.
+ * stdout carries protocol messages ONLY; logs go to stderr. Most tools proxy a running
+ * Hearsay over HTTP at HEARSAY_URL; `hearsay_site_check` runs directly with zero server
+ * or API keys, and the forensics tools fall back to opening the local SQLite DB read-only
+ * when `server.js` is not running.
  */
 import { AGENT_SURFACES } from '../core/agent-routes.js';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { withEnvFile } from '../core/env-file.js';
 import { resolveHearsayUrl } from '../core/port-discovery.js';
+import { checkSite, SiteCheckError } from '../core/site-check.js';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // [VERIFY-AT-BUILD]: verified 2026-07-26 against modelcontextprotocol.io/specification/versioning
 // — current revision is 2025-11-25; earlier revisions remain valid to echo.
 const KNOWN_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -59,13 +64,218 @@ function query(args, keys, rename = {}) {
   return s === '' ? '' : `?${s}`;
 }
 
+const FORENSICS_FILTER_PROPERTIES = {
+  surface: SURFACE,
+  provider: { type: 'string', enum: ['openai', 'anthropic', 'gemini', 'perplexity'], description: 'Provider filter' },
+  model: { type: 'string', description: 'Exact model ID filter, e.g. "gpt-5.6-luna"' },
+  search_policy: { type: 'string', enum: ['off', 'auto', 'required', 'legacy'], description: 'Search policy filter' },
+  run_id: { type: 'integer', minimum: 1, description: 'Restrict analysis to one measurement run ID' },
+  series_id: { type: 'string', description: 'Exact measurement series ID or comparison key' },
+  comparison_key: { type: 'string', description: 'Exact comparison key filter' },
+  intent_id: { type: 'integer', minimum: 1, description: 'Restrict analysis to one buyer intent ID' },
+  start: UTC_BOUNDARY,
+  end: UTC_BOUNDARY,
+  include_seeded: { type: 'boolean', description: 'Include demo seeded runs (default false)' },
+  exclude_branded: { type: 'boolean', description: 'Exclude branded-category prompts' },
+};
+
+/**
+ * Build query string for `/api/forensics/*` endpoints.
+ * @param {Record<string, any>} args
+ * @param {boolean} [includeLimit]
+ * @returns {string}
+ */
+function forensicsQuery(args, includeLimit = false) {
+  const mapped = {
+    ...args,
+    include_seeded: typeof args?.include_seeded === 'boolean' ? (args.include_seeded ? '1' : '0') : undefined,
+    exclude_branded: typeof args?.exclude_branded === 'boolean' ? (args.exclude_branded ? '1' : '0') : undefined,
+  };
+  const keys = [
+    'surface', 'provider', 'model', 'search_policy', 'run_id', 'series_id',
+    'comparison_key', 'intent_id', 'start', 'end', 'include_seeded', 'exclude_branded',
+    ...(includeLimit ? ['limit'] : []),
+  ];
+  return query(mapped, keys);
+}
+
+/**
+ * Convert MCP tool arguments into `ForensicFilters` for direct SQLite analyzers.
+ * @param {Record<string, any>} args
+ * @param {boolean} [includeLimit]
+ */
+function toForensicFilters(args = {}, includeLimit = false) {
+  /** @type {Record<string, unknown>} */
+  const filters = {};
+  if (typeof args.surface === 'string' && args.surface.trim() !== '') filters.surface = args.surface.trim();
+  if (typeof args.provider === 'string' && args.provider.trim() !== '') filters.provider = args.provider.trim();
+  if (typeof args.model === 'string' && args.model.trim() !== '') filters.model = args.model.trim();
+  if (typeof args.search_policy === 'string' && args.search_policy.trim() !== '') filters.searchPolicy = args.search_policy.trim();
+  if (args.run_id !== undefined && args.run_id !== null) filters.runId = Number(args.run_id);
+  if (typeof args.series_id === 'string' && args.series_id.trim() !== '') filters.seriesId = args.series_id.trim();
+  if (typeof args.comparison_key === 'string' && args.comparison_key.trim() !== '') filters.comparisonKey = args.comparison_key.trim();
+  if (args.intent_id !== undefined && args.intent_id !== null) filters.intentId = Number(args.intent_id);
+  if (typeof args.start === 'string' && args.start.trim() !== '') filters.start = args.start.trim();
+  if (typeof args.end === 'string' && args.end.trim() !== '') filters.end = args.end.trim();
+  if (typeof args.include_seeded === 'boolean') filters.includeSeeded = args.include_seeded;
+  if (typeof args.exclude_branded === 'boolean') filters.excludeBranded = args.exclude_branded;
+  if (includeLimit && args.limit !== undefined && args.limit !== null) filters.limit = Number(args.limit);
+  return filters;
+}
+
+/**
+ * Resolve the configured/default local SQLite database path without creating any file.
+ * @param {Record<string, string|undefined>} env
+ * @returns {string}
+ */
+function resolveLocalDbPath(env) {
+  const demo = String(env.HEARSAY_DEMO ?? '').trim() === '1';
+  const rawReal = String(env.HEARSAY_DB_PATH ?? '').trim();
+  const realDbPath = rawReal ? resolve(rawReal) : resolve(REPO_ROOT, 'data/hearsay.db');
+  if (!demo) return realDbPath;
+  const rawDemo = String(env.HEARSAY_DEMO_DB_PATH ?? '').trim();
+  return rawDemo ? resolve(rawDemo) : resolve(dirname(realDbPath), 'demo/hearsay.db');
+}
+
+/**
+ * Build a concise human-readable summary of a `SiteCheckReport`.
+ * @param {import('../core/site-check.js').SiteCheckReport} report
+ * @returns {string}
+ */
+function formatSiteCheckSummary(report) {
+  const blockedBots = report.robotsTxt.crawlers.filter((c) => !c.allowed).map((c) => c.bot);
+  const p = report.payload;
+  const lines = [
+    `Hearsay Site Check: ${report.summary.grade.toUpperCase()} (${report.summary.criticalCount} critical, ${report.summary.warningCount} warning, ${report.summary.infoCount} info)`,
+    `URL: ${report.finalUrl} | HTTP ${report.status ?? 'ERR'} | ${report.timingMs}ms | ${report.redirects.count} redirect(s)`,
+    `Payload: ${(p.htmlBytes / 1024).toFixed(1)}KB raw HTML, ${p.visibleWordCount} visible words, CSR=${p.csrRisk.level}, truncation(>30KB=${p.truncationRisks.contentStartsAfter30KB}, >100KB=${p.truncationRisks.coreContentPast100KB}, >300KB=${p.truncationRisks.pageExceeds300KB})`,
+    `robots.txt: ${report.robotsTxt.allowedCount}/${report.robotsTxt.crawlers.length} crawlers allowed${blockedBots.length ? ` (blocked: ${blockedBots.join(', ')})` : ''}`,
+  ];
+  if (report.findings.length > 0) {
+    lines.push('Findings:');
+    for (const f of report.findings.slice(0, 6)) {
+      lines.push(`- [${f.severity.toUpperCase()}] ${f.title}: ${f.detail}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Run `checkSite` directly inside the MCP server with zero HTTP backend or API keys.
+ * Respects SSRF private-host guard by default (private hosts are never unlockable via tool args).
+ * @param {Record<string, any>} args
+ */
+async function runDirectSiteCheck(args) {
+  const rawUrl = args?.url;
+  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_url', message: 'url must be a non-empty http:// or https:// string' } }) }],
+    };
+  }
+  const rawTimeout = args?.timeoutMs ?? args?.timeout_ms;
+  /** @type {number|undefined} */
+  let timeoutMs;
+  if (rawTimeout !== undefined && rawTimeout !== null) {
+    const n = Number(rawTimeout);
+    if (!Number.isFinite(n) || n < 500 || n > 120_000) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: JSON.stringify({ error: { code: 'invalid_arguments', message: 'timeoutMs must be between 500 and 120000' } }) }],
+      };
+    }
+    timeoutMs = Math.floor(n);
+  }
+  // Never allow untrusted MCP tool arguments to bypass the SSRF private-host guard.
+  const allowPrivateHosts = process.env.HEARSAY_SITE_CHECK_ALLOW_PRIVATE_HOSTS === '1';
+  try {
+    const report = await checkSite(rawUrl.trim(), {
+      browser: args?.browser === true,
+      timeoutMs,
+      allowPrivateHosts,
+    });
+    const summaryText = formatSiteCheckSummary(report);
+    return {
+      isError: false,
+      content: [
+        { type: 'text', text: JSON.stringify({ ...report, summaryText }) },
+        { type: 'text', text: summaryText },
+      ],
+    };
+  } catch (err) {
+    const code = err instanceof SiteCheckError ? err.code : 'site_check_failed';
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [{ type: 'text', text: JSON.stringify({ error: { code, message } }) }],
+    };
+  }
+}
+
+/**
+ * Open the configured/default local SQLite database read-only and run a Wave 1 forensic analyzer.
+ * @param {'attrition'|'memory_vs_search'|'persistence'} kind
+ * @param {Record<string, any>} args
+ * @param {Record<string, string|undefined>} env
+ */
+async function runDirectForensics(kind, args, env) {
+  const dbPath = resolveLocalDbPath(env);
+  if (!existsSync(dbPath)) {
+    return {
+      isError: true,
+      text: JSON.stringify({
+        error: {
+          code: 'db_unavailable',
+          message: 'Hearsay server is not running and no local SQLite database was found at the configured HEARSAY_DB_PATH. Start `node server.js` or set HEARSAY_DB_PATH.',
+        },
+      }),
+    };
+  }
+  const filters = toForensicFilters(args, kind === 'attrition');
+  const { DatabaseSync } = await import('node:sqlite');
+  let db;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    db.exec('PRAGMA query_only = ON');
+    db.exec('PRAGMA busy_timeout = 5000');
+    let report;
+    if (kind === 'attrition') {
+      const { retrievalAttritionReport } = await import('../core/evidence-report.js');
+      report = retrievalAttritionReport(db, filters);
+    } else if (kind === 'memory_vs_search') {
+      const { memoryVsRetrievalDelta } = await import('../core/evidence-report.js');
+      report = memoryVsRetrievalDelta(db, filters);
+    } else {
+      const { citationPersistenceReport } = await import('../core/opportunities.js');
+      report = citationPersistenceReport(db, filters);
+    }
+    return {
+      isError: false,
+      text: JSON.stringify({ ...report, dataSource: 'sqlite_readonly' }),
+    };
+  } catch (err) {
+    const code = err instanceof RangeError ? 'validation' : 'db_error';
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      text: JSON.stringify({ error: { code, message } }),
+    };
+  } finally {
+    if (db) {
+      try { db.close(); } catch { /* ignore close errors */ }
+    }
+  }
+}
+
 /**
  * @typedef {Object} Tool
  * @property {string} name
  * @property {boolean} [readOnly]
  * @property {string} description
  * @property {object} inputSchema
- * @property {(args: Record<string, any>) => {method: string, path: string, body?: unknown}} call
+ * @property {(args: Record<string, any>) => {method: string, path: string, body?: unknown}} [call]
+ * @property {(args: Record<string, any>) => Promise<{isError: boolean, content: {type: string, text: string}[]}>} [local]
+ * @property {(args: Record<string, any>, env: Record<string, string|undefined>) => Promise<{isError: boolean, text: string}>} [fallback]
  */
 
 /** @type {Tool[]} */
@@ -471,6 +681,52 @@ const TOOLS = [
     inputSchema: obj({ id: { type: 'integer', minimum: 1, description: 'Alert id from hearsay_alerts' } }, ['id']),
     call: (a) => ({ method: 'POST', path: `/api/alerts/${Number(a.id)}/ack`, body: {} }),
   },
+  {
+    name: 'hearsay_site_check',
+    readOnly: true,
+    description:
+      'Run Hearsay zero-key technical AI-search pre-flight audit directly on any public http/https URL (zero local server or API keys required). Audits RFC 9309 robots.txt rules for AI crawlers, redirect chains, noindex/canonical headers, raw-HTML byte-offset truncation cliffs (30KB/100KB/300KB), CSR empty-shell risk, and optional headless browser DOM diff. Enforces SSRF private-host guard by default.',
+    inputSchema: obj(
+      {
+        url: { type: 'string', minLength: 1, description: 'Public http:// or https:// URL to audit' },
+        browser: { type: 'boolean', description: 'Compare raw HTML against optional local headless Chromium DOM (default false)' },
+        timeoutMs: { type: 'integer', minimum: 500, maximum: 120000, description: 'Per-request timeout in milliseconds (default 10000)' },
+        timeout_ms: { type: 'integer', minimum: 500, maximum: 120000, description: 'Alias for timeoutMs' },
+      },
+      ['url'],
+    ),
+    local: (a) => runDirectSiteCheck(a),
+  },
+  {
+    name: 'hearsay_retrieval_attrition',
+    readOnly: true,
+    description:
+      'Analyze Retrieved-but-Dropped URL attrition and Own-Site Hijacks across search-grounded answers: compares retrieved source observations against final answer citations by ownership (brand_owned, competitor_owned, third_party) with Wilson 95% CIs, and flags answers where your site was cited while a competitor was positively recommended. Queries the local server when running or falls back directly to read-only SQLite.',
+    inputSchema: obj({
+      ...FORENSICS_FILTER_PROPERTIES,
+      limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum top dropped/cited URLs to return (default 25)' },
+    }),
+    call: (a) => ({ method: 'GET', path: `/api/forensics/attrition${forensicsQuery(a, true)}` }),
+    fallback: (a, env) => runDirectForensics('attrition', a, env),
+  },
+  {
+    name: 'hearsay_memory_vs_search',
+    readOnly: true,
+    description:
+      'Compare parametric model memory (search off / no search used) against verified live web-search retrieval strictly paired on identical prompts within the exact same (provider, model). Classifies brand prompts as memory_anchored, search_dependent, memory_displaced, or absent_in_both with Wilson 95% CIs. Queries the local server when running or falls back directly to read-only SQLite.',
+    inputSchema: obj(FORENSICS_FILTER_PROPERTIES),
+    call: (a) => ({ method: 'GET', path: `/api/forensics/memory-vs-search${forensicsQuery(a)}` }),
+    fallback: (a, env) => runDirectForensics('memory_vs_search', a, env),
+  },
+  {
+    name: 'hearsay_citation_persistence',
+    readOnly: true,
+    description:
+      'Measure multi-wave citation persistence across completed measurement runs and rank persistent third-party off-site outreach targets where competitors are recommended and your brand is absent. Classifies URLs and domains as durable, recurring, ephemeral, or single_wave_unverified with offSiteShare and Wilson 95% CIs. Queries the local server when running or falls back directly to read-only SQLite.',
+    inputSchema: obj(FORENSICS_FILTER_PROPERTIES),
+    call: (a) => ({ method: 'GET', path: `/api/forensics/persistence${forensicsQuery(a)}` }),
+    fallback: (a, env) => runDirectForensics('persistence', a, env),
+  },
 ];
 
 /** @param {unknown} id @param {object} result */
@@ -518,13 +774,27 @@ async function dispatch(msg) {
           replyError(id, -32602, `Unknown tool: ${params?.name}`);
           return;
         }
-        const req = tool.call(params?.arguments ?? {});
+        const args = params?.arguments ?? {};
+        if (typeof tool.local === 'function') {
+          const localResult = await tool.local(args);
+          reply(id, {
+            content: localResult.content,
+            ...(localResult.isError ? { isError: true } : {}),
+          });
+          return;
+        }
+        const req = /** @type {NonNullable<Tool['call']>} */ (tool.call)(args);
         /** @param {boolean} isError @param {string} text */
         const content = (isError, text) =>
           reply(id, { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) });
-        const backend = resolveHearsayUrl(withEnvFile(process.env,
-          resolve(dirname(fileURLToPath(import.meta.url)), '../.env')));
+        const env = withEnvFile(process.env, resolve(REPO_ROOT, '.env'));
+        const backend = resolveHearsayUrl(env);
         if (backend.url === null) {
+          if (typeof tool.fallback === 'function') {
+            const fb = await tool.fallback(args, env);
+            content(fb.isError, fb.text);
+            return;
+          }
           content(true, JSON.stringify({ error: { code: 'unreachable', message: backend.message } }));
           return;
         }
@@ -541,9 +811,19 @@ async function dispatch(msg) {
             signal: controller.signal,
           });
           const text = await res.text();
+          if (!res.ok && res.status === 404 && typeof tool.fallback === 'function') {
+            const fb = await tool.fallback(args, env);
+            content(fb.isError, fb.text);
+            return;
+          }
           content(!res.ok, text);
         } catch (err) {
           const timedOut = controller.signal.aborted;
+          if (!timedOut && typeof tool.fallback === 'function') {
+            const fb = await tool.fallback(args, env);
+            content(fb.isError, fb.text);
+            return;
+          }
           content(
             true,
             JSON.stringify({
