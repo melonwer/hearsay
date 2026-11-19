@@ -110,7 +110,7 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   await rpc(mcp, 'initialize', { protocolVersion: '2025-06-18', capabilities: {} }, 1);
   const list = await rpc(mcp, 'tools/list', {}, 2);
   const tools = list.result.tools;
-  assert.equal(tools.length, 41);
+  assert.equal(tools.length, 45);
   const names = tools.map((/** @type {*} */ t) => t.name);
   for (const name of [
     'hearsay_research_import', 'hearsay_research_list', 'hearsay_research_get',
@@ -129,6 +129,7 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
     'hearsay_api_search_schedule', 'hearsay_run_status',
     'hearsay_ack_alert', 'hearsay_subscription_preview', 'hearsay_subscription_run',
     'hearsay_subscription_schedule', 'hearsay_exploration_create', 'hearsay_exploration_promote',
+    'hearsay_site_check', 'hearsay_retrieval_attrition', 'hearsay_memory_vs_search', 'hearsay_citation_persistence',
   ]) assert.ok(names.includes(name), `missing ${name}`);
   for (const t of tools) {
     assert.equal(t.inputSchema.type, 'object');
@@ -137,12 +138,12 @@ test('mcp tools/list: subscription surfaces and exploration tools have schemas a
   const readOnly = tools.filter((/** @type {*} */ t) => t.annotations?.readOnlyHint === true).map((/** @type {*} */ t) => t.name).sort();
   assert.deepEqual(readOnly, [
     'hearsay_alerts', 'hearsay_answer_evidence', 'hearsay_answer_review', 'hearsay_answers_search',
-    'hearsay_citation_gap', 'hearsay_cost_estimate', 'hearsay_intent_evidence',
-    'hearsay_intent_results', 'hearsay_intervention_comparison', 'hearsay_opportunities',
+    'hearsay_citation_gap', 'hearsay_citation_persistence', 'hearsay_cost_estimate', 'hearsay_intent_evidence',
+    'hearsay_intent_results', 'hearsay_intervention_comparison', 'hearsay_memory_vs_search', 'hearsay_opportunities',
     'hearsay_opportunity', 'hearsay_prompt_results',
-    'hearsay_research_get', 'hearsay_research_list',
+    'hearsay_research_get', 'hearsay_research_list', 'hearsay_retrieval_attrition',
     'hearsay_review_benchmark_draft', 'hearsay_run_status', 'hearsay_series_export',
-    'hearsay_series_list', 'hearsay_series_summary', 'hearsay_stance_rate',
+    'hearsay_series_list', 'hearsay_series_summary', 'hearsay_site_check', 'hearsay_stance_rate',
     'hearsay_status', 'hearsay_study_get', 'hearsay_study_list', 'hearsay_subscription_preview', 'hearsay_summary',
     'hearsay_weekly_review',
   ]);
