@@ -528,8 +528,9 @@ async function executeRun(options) {
       }
 
       if (failure) {
-        const partial = failure.partialResult;
-        const attempts = failure.billableAttempts;
+        const currentFailure = failure;
+        const partial = currentFailure.partialResult;
+        const attempts = currentFailure.billableAttempts;
         const pricedUsage = attempts && attempts.length > 0 ? priceUsage({
           provider: task.provider, model: task.model, targetId: String(task.responseId),
           searchPolicy: /** @type {import('./measurement-contract.js').SearchPolicy} */ (budget.searchPolicy),
@@ -558,7 +559,7 @@ async function executeRun(options) {
               cost_provenance = ?, cost_price_version = ?,
               reported_charge_usd = ?, reported_charge_provenance = ?,
               query_metadata_status = ?, safe_error_code = ? WHERE id = ?`,
-            [failure.toStorage(), failedAt, `provider_${failure.kind}`,
+            [currentFailure.toStorage(), failedAt, `provider_${currentFailure.kind}`,
               partial ? 'partial' : 'unavailable',
               pricedUsage?.computedCostUsd ?? null, pricedUsage?.knownSubtotalUsd ?? null,
               pricedUsage?.costStatus ?? 'unavailable', pricedUsage?.knownSubtotalUsd != null ? 'computed' : null,
@@ -567,7 +568,7 @@ async function executeRun(options) {
               partial?.providerReportedChargeUsd == null ? null : 'provider_reported',
               partial ? (partial.searchActions?.some((action) => action.queryMetadata === 'available') ? 'available' : 'unavailable')
                 : budget.searchPolicy === 'off' ? 'not_applicable' : 'unavailable',
-              failure.kind, task.responseId],
+              currentFailure.kind, task.responseId],
           );
         });
         tally.errors += 1;

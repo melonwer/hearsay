@@ -330,6 +330,7 @@ function deltaClassPill(cls) {
 function attritionPanel(view) {
   const report = view.attrition;
   if (!report) return '';
+  /** @type {Array<[string, typeof report.byOwnership.brand_owned]>} */
   const ownershipRows = [
     ['Brand-owned', report.byOwnership.brand_owned],
     ['Competitor-owned', report.byOwnership.competitor_owned],

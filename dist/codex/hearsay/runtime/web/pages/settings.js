@@ -116,6 +116,12 @@ function humanSize(bytes) {
  * @property {{api: boolean, subscription: boolean}} runningLanes
  * @property {import('../../core/subscription-scheduler.js').SubscriptionSchedule|null} subscriptionSchedule
  * @property {ReturnType<typeof trackingHealth>} trackingHealth
+ * @property {{configured: boolean, loginConfigured: boolean, passwordConfigured: boolean, maskedLogin: string|null}} dataforseo
+ * @property {{locationCode: number|null, locationCountry: string|null, locationCity: string|null, languageCode: string|null, locationControl: string}} geolocation
+ * @property {ReturnType<typeof evaluateSpendCap> & {monthUtc: string, utilizationPct: number|null}} spendCap
+ * @property {boolean} allowUnverifiedModels
+ * @property {(import('../../core/site-check.js').SiteCheckReport & {text: string})|null} lastSiteCheck
+ * @property {(import('../../core/providers/dataforseo.js').DataForSeoHealthResult & {checkedAt: string})|null} lastDataForSeoHealth
  */
 
 /**

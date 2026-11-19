@@ -269,8 +269,8 @@ export function num(value, digits = 1) {
  * @typedef {Object} Rate
  * @property {number|null} p
  * @property {number} n
- * @property {number} [lo]
- * @property {number} [hi]
+ * @property {number|null} [lo]
+ * @property {number|null} [hi]
  */
 
 /**

@@ -888,10 +888,10 @@ export function buildClientReport(db, opts = {}) {
 
   const phrasingSpreads = intents
     .map((i) => i.phrasingSpread)
-    .filter((v) => typeof v === 'number' && Number.isFinite(v));
+    .filter(isFiniteNumber);
   const rerunSpreads = intents
     .map((i) => i.rerunSpread)
-    .filter((v) => typeof v === 'number' && Number.isFinite(v));
+    .filter(isFiniteNumber);
   const volatility = {
     surfaceScope: `${surfaceLabel(series.surface)} (${series.surface}, search=${series.searchPolicy ?? 'legacy'})`,
     comparableAnswers: series.comparableAnswers,
@@ -1147,6 +1147,14 @@ function renderSeparationBarsSection(report) {
 }
 
 /**
+ * @param {number|null|undefined} v
+ * @returns {v is number}
+ */
+function isFiniteNumber(v) {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+/**
  * Render the auto-generated "Why Live Chat on Your Phone May Differ" volatility & methodology callout.
  * @param {ReturnType<typeof buildClientReport>} report
  * @returns {string}
@@ -1165,10 +1173,10 @@ function renderVolatilityCallout(report) {
 
   const phrasingSpreads = (report.intents ?? [])
     .map((i) => i.phrasingSpread)
-    .filter((v) => typeof v === 'number' && Number.isFinite(v));
+    .filter(isFiniteNumber);
   const rerunSpreads = (report.intents ?? [])
     .map((i) => i.rerunSpread)
-    .filter((v) => typeof v === 'number' && Number.isFinite(v));
+    .filter(isFiniteNumber);
   const maxPhrasingSpread =
     vol?.maxPhrasingSpread !== undefined
       ? vol.maxPhrasingSpread

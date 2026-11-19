@@ -26,6 +26,14 @@ import { esc } from './layout.js';
 
 /** @typedef {(ctx: Ctx) => (void|Promise<void>)} Handler */
 
+/**
+ * @typedef {Object} Router
+ * @property {(method: string, pattern: string, handler: Handler) => void} add
+ * @property {(method: string, pattern: string, handler: Handler) => void} replace
+ * @property {(req: Req, res: Res) => Promise<void>} handle
+ * @property {{method: string, pattern: string, segs: string[], handler: Handler}[]} routes
+ */
+
 /** Maximum accepted request body (§10.1). */
 export const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -338,6 +346,7 @@ export function resolveStatic(publicDir, pathname) {
 /**
  * @param {Object} opts
  * @param {string} opts.publicDir absolute path served at /public/*
+ * @returns {Router}
  */
 export function createRouter({ publicDir }) {
   /** @type {{method: string, pattern: string, segs: string[], handler: Handler}[]} */

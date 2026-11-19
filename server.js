@@ -326,17 +326,19 @@ function parseForensicQuery(url) {
     filters.searchPolicy = searchPolicy;
   }
 
-  for (const [paramKeys, targetKey] of [
+  /** @type {Array<[string[], 'runId'|'intentId']>} */
+  const intParams = [
     [['run_id', 'runId'], 'runId'],
     [['intent_id', 'intentId'], 'intentId'],
-  ]) {
+  ];
+  for (const [paramKeys, targetKey] of intParams) {
     const raw = parseStrQuery(url, paramKeys, 32);
     if (raw !== undefined) {
       const n = Number(raw);
       if (!Number.isSafeInteger(n) || n <= 0) {
         throw new ApiError(400, 'bad_request', `${paramKeys[0]} must be a positive integer`);
       }
-      filters[/** @type {'runId'|'intentId'} */ (targetKey)] = n;
+      filters[targetKey] = n;
     }
   }
 
@@ -495,7 +497,7 @@ function buildSettingsSnapshot(db, cfg) {
  * Register Wave 2 HTTP API endpoints (forensics, pre-flight site check, spend cap,
  * DataForSEO health canary, extended `.env` settings, and white-label report export).
  *
- * @param {ReturnType<typeof createRouter>} router
+ * @param {import('./web/router.js').Router} router
  * @param {{
  *   db: import('node:sqlite').DatabaseSync,
  *   config: import('./core/config.js').Config,
@@ -958,7 +960,7 @@ function registerWave2Routes(router, deps) {
  * @param {SiteCheckDi} [deps.siteCheck]
  * @param {typeof checkDataForSeoHealth} [deps.dataforseoHealth]
  * @param {typeof defaultClientExport} [deps.clientExport]
- * @returns {ReturnType<typeof createRouter>}
+ * @returns {import('./web/router.js').Router}
  */
 export function buildRouter({ db, config, runtime, siteCheck, dataforseoHealth, clientExport }) {
   const router = createRouter({ publicDir: PUBLIC_DIR });
@@ -1068,7 +1070,7 @@ export async function startServer(opts = {}) {
     lastSiteCheck: null,
     /** @type {(import('./core/providers/dataforseo.js').DataForSeoHealthResult & {checkedAt: string})|null} */
     lastDataForSeoHealth: null,
-    /** @type {ReturnType<typeof createRouter>} */
+    /** @type {import('./web/router.js').Router} */
     router: /** @type {*} */ (null),
   };
 
