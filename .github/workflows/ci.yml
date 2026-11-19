@@ -23,6 +23,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Show versions
         run: node --version
+      - name: Install allowlisted runtime dependencies
+        run: npm ci --omit=dev
       # Bare `node --test` (default discovery). A bare directory positional such as
       # `node --test test/` is treated as a file path on Node 24 and fails; default
       # discovery finds test/**/*.test.js on both 22 and 24.
@@ -37,34 +39,42 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
+      - name: Install allowlisted runtime dependencies
+        run: npm ci --omit=dev
       # Dev tooling only, installed with --no-save so the shipped manifest keeps its
-      # zero-dependency guarantee (§19.6 #1). @types/node is what makes `node:` imports
+      # strict 2-dependency guarantee. @types/node is what makes `node:` imports
       # resolvable for checkJs.
       - name: Install dev tooling
         run: npm install --no-save --package-lock=false typescript@5.9.3 @types/node@24.19.0 playwright@1.62.0
       - name: Typecheck
         run: npx tsc -p jsconfig.json --noEmit
 
-  zero-deps:
-    name: zero-dependency proof
+  allowlisted-deps:
+    name: strict 2-dep runtime audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
-      - name: package.json declares no dependencies
+      - name: package.json declares only allowlisted runtime dependencies
         run: |
           node -e '
             const pkg = require("./package.json");
-            for (const field of ["dependencies", "peerDependencies", "optionalDependencies", "bundledDependencies"]) {
+            const deps = Object.keys(pkg.dependencies || {}).sort();
+            const expected = ["diff", "webforai"];
+            if (JSON.stringify(deps) !== JSON.stringify(expected)) {
+              console.error(`package.json dependencies must declare strictly ${JSON.stringify(expected)}, got ${JSON.stringify(deps)}`);
+              process.exit(1);
+            }
+            for (const field of ["peerDependencies", "optionalDependencies", "bundledDependencies"]) {
               if (pkg[field]) { console.error(`package.json must not declare ${field}`); process.exit(1); }
             }
-            console.log("no dependency fields declared");
+            console.log("strict 2-dep runtime manifest verified:", deps.join(", "));
           '
       - name: Install source parser for development checks
         run: npm install --no-save --package-lock=false typescript@5.9.3
       - name: Verify the dependency checker
         run: node --test scripts/check-runtime-deps.cases.mjs
-      - name: Runtime imports use builtins or repository files
+      - name: Runtime imports use builtins, allowlisted packages, or repository files
         run: npm run check:runtime-deps

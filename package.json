@@ -34,7 +34,7 @@
     "robots-txt",
     "mcp",
     "sqlite",
-    "zero-dependencies"
+    "markdown"
   ],
   "homepage": "https://melonwer.github.io/hearsay/",
   "repository": {
@@ -58,5 +58,9 @@
     "build:bundles": "node scripts/build-bundles.js",
     "verify:bundles": "node scripts/verify-skill-discovery.js",
     "verify:plugin-runtime": "node scripts/verify-plugin-runtime.js"
+  },
+  "dependencies": {
+    "diff": "^9.0.0",
+    "webforai": "^5.1.0"
   }
 }

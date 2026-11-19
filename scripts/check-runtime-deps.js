@@ -3,6 +3,8 @@ import { isBuiltin } from 'node:module';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 
+const ALLOWED_EXTERNAL_PACKAGES = new Set(['webforai', 'diff']);
+
 const root = resolve(process.argv[2] || '.');
 const pending = ['core', 'web', 'mcp', 'bin', 'public', 'server.js',
   'scripts/run-panel.js', 'scripts/seed.js', 'scripts/suggest-prompts.js', 'scripts/build-bundles.js'].map((path) => resolve(root, path));
@@ -33,6 +35,7 @@ while (pending.length) {
       const location = `${relative(root, file)}:${line}`;
       if (!ts.isStringLiteralLike(specifier)) errors.push(`${location}: module specifier must be a literal`);
       else if (specifier.text.startsWith('node:') && isBuiltin(specifier.text)) return;
+      else if (ALLOWED_EXTERNAL_PACKAGES.has(specifier.text)) return;
       else if (specifier.text.startsWith('./') || specifier.text.startsWith('../')) {
         const target = resolve(dirname(file), specifier.text);
         if (!target.startsWith(`${root}${sep}`)) errors.push(`${location}: import leaves the repository`);
@@ -46,4 +49,4 @@ while (pending.length) {
 if (errors.length) {
   for (const error of errors) console.error(error);
   process.exitCode = 1;
-} else console.log('Runtime imports use only node: builtins and repository files.');
+} else console.log('Runtime imports use only node: builtins, allowlisted packages (webforai, diff), and repository files.');

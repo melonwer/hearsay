@@ -20,26 +20,41 @@ function check(t, files) {
   return spawnSync(process.execPath, [checker, root], { encoding: 'utf8' });
 }
 
-test('routes, comments, template text and optional browser tooling are not runtime imports', (t) => {
+test('routes, comments, template text, allowlisted packages and optional browser tooling pass', (t) => {
   const result = check(t, { 'server.js': `import { readFileSync } from 'node:fs';
 import './core/helper.js';
 const route = '/api/research/import';
 const text = "import 'not-an-import'";
 const template = \`<form action="/api/outcomes/import">\`;
 // import 'not-an-import';
-`, 'core/helper.js': "export const value = 'hearsay_research_import';",
-  'scripts/verify-browser.js': "await import('playwright');" });
+`, 'core/helper.js': `export const value = 'hearsay_research_import';
+export async function loadExtractors() {
+  const webforai = await import('webforai');
+  const diff = await import('diff');
+  return { webforai, diff };
+}
+`, 'core/static-allowed.js': `import { htmlToMarkdown } from 'webforai';
+import { diffLines } from 'diff';
+export { htmlToMarkdown, diffLines };
+`, 'scripts/verify-browser.js': "await import('playwright');" });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Runtime imports use only node: builtins and repository files/);
+  assert.match(result.stdout, /Runtime imports use only node: builtins, allowlisted packages \(webforai, diff\), and repository files/);
 });
 
-test('runtime static, dynamic, re-export and CommonJS package imports are rejected', (t) => {
-  for (const source of ["import value from 'external-package';", "await import('external-package');",
-    "export { value } from 'external-package';", "const value = require('external-package');",
-    "const value = module.require('external-package');", 'await import(`external-package`);']) {
+test('non-allowlisted static, dynamic, subpath, re-export and CommonJS package imports are rejected', (t) => {
+  for (const [source, expected] of [
+    ["import value from 'external-package';", '"external-package"'],
+    ["await import('external-package');", '"external-package"'],
+    ["export { value } from 'external-package';", '"external-package"'],
+    ["const value = require('external-package');", '"external-package"'],
+    ["const value = module.require('external-package');", '"external-package"'],
+    ['await import(`external-package`);', '"external-package"'],
+    ["import 'webforai/loaders/playwright';", '"webforai/loaders/playwright"'],
+    ["await import('turndown');", '"turndown"'],
+  ]) {
     const result = check(t, { 'bin/hearsay.js': source });
     assert.equal(result.status, 1, source);
-    assert.match(result.stderr, /bin\/hearsay.js:1: external runtime import "external-package"/);
+    assert.ok(result.stderr.includes(`bin/hearsay.js:1: external runtime import ${expected}`), result.stderr);
   }
 });
 
