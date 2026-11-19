@@ -5,7 +5,7 @@ This guide covers environment configuration, the zero-key `hearsay check` CLI, d
 ## Runtime, Ports & Workspace Paths
 
 - **Requirements:** [Node.js ≥ 22.13](https://nodejs.org) (uses built-in `node:sqlite`, plus the strict 2-package pure-JS extraction allowlist `webforai` + `diff` with built-in zero-dependency fallbacks — no external database needed).
-- **Starting the dashboard:** Run `npx hearsay serve` (or `node server.js` from a checkout). Supports `--port PORT` and `--host HOST`.
+- **Starting the dashboard:** Run `npx @melonwer/hearsay serve` (or `node server.js` from a checkout). Supports `--port PORT` and `--host HOST`.
 - **Port selection:** `node server.js` binds to `127.0.0.1` on an available ephemeral port (`PORT=0` by default) and writes the active port to `data/hearsay.port`. Set `PORT=3100 node server.js` (or `hearsay serve --port 3100`) only when a local reverse proxy needs a fixed port.
 - **Common startup errors:**
   - `command not found: node` — install Node.js LTS (≥ 22.13) from [nodejs.org](https://nodejs.org).
@@ -23,7 +23,7 @@ This guide covers environment configuration, the zero-key `hearsay check` CLI, d
 Run a zero-key technical AI crawlability, Bot-vs-Human diff, and multi-page site audit without starting the server or configuring API keys:
 
 ```sh
-npx hearsay check https://example.com
+npx @melonwer/hearsay check https://example.com
 # Compare against competitors + render side-by-side Bot-vs-Human HTML report:
 node bin/hearsay.js check https://example.com --vs https://competitor1.com https://competitor2.com --browser --html preflight.html
 # CI quality gate + baseline regression diff (exits 10 on failure):
@@ -140,7 +140,7 @@ Hearsay ships an opt-in GitHub Actions workflow at [`.github/workflows/hearsay-w
 
 ### Standalone CLI & Bundles
 
-With Node ≥ 22.13, `npx hearsay --help` or `node bin/hearsay.js --help` (or `npm link` for global `hearsay`) runs zero-key pre-flight audits (`hearsay check`), the local dashboard (`hearsay serve`), agent discovery, bounded panels, website studies, Tavily collection, outcome tracking, and report generation. See the [CLI Guide](../skill/references/cli.md) and [Website Studies Guide](../skill/references/studies.md).
+With Node ≥ 22.13, `npx @melonwer/hearsay --help` or `node bin/hearsay.js --help` (or `npm link` for global `hearsay`) runs zero-key pre-flight audits (`hearsay check`), the local dashboard (`hearsay serve`), agent discovery, bounded panels, website studies, Tavily collection, outcome tracking, and report generation. See the [CLI Guide](../skill/references/cli.md) and [Website Studies Guide](../skill/references/studies.md).
 
 To build portable skill archives, Codex/Claude plugins, and the Gemini CLI extension locally into `dist/`:
 

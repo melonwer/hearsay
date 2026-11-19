@@ -13,6 +13,7 @@ subscriptions, zero telemetry.
 
 **[See the interactive demo and the 51-second film](https://melonwer.github.io/hearsay/)**
 
+[![npm](https://img.shields.io/npm/v/%40melonwer%2Fhearsay.svg)](https://www.npmjs.com/package/@melonwer/hearsay)
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-brightgreen.svg)](package.json)
@@ -28,7 +29,7 @@ Before spending a dollar on prompts, check what zero-JS AI crawlers (`OAI-Search
 directly against competitors:
 
 ```sh
-npx github:melonwer/hearsay check https://yoursite.com --browser --vs https://competitor.com
+npx @melonwer/hearsay check https://yoursite.com --browser --vs https://competitor.com
 ```
 
 ```text
@@ -124,7 +125,7 @@ git clone https://github.com/melonwer/hearsay && cd hearsay
 node server.js
 ```
 
-Or run directly without cloning: `npx github:melonwer/hearsay serve` (no Git? Use **Code → Download ZIP**, unzip, and run `node server.js`).
+Or run directly without cloning: `npx @melonwer/hearsay serve` (no Git? Use **Code → Download ZIP**, unzip, and run `node server.js`).
 
 Open the local URL printed in your terminal, then:
 
