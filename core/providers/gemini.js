@@ -52,7 +52,8 @@ function reportedUsage(json) {
 /**
  * @param {string} text the prompt, sent verbatim as the single user turn
  * @param {{model?: string, timeoutMs?: number, apiKey?: string,
- *   searchPolicy?:'off'|'auto'|'required'|'legacy', maxResponseBytes?:number|null}} [opts]
+ *   searchPolicy?:'off'|'auto'|'required'|'legacy', maxResponseBytes?:number|null,
+ *   allowUnverifiedModels?: boolean}} [opts]
  * @returns {Promise<ProviderResult>}
  */
 export async function runPrompt(text, opts = {}) {
@@ -64,7 +65,8 @@ export async function runPrompt(text, opts = {}) {
   if (searchPolicy !== 'off' && searchPolicy !== 'auto') {
     throw new RangeError(`Gemini search policy ${searchPolicy} is unsupported`);
   }
-  if (searchPolicy === 'auto' && model !== 'gemini-3.6-flash') {
+  const allowUnverified = opts.allowUnverifiedModels ?? config.allowUnverifiedModels;
+  if (searchPolicy === 'auto' && model !== 'gemini-3.6-flash' && !allowUnverified) {
     throw new RangeError(`Gemini Google Search grounding is not validated for ${model}`);
   }
   requireKey(apiKey, provider.keyEnv);
@@ -91,7 +93,7 @@ export async function runPrompt(text, opts = {}) {
     if (searchPolicy === 'auto' && error instanceof ProviderError &&
         /HTTP (400|403)/.test(error.message)) {
       throw new ProviderError(error.kind, 'Gemini Google Search request was rejected',
-        `Check grounding access for gemini-3.6-flash, or set HEARSAY_GEMINI_SEARCH_POLICY=off. ${error.detail}`.trim(),
+        `Check grounding access for ${model}, or set HEARSAY_GEMINI_SEARCH_POLICY=off. ${error.detail}`.trim(),
         error.billableAttempts);
     }
     throw error;

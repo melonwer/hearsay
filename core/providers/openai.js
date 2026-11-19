@@ -158,7 +158,9 @@ function parseResponses(json, model, latencyMs, res) {
  * @param {string} text the prompt, sent verbatim as the single user message
  * @param {{model?: string, timeoutMs?: number, apiKey?: string,
  *   searchPolicy?: 'off'|'auto'|'required'|'legacy', maxOutputTokens?: number|null,
- *   maxResponseBytes?:number|null, signal?:AbortSignal}} [opts]
+ *   maxResponseBytes?:number|null, signal?:AbortSignal,
+ *   userLocation?: {country?: string, city?: string, region?: string}|null,
+ *   allowUnverifiedModels?: boolean}} [opts]
  * @returns {Promise<ProviderResult>}
  */
 export async function runPrompt(text, opts = {}) {
@@ -171,7 +173,8 @@ export async function runPrompt(text, opts = {}) {
   if (!['off', 'auto', 'required'].includes(searchPolicy)) {
     throw new RangeError(`OpenAI search policy ${searchPolicy} is unsupported`);
   }
-  if (searchPolicy !== 'off' && model !== 'gpt-5.6-luna') {
+  const allowUnverified = opts.allowUnverifiedModels ?? config.allowUnverifiedModels;
+  if (searchPolicy !== 'off' && model !== 'gpt-5.6-luna' && !allowUnverified) {
     throw new RangeError(`OpenAI web search is not validated for ${model}`);
   }
   const maxOutputTokens = opts.maxOutputTokens ?? SEARCH_MAX_OUTPUT_TOKENS;
@@ -181,6 +184,25 @@ export async function runPrompt(text, opts = {}) {
   }
   if (searchPolicy !== 'off' && (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 2 * 1024 * 1024)) {
     throw new RangeError('OpenAI search response size limit must be between 1 and 2097152 bytes');
+  }
+
+  /** @type {Record<string, unknown>} */
+  const webSearchTool = { type: 'web_search' };
+  if (searchPolicy !== 'off' && opts.userLocation && typeof opts.userLocation === 'object') {
+    const country = typeof opts.userLocation.country === 'string' && opts.userLocation.country.trim() !== ''
+      ? opts.userLocation.country.trim() : null;
+    const city = typeof opts.userLocation.city === 'string' && opts.userLocation.city.trim() !== ''
+      ? opts.userLocation.city.trim() : null;
+    const region = typeof opts.userLocation.region === 'string' && opts.userLocation.region.trim() !== ''
+      ? opts.userLocation.region.trim() : null;
+    if (country || city || region) {
+      webSearchTool.user_location = {
+        type: 'approximate',
+        ...(country ? { country } : {}),
+        ...(city ? { city } : {}),
+        ...(region ? { region } : {}),
+      };
+    }
   }
 
   const startedAt = Date.now();
@@ -195,7 +217,7 @@ export async function runPrompt(text, opts = {}) {
       body: JSON.stringify(searchPolicy === 'off'
         ? { model, messages: [{ role: 'user', content: text }] }
         : { model, input: [{ role: 'user', content: text }],
-          tools: [{ type: 'web_search' }], tool_choice: searchPolicy,
+          tools: [webSearchTool], tool_choice: searchPolicy,
           include: ['web_search_call.action.sources'], max_output_tokens: maxOutputTokens }),
     },
     { timeoutMs, usageFromResponse: searchPolicy === 'off' ? reportedUsage : responsesUsage,

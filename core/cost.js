@@ -32,6 +32,7 @@
 
 export const PRICE_TABLE_VERSION = '2026-09-24-standard';
 
+import { get } from './db.js';
 import { stableIdentity } from './measurement-contract.js';
 
 /** @typedef {import('./config.js').ProviderId} ProviderId */
@@ -340,4 +341,93 @@ export function formatUsd(usd) {
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   if (usd < 1) return `$${usd.toFixed(3)}`;
   return `$${usd.toFixed(2)}`;
+}
+
+/**
+ * Compute half-open UTC calendar month boundaries `[start, end)` for a Date.
+ * @param {Date} now
+ * @returns {{start: string, end: string}}
+ */
+function utcMonthWindow(now) {
+  const ref = now instanceof Date ? now : new Date(now);
+  const year = ref.getUTCFullYear();
+  const month = ref.getUTCMonth();
+  const start = new Date(Date.UTC(year, month, 1, 0, 0, 0)).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const end = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0)).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return { start, end };
+}
+
+/**
+ * Sum live (non-seeded) API spend in USD for the current UTC calendar month.
+ * Uses `responses.cost_usd` when complete, falling back to `cost_known_subtotal_usd`
+ * (for partial/timed-out calls) and `reported_charge_usd` (for provider-billed calls).
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {Date} [now]
+ * @returns {number}
+ */
+export function monthlyApiSpend(db, now = new Date()) {
+  const { start, end } = utcMonthWindow(now);
+  const row = get(
+    db,
+    `SELECT COALESCE(SUM(COALESCE(r.cost_usd, r.cost_known_subtotal_usd, r.reported_charge_usd, 0)), 0) AS total_usd
+       FROM responses r
+       JOIN runs run ON run.id = r.run_id
+      WHERE run.trigger != 'seed'
+        AND r.created_at >= ?
+        AND r.created_at < ?`,
+    [start, end],
+  );
+  const total = Number(row?.total_usd ?? 0);
+  return Number.isFinite(total) && total >= 0 ? total : 0;
+}
+
+/**
+ * @typedef {Object} SpendCapEvaluation
+ * @property {boolean} allowed
+ * @property {number} spentUsd
+ * @property {number} projectedUsd
+ * @property {number|null} capUsd
+ * @property {number|null} remainingUsd
+ * @property {'spend_cap_exceeded'|null} reason
+ */
+
+/**
+ * Evaluate whether adding `additionalEstimatedUsd` stays within the hard monthly USD cap.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {{additionalEstimatedUsd?: number|null, monthlyUsdCap?: number|null, now?: Date}} [opts]
+ * @returns {SpendCapEvaluation}
+ */
+export function evaluateSpendCap(db, opts = {}) {
+  const spentUsd = monthlyApiSpend(db, opts.now ?? new Date());
+  const rawAdd = opts.additionalEstimatedUsd;
+  const additional = typeof rawAdd === 'number' && Number.isFinite(rawAdd) && rawAdd > 0 ? rawAdd : 0;
+  const projectedUsd = spentUsd + additional;
+  const cap = opts.monthlyUsdCap ?? null;
+
+  if (cap === null) {
+    return {
+      allowed: true,
+      spentUsd,
+      projectedUsd,
+      capUsd: null,
+      remainingUsd: null,
+      reason: null,
+    };
+  }
+  if (typeof cap !== 'number' || !Number.isFinite(cap) || cap <= 0) {
+    throw new RangeError('monthlyUsdCap must be a positive finite number or null');
+  }
+
+  const remainingUsd = Math.max(0, cap - spentUsd);
+  const allowed = projectedUsd <= cap + 1e-12;
+  return {
+    allowed,
+    spentUsd,
+    projectedUsd,
+    capUsd: cap,
+    remainingUsd,
+    reason: allowed ? null : 'spend_cap_exceeded',
+  };
 }

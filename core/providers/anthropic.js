@@ -228,7 +228,7 @@ async function runSearchPrompt(text, opts) {
  * @param {{model?: string, timeoutMs?: number, apiKey?: string,
  *   searchPolicy?:'off'|'auto'|'required'|'legacy',maxOutputTokens?:number|null,
  *   maxResponseBytes?:number|null,maxSearchCalls?:number|null,maxContinuations?:number,
- *   signal?:AbortSignal}} [opts]
+ *   signal?:AbortSignal, allowUnverifiedModels?: boolean}} [opts]
  * @returns {Promise<ProviderResult>}
  */
 export async function runPrompt(text, opts = {}) {
@@ -239,8 +239,9 @@ export async function runPrompt(text, opts = {}) {
   requireKey(apiKey, provider.keyEnv);
   const searchPolicy = opts.searchPolicy ?? 'off';
   if (searchPolicy !== 'off' && searchPolicy !== 'auto') throw new RangeError(`Anthropic search policy ${searchPolicy} is unsupported`);
+  const allowUnverified = opts.allowUnverifiedModels ?? config.allowUnverifiedModels;
   if (searchPolicy === 'auto') {
-    if (model !== 'claude-sonnet-5') throw new RangeError(`Anthropic web search is not validated for ${model}`);
+    if (model !== 'claude-sonnet-5' && !allowUnverified) throw new RangeError(`Anthropic web search is not validated for ${model}`);
     return runSearchPrompt(text, { ...opts, model, timeoutMs, apiKey });
   }
 

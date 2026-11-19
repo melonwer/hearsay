@@ -13,6 +13,7 @@ import * as openai from './openai.js';
 import * as anthropic from './anthropic.js';
 import * as gemini from './gemini.js';
 import * as perplexity from './perplexity.js';
+import * as dataforseo from './dataforseo.js';
 
 /** @typedef {import('../config.js').ProviderId} ProviderId */
 /** @typedef {import('./shared.js').ProviderResult} ProviderResult */
@@ -22,7 +23,10 @@ import * as perplexity from './perplexity.js';
  * @property {string} id
  * @property {(text: string, opts?: {model?: string, timeoutMs?: number, apiKey?: string,
  *   searchPolicy?: 'off'|'auto'|'required'|'legacy', maxOutputTokens?: number|null,
- *   maxResponseBytes?: number|null,maxSearchCalls?:number|null,maxContinuations?:number}) => Promise<ProviderResult>} runPrompt
+ *   maxResponseBytes?: number|null, maxSearchCalls?: number|null, maxContinuations?: number,
+ *   userLocation?: {country?: string, city?: string, region?: string}|null,
+ *   allowUnverifiedModels?: boolean, locationCode?: number|null, languageCode?: string|null,
+ *   mode?: 'google-aio'|'chatgpt-web'}) => Promise<ProviderResult>} runPrompt
  */
 
 /** @type {Record<ProviderId, ProviderAdapter>} */
@@ -33,13 +37,41 @@ export const adapters = {
   perplexity,
 };
 
+/** @type {ProviderAdapter} */
+const dataforseoAioAdapter = {
+  id: 'dataforseo-aio',
+  runPrompt: (text, opts = {}) => dataforseo.runPrompt(text, { ...opts, mode: 'google-aio' }),
+};
+
+/** @type {ProviderAdapter} */
+const dataforseoChatgptAdapter = {
+  id: 'dataforseo-chatgpt',
+  runPrompt: (text, opts = {}) => dataforseo.runPrompt(text, { ...opts, mode: 'chatgpt-web' }),
+};
+
+/**
+ * Optional BYOK providers outside the core 4-provider panel registry.
+ * Kept separate from `adapters` so existing 4-provider invariants stay intact.
+ *
+ * @type {Record<string, ProviderAdapter>}
+ */
+export const OPTIONAL_PROVIDERS = Object.freeze({
+  dataforseo,
+  'dataforseo-aio': dataforseoAioAdapter,
+  'dataforseo-chatgpt': dataforseoChatgptAdapter,
+});
+
 /**
  * @param {string} id
  * @returns {ProviderAdapter|null}
  */
 export function getAdapter(id) {
-  return Object.hasOwn(adapters, id) ? adapters[/** @type {ProviderId} */ (id)] : null;
+  if (Object.hasOwn(adapters, id)) return adapters[/** @type {ProviderId} */ (id)];
+  if (Object.hasOwn(OPTIONAL_PROVIDERS, id)) return OPTIONAL_PROVIDERS[id];
+  return null;
 }
+
+export const byId = getAdapter;
 
 /**
  * Adapters for the providers that currently have a key, in stable UI order (§11.1).

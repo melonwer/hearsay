@@ -44,20 +44,26 @@ export function apiExecutionBudget(config, providerId) {
         endpoint: null, answerTokenLimit: null }
     : API_ROUTES[providerId];
   const provider = config.providers[providerId];
+  const allowUnverified = Boolean(config.allowUnverifiedModels);
+  let unverifiedModelWarning = false;
   if (providerId === 'openai' && searchPolicy !== 'off' && provider.model !== 'gpt-5.6-luna') {
-    throw new RangeError(`OpenAI web search is not validated for ${provider.model}`);
+    if (!allowUnverified) throw new RangeError(`OpenAI web search is not validated for ${provider.model}`);
+    unverifiedModelWarning = true;
   }
   if (providerId === 'anthropic' && searchPolicy === 'auto' && provider.model !== 'claude-sonnet-5') {
-    throw new RangeError(`Anthropic web search is not validated for ${provider.model}`);
+    if (!allowUnverified) throw new RangeError(`Anthropic web search is not validated for ${provider.model}`);
+    unverifiedModelWarning = true;
   }
   if (providerId === 'gemini' && searchPolicy === 'auto' && provider.model !== 'gemini-3.6-flash') {
-    throw new RangeError(`Gemini Google Search grounding is not validated for ${provider.model}`);
+    if (!allowUnverified) throw new RangeError(`Gemini Google Search grounding is not validated for ${provider.model}`);
+    unverifiedModelWarning = true;
   }
   assertRoutePolicy(definition.route, `${providerId}-api`, /** @type {import('./measurement-contract.js').SearchPolicy} */ (definition.policy));
   return {
     surface: `${providerId}-api`, route: definition.route, model: provider.model,
     endpoint: providerId === 'gemini' ? geminiEndpointFor(provider.model) : definition.endpoint,
     searchPolicy: definition.policy,
+    unverifiedModelWarning,
     enabledTools: providerId === 'perplexity' ? ['Sonar internal retrieval']
       : providerId === 'openai' && searchPolicy !== 'off' ? ['web_search']
         : providerId === 'anthropic' && searchPolicy === 'auto' ? ['web_search_20250305']
