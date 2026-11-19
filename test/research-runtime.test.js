@@ -515,3 +515,50 @@ test('discoverAgents and previewResearchRun flag unsupported agy-cli versions be
   assert.equal(preview.snapshot.identities[0].error, 'unsupported_cli_version');
   await assert.rejects(runResearchPanel(fixture.directory, { execute: true, preview, confirm: preview.quoteId }), { code: 'unsupported_profile' });
 });
+
+test('previewResearchRun honors route pathEnv when executable is unset or default, while preserving explicit overrides', async (t) => {
+  const fixture = workspace(t, { questions: 1, providers: ['agy-cli'] });
+  const envAgy = join(fixture.directory, 'env-agy-bin');
+  writeFileSync(
+    envAgy,
+    `#!${process.execPath}\nprocess.stdout.write(process.argv.includes('--version') ? '1.2.11\\n' : '--print --output-format --agent\\n');\n`,
+    { mode: 0o700 },
+  );
+
+  // Case 1: executable equals default route.executable ('agy') -> honors HEARSAY_AGY_PATH.
+  fixture.project.executions[0].routes[0].executable = 'agy';
+  fixture.save();
+  const previewDefault = await previewResearchRun(fixture.directory, {
+    env: { ...process.env, HEARSAY_AGY_PATH: envAgy },
+  });
+  assert.equal(previewDefault.snapshot.identities[0].error, undefined);
+  assert.equal(previewDefault.snapshot.identities[0].executable, envAgy);
+  assert.equal(previewDefault.snapshot.identities[0].version, '1.2.11');
+
+  // Case 2: executable is null -> honors HEARSAY_AGY_PATH via CLI process.env too.
+  fixture.project.executions[0].routes[0].executable = null;
+  fixture.save();
+  const cliResult = invoke(['run', '--project', fixture.directory, '--json'], {
+    env: { PATH: process.env.PATH, HEARSAY_AGY_PATH: envAgy },
+  });
+  assert.equal(cliResult.status, 0, cliResult.stderr);
+  const cliPreview = JSON.parse(cliResult.stdout);
+  assert.equal(cliPreview.snapshot.identities[0].error, undefined);
+  assert.equal(cliPreview.snapshot.identities[0].executable, envAgy);
+  assert.equal(cliPreview.snapshot.identities[0].version, '1.2.11');
+
+  // Case 3: explicit non-default override in project.json wins over HEARSAY_AGY_PATH.
+  const explicitAgy = join(fixture.directory, 'explicit-agy-bin');
+  writeFileSync(
+    explicitAgy,
+    `#!${process.execPath}\nprocess.stdout.write(process.argv.includes('--version') ? '1.2.12\\n' : '--print --output-format --agent\\n');\n`,
+    { mode: 0o700 },
+  );
+  fixture.project.executions[0].routes[0].executable = explicitAgy;
+  fixture.save();
+  const previewExplicit = await previewResearchRun(fixture.directory, {
+    env: { ...process.env, HEARSAY_AGY_PATH: envAgy },
+  });
+  assert.equal(previewExplicit.snapshot.identities[0].executable, explicitAgy);
+  assert.equal(previewExplicit.snapshot.identities[0].version, '1.2.12');
+});

@@ -179,12 +179,30 @@ export function normalizeObservedQuery(query) {
   return query.normalize('NFC').trim().replace(/\s+/gu, ' ');
 }
 
+const TRACKING_QUERY_PARAMS = new Set([
+  'fbclid',
+  'gclid',
+  'dclid',
+  'gbraid',
+  'wbraid',
+  'msclkid',
+  'mc_cid',
+  'mc_eid',
+  'igshid',
+]);
+
 /** @param {string} original @returns {string|null} */
 export function sourceGroupingUrl(original) {
   try {
     const url = new URL(original);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     url.hash = '';
+    for (const key of [...url.searchParams.keys()]) {
+      const lower = key.toLowerCase();
+      if (lower.startsWith('utm_') || TRACKING_QUERY_PARAMS.has(lower)) {
+        url.searchParams.delete(key);
+      }
+    }
     return url.toString();
   } catch {
     return null;

@@ -301,14 +301,21 @@ function stanceForMatch(text, match, ambiguousName) {
     }
   }
 
-  if (/\b(?:do\s+not|don't|does\s+not|doesn't|would\s+not|wouldn't|won't|cannot|can't|never)\s+(?:(?:really|ever|usually)\s+)?(?:recommend|suggest|choose|pick|use)\s*$/i.test(before) ||
-      /\b(?:don't|do\s+not)\s+think\s+(?:I|we)\s+(?:would|should)\s+(?:recommend|suggest|choose|pick|use)\s*$/i.test(before) ||
+  if (/\b(?:do\s+not|don['’]t|does\s+not|doesn['’]t|would\s+not|wouldn['’]t|should\s+not|shouldn['’]t|won['’]t|cannot|can['’]t|never)\s+(?:(?:really|ever|usually|generally)\s+)?(?:recommend|suggest|choose|pick|use|start\s+with|pilot|try)\s*$/i.test(before) ||
+      /\b(?:do\s+not|don['’]t|does\s+not|doesn['’]t|would\s+not|wouldn['’]t|should\s+not|shouldn['’]t|won['’]t|cannot|can['’]t|never)\s+(?:(?:really|ever|usually|generally)\s+)?(?:recommend|suggest)\s+(?:starting\s+with|piloting|trying)\s*$/i.test(before) ||
+      /\b(?:don['’]t|do\s+not)\s+think\s+(?:I|we|you)\s+(?:would|should)\s+(?:recommend(?:\s+(?:starting\s+with|piloting|trying))?|suggest|choose|pick|use|start\s+with|pilot|try)\s*$/i.test(before) ||
       /\b(?:avoid|skip|reject|discourage|do\s+not\s+use)\s*$/i.test(before) ||
       /^(?:is|are|would\s+be|seems?)\s+(?:not\s+(?:(?:a|the)\s+)?(?:good|strong|recommended|suitable|right|best)|unsuitable|(?:a|the)\s+(?:poor|bad)\s+(?:choice|option|fit)|inferior)\b/i.test(after) ||
       /^should\s+(?:be\s+)?avoided\b/i.test(after)) {
     return decision('negative', 'explicit_rejection');
   }
   if (/\b(?:recommend|suggest|choose|pick|use|go\s+with)\s*$/i.test(before) ||
+      /(?:\b(?:I|we)(?:['’]d|\s+would)|\bshould)\s+(?:generally\s+)?start\s+with\s*$/i.test(before) ||
+      /\brecommend\s+(?:starting\s+with|(?:you\s+|teams\s+)?start\s+with)\s*$/i.test(before) ||
+      (/^first\b(?!-)/i.test(after) && (
+        /(?:\b(?:I|we)(?:['’]d|\s+would)|\bshould)\s+(?:generally\s+)?(?:pilot|try)\s*$/i.test(before) ||
+        /\brecommend\s+(?:piloting|trying)\s*$/i.test(before)
+      )) ||
       /\b(?:best|top|strongest|first)\s+(?:pick|choice|option|recommendation)(?:\s+\w+){0,2}\s+(?:is|:)\s*$/i.test(before) ||
       /#1\s*:\s*$/i.test(before) ||
       /^(?:is|would\s+be|remains)\s+(?:(?:the|a|my|our)\s+)?(?:best|top|first|strongest|leading|#1|great|good|strong|excellent|usual|recommended)\s+(?:(?:overall|all-around|all\s+around)\s+)?(?:pick|choice|option|fit|tool|product|recommendation)\b/i.test(after) ||

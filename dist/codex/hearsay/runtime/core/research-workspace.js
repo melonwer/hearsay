@@ -62,7 +62,15 @@ export async function discoverAgents(env = process.env) {
   }));
 }
 
-/** @param {string} directory @param {{discover?:(routes:Record[])=>Promise<Record[]>}} [options] */
+/** @param {Record} selected @param {{[key:string]:string|undefined}} [env] */
+function resolveRouteExecutable(selected, env = process.env) {
+  const route = agentRoute(selected.id);
+  return selected.executable && selected.executable !== route.executable
+    ? selected.executable
+    : (env[route.pathEnv] || selected.executable || route.executable);
+}
+
+/** @param {string} directory @param {{discover?:(routes:Record[])=>Promise<Record[]>,env?:{[key:string]:string|undefined}}} [options] */
 export async function previewResearchRun(directory, options = {}) {
   const project = loadProject(directory);
   const panel = project.panels.find((/** @type {Record} */ p) => p.id === project.current.panel);
@@ -79,15 +87,17 @@ export async function previewResearchRun(directory, options = {}) {
   for (const key of ['timeoutMs', 'idleTimeoutMs', 'maxOutputBytes']) if (!Number.isSafeInteger(execution[key])) throw new ResearchError('execution_limits_required', 'Runtime execution requires explicit process limits');
   const count = panel.questions.length * execution.samples * routes.length;
   if (count > 1000) throw new ResearchError('target_limit', 'Panel exceeds 1,000 targets');
+  const env = options.env ?? process.env;
   const identities = options.discover ? await options.discover(routes) : await Promise.all(routes.map(async (/** @type {Record} */ selected) => {
     const route = agentRoute(selected.id);
+    const executable = resolveRouteExecutable(selected, env);
     try {
-      const discovered = await discoverCli({ executable: selected.executable || route.executable, helpArgsList: route.helpArgs });
+      const discovered = await discoverCli({ executable, helpArgsList: route.helpArgs, env });
       if (route.id === 'agy-cli' && !isAgyVersionSupported(discovered.version)) throw new AgentProcessError('unsupported_cli_version', 'Agy version needs compatibility validation');
       if (route.requiredFlags.some((flag) => !discovered.help.includes(flag))) throw new AgentProcessError('unsupported_profile', 'Required restricted flags missing');
       return { id: route.id, executable: discovered.executable, version: discovered.version, profile: route.profile,
         profileHash: agentExecutionProfile(route.id).hash };
-    } catch (error) { return { id: route.id, executable: selected.executable || route.executable, version: null, profile: route.profile, error: error instanceof AgentProcessError ? error.code : 'discovery_failed' }; }
+    } catch (error) { return { id: route.id, executable, version: null, profile: route.profile, error: error instanceof AgentProcessError ? error.code : 'discovery_failed' }; }
   }));
   const snapshot = { app: project.app, panel, execution: { ...execution, routes }, analysis, identities, stanceRevision: STANCE_REVISION, annotationRevision: 'research-annotations-v1' };
   const quoteId = researchHash(snapshot);
@@ -226,7 +236,7 @@ export async function runResearchPanel(directory, options = {}) {
         sample.startedAt = new Date().toISOString(); sample.errorCode = null;
         try {
           const identity = snapshot.identities.find((/** @type {Record} */ i) => i.id === route.id);
-          const runner = (options.runnerFactory ?? createAgentRunner)(route.id, { executable: identity?.executable || route.executable || agentRoute(route.id).executable,
+          const runner = (options.runnerFactory ?? createAgentRunner)(route.id, { executable: identity?.executable || resolveRouteExecutable(route),
             dataDir: join(runDirectory, 'captures'), timeoutMs: snapshot.execution.timeoutMs, idleTimeoutMs: snapshot.execution.idleTimeoutMs, maxOutputBytes: snapshot.execution.maxOutputBytes });
           const result = await runner.run({ responseId: bundle.samples.indexOf(sample) + 1, promptText: question.text, promptOrigin: 'user_authored', languageControl: snapshot.execution.language, locationControl: snapshot.execution.location }, controller.signal);
           if (identity?.version && result.cliVersion && identity.version !== result.cliVersion || identity?.executable && result.cliExecutable && identity.executable !== result.cliExecutable || identity?.profileHash && result.executionProfileHash && identity.profileHash !== result.executionProfileHash) throw new ResearchError('execution_mismatch', 'Executable version or execution profile changed after preview');

@@ -372,3 +372,58 @@ test('multi-mention endorsements are not erased by secondary passive mentions or
   assert.equal(forEntity(mItalic, 1)?.stance, 'positive');
   assert.equal(forEntity(mItalic, 1)?.recommended, 1);
 });
+
+test('pilot/start-with/try-first endorsements match only when positively cued without negation or conditionals', () => {
+  const positiveCases = [
+    "I'd pilot **Notewell** first for a distributed sales team.",
+    "I’d pilot Notewell first.",
+    "We'd pilot Notewell first before evaluating alternatives.",
+    'I would start with **Notewell** for most startups.',
+    'For a $20k/month bill, I would generally start with **Notewell**.',
+    'You should start with Notewell.',
+    'I recommend starting with Notewell.',
+    "I'd try **Notewell** first.",
+    'We should try Notewell first.',
+    'I recommend piloting Notewell first.',
+    'I recommend trying Notewell first.',
+  ];
+  for (const text of positiveCases) {
+    const mention = forEntity(extractMentions(text, ENTITIES), 1);
+    assert.equal(mention?.stance, 'positive', `Expected positive for: ${text}`);
+    assert.equal(mention?.recommended, 1, `Expected recommended=1 for: ${text}`);
+  }
+
+  const negativeCases = [
+    "I wouldn't pilot Notewell first.",
+    'I would not start with Notewell.',
+    "You shouldn't start with Notewell.",
+    'We should not try Notewell first.',
+    'I do not recommend starting with Notewell.',
+    "I don't think I would try Notewell first.",
+  ];
+  for (const text of negativeCases) {
+    const mention = forEntity(extractMentions(text, ENTITIES), 1);
+    assert.equal(mention?.stance, 'negative', `Expected negative for: ${text}`);
+    assert.equal(mention?.recommended, 0, `Expected recommended=0 for: ${text}`);
+  }
+
+  const uncertainCases = [
+    "I'd pilot Notewell first if your budget allows.",
+    "We'd start with Notewell unless you need self-hosting.",
+    'Start with Notewell for a quick prototype.',
+    "I'd pilot Notewell for two weeks.",
+    "I'd try Notewell for note taking.",
+    "I'd pilot Notewell first-class routing.",
+    'I recommend not starting with Notewell.',
+  ];
+  for (const text of uncertainCases) {
+    const mention = forEntity(extractMentions(text, ENTITIES), 1);
+    assert.equal(mention?.stance, 'uncertain', `Expected uncertain for: ${text}`);
+    assert.equal(mention?.recommended, 0, `Expected recommended=0 for: ${text}`);
+  }
+
+  // Binding stays local to the endorsed brand, never leaking to another brand in the same sentence.
+  const multi = extractMentions("I'd pilot **Jotta** first, then benchmark Notewell later.", ENTITIES);
+  assert.equal(forEntity(multi, 2)?.stance, 'positive');
+  assert.equal(forEntity(multi, 1)?.stance, 'uncertain');
+});

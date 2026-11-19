@@ -782,3 +782,59 @@ test('all 3 forensic analyzers handle an empty database gracefully without fabri
   assert.equal(persistence.summary.offSiteShare, null);
   assert.equal(persistence.limitations.length > 0, true);
 });
+
+test('retrievalAttritionReport and citationPersistenceReport deduplicate UTM and tracking query params without collapsing semantic params', (t) => {
+  const { db, addRun, addResponse, addSource, addCitation, addMention } = createFixture(t);
+  const wave1 = addRun({ startedAt: '2026-10-01T07:00:00Z' });
+  const wave2 = addRun({ startedAt: '2026-10-02T07:00:00Z' });
+
+  // Wave 1: retrieves clean URL and a legacy-stored UTM normalized_url, cites OpenAI UTM twin + semantic query URL.
+  const r1 = addResponse({ runId: wave1, promptId: 1, createdAt: '2026-10-01T10:00:00Z' });
+  addSource(r1, 'https://openrouter.ai/');
+  addSource(r1, 'https://docs.example.org/guide?page=2&utm_source=openai&fbclid=fb123');
+  addSource(r1, 'https://docs.example.org/guide?page=1');
+  addCitation(r1, 'https://openrouter.ai/?utm_source=openai', 0, null);
+  addCitation(r1, 'https://docs.example.org/guide?page=2&gclid=gc456&utm_medium=referral', 1, null);
+  addMention(r1, 2, 'positive');
+
+  // Wave 2: cites clean openrouter URL (must merge with wave 1's ?utm_source=openai twin -> durable 2/2).
+  const r2 = addResponse({ runId: wave2, promptId: 1, createdAt: '2026-10-02T10:00:00Z' });
+  addSource(r2, 'https://openrouter.ai/?utm_source=chatgpt.com');
+  addCitation(r2, 'https://openrouter.ai/', 0, null);
+  addMention(r2, 2, 'positive');
+
+  const attrition = retrievalAttritionReport(db);
+  // r1 retrieved 3 distinct URLs (openrouter.ai/, guide?page=2, guide?page=1) and cited 2 of them (openrouter + page=2), dropping only page=1.
+  // r2 retrieved 1 URL (openrouter.ai/) and cited it (0 dropped).
+  assert.equal(attrition.totalUniqueRetrievedUrls, 3);
+  assert.equal(attrition.totalUniqueCitedUrls, 2);
+  assert.equal(attrition.totalUniqueDroppedUrls, 1);
+  assert.equal(attrition.retrievedObservations, 4);
+  assert.equal(attrition.citedFromRetrievedObservations, 3);
+  assert.equal(attrition.droppedObservations, 1);
+  assert.deepEqual(
+    attrition.topDroppedThirdPartyUrls.map((u) => u.url),
+    ['https://docs.example.org/guide?page=1'],
+  );
+  assert.equal(
+    attrition.topDroppedThirdPartyUrls.some((u) => u.url.includes('openrouter.ai')),
+    false,
+  );
+  assert.deepEqual(
+    attrition.topCitedUrls.map((u) => [u.url, u.citedCount]),
+    [
+      ['https://openrouter.ai/', 2],
+      ['https://docs.example.org/guide?page=2', 1],
+    ],
+  );
+
+  const persistence = citationPersistenceReport(db);
+  assert.equal(persistence.totalWaves, 2);
+  assert.equal(persistence.summary.totalUniqueUrls, 2);
+  const openrouter = persistence.urls.find((u) => u.url === 'https://openrouter.ai/');
+  assert.ok(openrouter);
+  assert.equal(openrouter.tier, 'durable');
+  assert.equal(openrouter.wavesSeen, 2);
+  assert.equal(openrouter.citationCount, 2);
+  assert.equal(persistence.urls.some((u) => u.url.includes('utm_source')), false);
+});

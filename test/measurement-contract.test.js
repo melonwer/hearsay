@@ -123,10 +123,16 @@ test('failed or unfinished search is retained but excluded from comparable answe
   }), { searchState: 'not_applicable', evidenceCompleteness: 'complete', comparable: false, exclusion: 'off_policy_search_observed' });
 });
 
-test('observed query grouping preserves case and punctuation; URLs retain query parameters', () => {
+test('observed query grouping preserves case and punctuation; URLs retain semantic query parameters and strip tracking params', () => {
   assert.equal(normalizeObservedQuery('  Cafe\u0301   Pro\npricing?  '), 'Café Pro pricing?');
   assert.notEqual(normalizeObservedQuery('Acme?'), normalizeObservedQuery('acme?'));
   assert.equal(sourceGroupingUrl('HTTPS://Example.COM/path?a=1#section'), 'https://example.com/path?a=1');
   assert.notEqual(sourceGroupingUrl('https://example.com/path?a=1'), sourceGroupingUrl('https://example.com/path?a=2'));
+  assert.equal(sourceGroupingUrl('https://openrouter.ai/?utm_source=openai'), 'https://openrouter.ai/');
+  assert.equal(
+    sourceGroupingUrl('https://example.com/path?a=1&utm_source=openai&utm_medium=referral&fbclid=abc&gclid=xyz#frag'),
+    'https://example.com/path?a=1',
+  );
+  assert.equal(sourceGroupingUrl('https://github.com/org/repo?ref=main&utm_campaign=launch'), 'https://github.com/org/repo?ref=main');
   assert.equal(sourceGroupingUrl('file:///etc/passwd'), null);
 });

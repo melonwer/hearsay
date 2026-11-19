@@ -229,7 +229,8 @@ export function intentEvidenceReport(db, input) {
       group.queryIds.push(query.id);
     }
     for (const source of answer.sourceObservations) {
-      const normalizedUrl = source.normalizedUrl ?? sourceGroupingUrl(source.url);
+      const normalizedUrl = (source.normalizedUrl && sourceGroupingUrl(source.normalizedUrl))
+        || sourceGroupingUrl(source.url);
       const key = JSON.stringify([normalizedUrl ?? source.url, source.provenance]);
       let group = sourceGroups.get(key);
       if (!group) {
