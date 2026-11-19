@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { dirname, resolve } from 'node:path';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { discoverAgents, previewResearchRun, runResearchPanel, renderSavedReport, compareSavedRuns, readJson } from '../core/research-workspace.js';
 import { previewResearchSchedule, enableResearchSchedule, disableResearchSchedule, readResearchSchedule, researchScheduleTick } from '../core/research-schedule.js';
 import { ResearchError } from '../core/research-contract.js';
 import { studyCommand, STUDY_HELP } from '../core/study-cli.js';
 import { inspectSetup, saveSetup } from '../core/plugin-setup.js';
-import { checkSite, renderSiteCheckHtml, renderSiteCheckText, SiteCheckError } from '../core/site-check.js';
+import { checkSiteV2, renderSiteCheckHtml, renderSiteCheckText, SiteCheckError } from '../core/site-check.js';
 
 const HELP = `Hearsay: standalone research helpers and optional account measurements
 
-hearsay check <url> [--json] [--html FILE] [--timeout MS] [--browser]
-                                                 Zero-key technical AI crawlability & payload pre-flight audit
+hearsay check <url> [--single|--no-crawl] [--max-pages N] [--vs URL...] [--browser|--render]
+                    [--check-caching] [--ignore-robots-for-own-site] [--allow-private]
+                    [--fail-on critical|attention] [--fail-on-code RULE] [--ignore-code RULE]
+                    [--baseline FILE] [--fail-on-regression] [--json] [--html FILE] [--timeout MS]
+                                                 Zero-key technical AI crawlability, Bot-vs-Human diff & site audit
 hearsay serve [--port PORT] [--host HOST]        Start the local Hearsay dashboard HTTP server
 hearsay doctor [--project DIR] [--host HOST] [--host-capabilities FILE] [--check-tavily]
 hearsay setup [inspect] [--project DIR]           Read-only local inspection, JSON
@@ -33,17 +36,93 @@ Scheduling needs reviewed panel, saved routes and prior on-demand consent.
 Use the host's native scheduler when available. --install-cron explicitly installs
 the reviewed fallback on Linux/macOS. No new providers are added automatically.
 Exit codes: 0 success; 2 invalid input; 3 consent/selection; 4 auth/profile;
-5 execution or partial failure; 6 lock/conflict; 7 unavailable scheduler.
+5 execution or partial failure; 6 lock/conflict; 7 unavailable scheduler; 10 CI quality gate failed.
 ` + STUDY_HELP;
 
+const CHECK_VALUE_FLAGS = new Set([
+  '--max-pages',
+  '--fail-on',
+  '--fail-on-code',
+  '--ignore-code',
+  '--baseline',
+  '--html',
+  '--timeout',
+  '--url',
+]);
+
+/**
+ * Normalize space-separated `--vs <url1> <url2> ...` arguments for `hearsay check`
+ * into repeatable `--vs <url1> --vs <url2>` pairs before `parseArgs`.
+ *
+ * @param {string[]} rawArgs
+ * @returns {string[]}
+ */
+function normalizeCliArgs(rawArgs) {
+  if (rawArgs[0] !== 'check') return rawArgs;
+  /** @type {string[]} */
+  const out = ['check'];
+  let sawTarget = false;
+  for (let i = 1; i < rawArgs.length; i++) {
+    const token = rawArgs[i];
+    if (token === '--') {
+      out.push(...rawArgs.slice(i));
+      break;
+    }
+    if (token === '--vs') {
+      out.push('--vs');
+      if (i + 1 < rawArgs.length && !rawArgs[i + 1].startsWith('-')) {
+        out.push(rawArgs[++i]);
+        while (sawTarget && i + 1 < rawArgs.length && !rawArgs[i + 1].startsWith('-')) {
+          out.push('--vs', rawArgs[++i]);
+        }
+      }
+      continue;
+    }
+    if (token.startsWith('--vs=')) {
+      out.push(token);
+      while (sawTarget && i + 1 < rawArgs.length && !rawArgs[i + 1].startsWith('-')) {
+        out.push('--vs', rawArgs[++i]);
+      }
+      continue;
+    }
+    if (CHECK_VALUE_FLAGS.has(token)) {
+      out.push(token);
+      if (i + 1 < rawArgs.length) out.push(rawArgs[++i]);
+      if (token === '--url') sawTarget = true;
+      continue;
+    }
+    if (token.startsWith('--url=')) {
+      sawTarget = true;
+      out.push(token);
+      continue;
+    }
+    if (!token.startsWith('-')) {
+      sawTarget = true;
+    }
+    out.push(token);
+  }
+  return out;
+}
+
 async function main() {
-  const { values, positionals } = parseArgs({ allowPositionals: true, options: {
+  const normalizedArgs = normalizeCliArgs(process.argv.slice(2));
+  const { values, positionals } = parseArgs({ args: normalizedArgs, allowPositionals: true, options: {
     help: { type: 'boolean', short: 'h' }, json: { type: 'boolean' }, project: { type: 'string' }, execute: { type: 'boolean' }, confirm: { type: 'string' },
     run: { type: 'string' }, baseline: { type: 'string' }, database: { type: 'string' }, at: { type: 'string' }, timezone: { type: 'string' }, ceiling: { type: 'string' }, 'install-cron': { type: 'boolean' },
     study: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' }, author: { type: 'string' }, url: { type: 'string' }, source: { type: 'string' }, change: { type: 'string' }, reason: { type: 'string' }, 'account-directory': { type: 'string' },
     host: { type: 'string' }, 'host-capabilities': { type: 'string' },
     'check-tavily': { type: 'boolean' },
-    html: { type: 'string' }, timeout: { type: 'string' }, browser: { type: 'boolean' }, 'allow-private-hosts': { type: 'boolean' }, port: { type: 'string' },
+    html: { type: 'string' }, timeout: { type: 'string' }, browser: { type: 'boolean' }, render: { type: 'boolean' },
+    single: { type: 'boolean' }, 'no-crawl': { type: 'boolean' }, 'max-pages': { type: 'string' },
+    vs: { type: 'string', multiple: true },
+    'check-caching': { type: 'boolean' },
+    'allow-private': { type: 'boolean' }, 'allow-private-hosts': { type: 'boolean' },
+    'ignore-robots-for-own-site': { type: 'boolean' },
+    'fail-on': { type: 'string' },
+    'fail-on-code': { type: 'string', multiple: true },
+    'ignore-code': { type: 'string', multiple: true },
+    'fail-on-regression': { type: 'boolean' },
+    port: { type: 'string' },
   } });
   if (values.help || !positionals.length) { process.stdout.write(HELP); return; }
   const [command, action] = positionals;
@@ -59,10 +138,57 @@ async function main() {
         throw new ResearchError('invalid_arguments', '--timeout must be a positive number of milliseconds');
       }
     }
-    const report = await checkSite(targetUrl, {
+    /** @type {number|undefined} */
+    let maxPages;
+    if (values['max-pages'] !== undefined) {
+      maxPages = Number(values['max-pages']);
+      if (!Number.isInteger(maxPages) || maxPages <= 0) {
+        throw new ResearchError('invalid_arguments', '--max-pages must be a positive integer');
+      }
+    }
+    /** @type {null|'critical'|'attention'|'warning'} */
+    let failOn = null;
+    if (values['fail-on'] !== undefined) {
+      const normalizedFailOn = values['fail-on'].trim().toLowerCase();
+      if (normalizedFailOn === 'critical' || normalizedFailOn === 'attention' || normalizedFailOn === 'warning') {
+        failOn = normalizedFailOn;
+      } else {
+        throw new ResearchError('invalid_arguments', '--fail-on must be "critical" or "attention"');
+      }
+    }
+    /** @type {Record<string, any>|null} */
+    let baselineData = null;
+    if (values.baseline !== undefined) {
+      const baselinePath = resolve(values.baseline);
+      if (!existsSync(baselinePath)) {
+        process.stderr.write(`WARNING: Baseline file not found at ${baselinePath}; skipping baseline regression diff.\n`);
+      } else {
+        try {
+          const parsedBaseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
+          if (!parsedBaseline || typeof parsedBaseline !== 'object') {
+            throw new Error('Baseline JSON must be an object');
+          }
+          baselineData = parsedBaseline;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new ResearchError('invalid_arguments', `Failed to read --baseline JSON at ${baselinePath}: ${msg}`);
+        }
+      }
+    }
+    const report = await checkSiteV2(targetUrl, {
+      single: Boolean(values.single || values['no-crawl']),
+      maxPages,
+      vs: Array.isArray(values.vs) ? values.vs.map(String) : undefined,
+      browser: Boolean(values.browser || values.render),
+      checkCaching: Boolean(values['check-caching']),
+      allowPrivateHosts: Boolean(values['allow-private'] || values['allow-private-hosts']),
+      ignoreRobotsForOwnSite: Boolean(values['ignore-robots-for-own-site']),
+      failOn,
+      failOnCodes: Array.isArray(values['fail-on-code']) ? values['fail-on-code'].map(String) : undefined,
+      ignoreCodes: Array.isArray(values['ignore-code']) ? values['ignore-code'].map(String) : undefined,
+      baseline: baselineData,
+      failOnRegression: Boolean(values['fail-on-regression']),
       timeoutMs,
-      browser: Boolean(values.browser),
-      allowPrivateHosts: Boolean(values['allow-private-hosts']),
     });
     if (values.html) {
       const htmlPath = resolve(values.html);
@@ -74,6 +200,9 @@ async function main() {
     } else {
       process.stdout.write(renderSiteCheckText(report) + '\n');
       if (values.html) process.stdout.write(`\nHTML report written to ${resolve(values.html)}\n`);
+    }
+    if (report.ciGate && !report.ciGate.passed) {
+      process.exitCode = report.ciGate.exitCode;
     }
     return;
   } else if (command === 'serve') {

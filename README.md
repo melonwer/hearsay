@@ -2,10 +2,12 @@
 
 **Find out why AI recommends your competitors instead of you — with receipts, not a fake 0–100 score.**
 
-Hearsay is an open-source, zero-dependency AI-search forensics kit for technical SEOs and builders.
-Run a 10-second crawlability X-ray with zero API keys, test real buyer questions across APIs,
-signed-in coding CLIs, or plug-and-play Google/ChatGPT scrapers, and see which pages AI read,
-dropped, or cited instead of yours. Local SQLite (`node:sqlite`), no subscriptions, zero telemetry.
+Hearsay is an open-source, lightweight AI-search forensics kit for technical SEOs and builders
+(Node 22 built-ins + strict 2-package pure-JS extraction allowlist: `webforai` and `diff`, with
+zero-dependency built-in fallbacks). Run a 10-second crawlability X-ray with zero API keys, test
+real buyer questions across APIs, signed-in coding CLIs, or plug-and-play Google/ChatGPT scrapers,
+and see which pages AI read, dropped, or cited instead of yours. Local SQLite (`node:sqlite`), no
+subscriptions, zero telemetry.
 
 [![Hearsay animated preview: The conversation you never see](docs/hearsay-preview.gif)](https://melonwer.github.io/hearsay/)
 
@@ -14,30 +16,37 @@ dropped, or cited instead of yours. Local SQLite (`node:sqlite`), no subscriptio
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Node ≥ 22.13](https://img.shields.io/badge/node-%E2%89%A5%2022.13-brightgreen.svg)](package.json)
-[![Zero dependencies](https://img.shields.io/badge/dependencies-zero-blue.svg)](package.json)
+[![2 pure-JS deps (zero-dep fallback)](https://img.shields.io/badge/dependencies-2%20pure--JS%20(zero--dep%20fallback)-blue.svg)](package.json)
 [![MCP built in](https://img.shields.io/badge/MCP-built%20in-8A2BE2.svg)](mcp/server.mjs)
 
 ---
 
 ## Try it in 10 seconds (zero API keys)
 
-Before spending a dollar on prompts, check what zero-JS AI crawlers (`OAI-SearchBot`, `ClaudeBot`,
-`PerplexityBot`, `Google-Extended`) actually see on your page:
+Before spending a dollar on prompts, check what zero-JS AI crawlers (`OAI-SearchBot`, `Claude-SearchBot`,
+`PerplexityBot`, `ClaudeBot`, `GPTBot`, and 13 more) actually see across your site — and compare
+directly against competitors:
 
 ```sh
-npx github:melonwer/hearsay check https://yoursite.com --browser
+npx github:melonwer/hearsay check https://yoursite.com --browser --vs https://competitor.com
 ```
 
 ```text
-Hearsay Site Pre-Flight  https://yoursite.com  (200 OK · 0 redirects)
-─────────────────────────────────────────────────────────────────────
-AI Crawlers (robots.txt)  9/9 allowed (OAI-SearchBot, ClaudeBot, PerplexityBot…)
-Raw HTML visible words    0 words  (SPA shell #root detected)
-Rendered DOM (--browser)  1,167 words · 16 headings  [100% hydration gap]
-Status                    FAIL — AI bots execute zero JS and see an empty page
+Hearsay Site Pre-Flight Check  https://yoursite.com  (200 OK · 15 audited | 0 skipped | 0 errored)
+──────────────────────────────────────────────────────────────────────────────────────────────────
+Stack / Edge              Vite SPA | CDN: Cloudflare | WAF: bot_management_active
+AI Crawlers (robots.txt)  18/18 allowed (OAI-SearchBot, Claude-SearchBot, PerplexityBot…)
+Raw HTML visible words    0 words  (SPA shell #root detected · Hard Gate: NOT OBSERVED)
+Rendered DOM (--browser)  1,167 words · 16 headings  [Prose Parity 0% · 16 missing headings]
+Status                    FAIL [BLOCKED_HARD_GATE] — copy-paste Vite SSR/prerender recipe included
 ```
 
-Add `--html preflight.html` for a shareable report or `--json` for CI. Requires [Node.js 22.13+](https://nodejs.org) — no `npm install` or `.env` needed.
+By default `hearsay check` audits up to 15 template-diverse key pages (`--max-pages 15`, or pass
+`--single` for one URL), probes `Accept: text/markdown` negotiation, clusters issues by template
+(`"fix 1 template → fix N pages"`), compares against `--vs` competitors, and enforces CI quality
+gates (`--fail-on critical|attention`, `--baseline`, `--check-caching`, `--ignore-robots-for-own-site`,
+exit code `10`). Add `--html preflight.html` for a self-contained side-by-side Bot-vs-Human visual
+diff report or `--json` for CI. Requires [Node.js 22.13+](https://nodejs.org) — no `.env` needed.
 
 ---
 
@@ -49,10 +58,14 @@ still never tells you *what to fix*.
 
 Hearsay replaces black-box scores with **four deterministic forensics checks**:
 
-1. **10-Second Crawlability X-Ray (`hearsay check`)**
-   Audits RFC 9309 `robots.txt` rules for 9 crawlers, redirect chains, `noindex` / canonicals, exact
-   UTF-8 byte offsets where your content starts (flagging 30 / 100 / 300 KB truncation cliffs), and
-   raw-HTML vs. rendered-DOM gaps (`--browser`).
+1. **10-Second Crawlability & Bot-vs-Human X-Ray (`hearsay check`)**
+   Multi-page key-page audit (default 15 pages, `--single` for 1 URL): RFC 9309 `robots.txt` across
+   18 AI & search crawlers + 3 policy signals (catching Cloudflare Managed overrides, `Content-Signal`
+   conflicts, and `__usage_ai-training`), passive stack/CDN/WAF fingerprinting, `Accept: text/markdown`
+   and `Vary: Accept` cache-poisoning checks, exact UTF-8 byte offsets & Payload-to-Prose / Next.js
+   RSC bloat forensics, side-by-side Bot-vs-Human Markdown diffs (`--browser`), template clustering,
+   stack-specific copy-paste remediation, `--vs` Competitor X-Ray, and CI gating (`--fail-on`,
+   `--baseline`).
 2. **Retrieved-but-Dropped Attrition & Own-Site Hijacks**
    AI search typically drops ~85% of the pages it retrieves before writing an answer — and often
    cites *your* page while recommending a *competitor*. Hearsay separates retrieved URLs from final
@@ -72,7 +85,7 @@ Hearsay replaces black-box scores with **four deterministic forensics checks**:
 
 | | Typical $99–$500/mo SaaS | Hearsay |
 | --- | --- | --- |
-| **Crawlability** | Generic checklist or spoofed bot probes | Zero-key `hearsay check`: 9-bot `robots.txt`, byte-offset cliffs, CSR shell + `--browser` diff |
+| **Crawlability** | Generic checklist or spoofed bot probes | Zero-key `hearsay check`: 18-bot `robots.txt`, multi-page template crawl, stack/WAF + copy-paste fixes, Bot-vs-Human diff, `--vs` X-Ray & CI gate |
 | **Headline metric** | One blended 0–100 score | Separate Mention, Citation & Positive Recommendation rates with Wilson 95% CIs (`n` shown) |
 | **Prompt variance** | One fixed prompt per keyword | Multiple paraphrases per intent, splitting wording spread from rerun spread |
 | **Retrieval forensics** | Mentions only | Retrieved-but-Dropped attrition + Own-Site Hijack receipts |

@@ -4,7 +4,7 @@ This guide covers environment configuration, the zero-key `hearsay check` CLI, d
 
 ## Runtime, Ports & Workspace Paths
 
-- **Requirements:** [Node.js ≥ 22.13](https://nodejs.org) (uses built-in `node:sqlite` — zero `npm install` or external database needed).
+- **Requirements:** [Node.js ≥ 22.13](https://nodejs.org) (uses built-in `node:sqlite`, plus the strict 2-package pure-JS extraction allowlist `webforai` + `diff` with built-in zero-dependency fallbacks — no external database needed).
 - **Starting the dashboard:** Run `npx hearsay serve` (or `node server.js` from a checkout). Supports `--port PORT` and `--host HOST`.
 - **Port selection:** `node server.js` binds to `127.0.0.1` on an available ephemeral port (`PORT=0` by default) and writes the active port to `data/hearsay.port`. Set `PORT=3100 node server.js` (or `hearsay serve --port 3100`) only when a local reverse proxy needs a fixed port.
 - **Common startup errors:**
@@ -20,23 +20,35 @@ This guide covers environment configuration, the zero-key `hearsay check` CLI, d
 
 ## Zero-Key Site Pre-Flight Audit (`hearsay check <url>`)
 
-Run a zero-key technical AI crawlability and raw-HTML payload audit without starting the server or configuring API keys:
+Run a zero-key technical AI crawlability, Bot-vs-Human diff, and multi-page site audit without starting the server or configuring API keys:
 
 ```sh
 npx hearsay check https://example.com
-# or from a git checkout:
-node bin/hearsay.js check https://example.com --html preflight.html --json
+# Compare against competitors + render side-by-side Bot-vs-Human HTML report:
+node bin/hearsay.js check https://example.com --vs https://competitor1.com https://competitor2.com --browser --html preflight.html
+# CI quality gate + baseline regression diff (exits 10 on failure):
+node bin/hearsay.js check https://example.com --fail-on critical --baseline baseline.json --fail-on-regression --json
 ```
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--json` | off (text report) | Output the structured `SiteCheckReport` JSON object to stdout (for CI pipelines or agent parsing). |
-| `--html FILE` | unset | Write a self-contained printable HTML pre-flight report to `FILE` (creates parent directories automatically). |
-| `--browser` | off | Optionally render the final URL in local headless Chromium, Google Chrome, or Playwright to quantify the raw-HTML vs. rendered-DOM word and heading hydration gap. Gracefully reports `status: "unavailable"` if no local browser binary is present. |
+| `--single` / `--no-crawl` | off (multi-page crawl) | Isolate the audit to just the single requested URL instead of discovering key pages from sitemaps and nav. |
+| `--max-pages N` | `15` | Maximum number of template-diverse pages to audit in multi-page mode (positive integer). |
+| `--vs URL [URL...]` | unset | Run parallel bounded audits on one or more competitor URLs and produce the Competitor X-Ray matrix (repeatable `--vs A --vs B` or space-separated `--vs A B`). |
+| `--browser` / `--render` | off | Optionally render the final URL in local headless Chromium, Google Chrome, or Playwright to produce a side-by-side Bot-vs-Human Markdown diff (missing headings, dropped paragraphs, lost tables/code blocks, Prose Parity %). Gracefully reports `status: "unavailable"` if no local browser binary is present. |
+| `--check-caching` | off | Perform 1 conditional GET (`If-None-Match` / `If-Modified-Since`) on the homepage to verify live HTTP `304 Not Modified` support. |
+| `--ignore-robots-for-own-site` | off | Audit `robots.txt`-disallowed pages on your own site while still explicitly flagging them (by default disallowed pages are listed in `skipped` and never marked PASS). |
+| `--fail-on critical\|attention` | unset | CI quality gate severity threshold; exits with code `10` when matching non-ignored findings occur (or if `0` pages were audited). |
+| `--fail-on-code RULE` | unset | Repeatable CI gate rule ID to fail on (exits `10`). |
+| `--ignore-code RULE` | unset | Repeatable rule ID to ignore in CI gate evaluation (takes strict precedence over `--fail-on` and `--fail-on-code`). |
+| `--baseline FILE` | unset | Compare the current audit against a prior `--json` baseline report (`O(N)` URL-indexed diff with a 20% word-count noise floor). Prints a loud `WARNING` on stderr if `FILE` does not exist. |
+| `--fail-on-regression` | off | Exit with code `10` when `--baseline` comparison detects new critical findings, HTTP status regressions, Prose Parity drops, newly blocked bots, new soft-404s, or a newly triggered Hard Gate. |
+| `--json` | off (text report) | Output the structured `SiteCheckV2Report` JSON object to stdout (for CI pipelines, `--baseline` snapshots, or agent parsing). |
+| `--html FILE` | unset | Write a self-contained printable HTML pre-flight report (with side-by-side Bot-vs-Human diff, visual truncation budget bars, 18-bot matrix, template clusters, remediation cards, and Competitor X-Ray) to `FILE`. |
 | `--timeout MS` | `10000` | Positive per-request HTTP timeout in milliseconds. |
-| `--allow-private-hosts` | off | Opt-in override for auditing `localhost` or private-network staging servers. By default, Hearsay's SSRF guard blocks loopback, RFC 1918, link-local/metadata, and DNS-resolved private IPs on the initial URL and every redirect hop. |
+| `--allow-private` / `--allow-private-hosts` | off | Opt-in override for auditing `localhost` or private-network staging servers. By default, Hearsay's per-hop SSRF guard blocks loopback, RFC 1918, link-local/metadata, and DNS-resolved private IPs on the initial URL and every redirect hop. |
 
-**Honest User-Agent & WAF notice:** `hearsay check` sends `HearsaySiteCheck/0.1` and never spoofs AI crawler User-Agents. It evaluates `<origin>/robots.txt` per RFC 9309 across 9 crawlers (`OAI-SearchBot`, `ChatGPT-User`, `GPTBot`, `ClaudeBot`, `Claude-SearchBot`, `PerplexityBot`, `Google-Extended`, `Googlebot`, `Bingbot`), measures UTF-8 byte offsets and truncation cliffs (`30 KB` / `100 KB` / `300 KB`), detects CSR empty-shell risk, and explicitly discloses that IP/rDNS-authenticated CDN/WAF rules (Cloudflare, Akamai, Fastly) must be verified in CDN or origin access logs.
+**Honest User-Agent & WAF notice:** `hearsay check` sends `HearsaySiteCheck/0.1` and never spoofs AI crawler User-Agents. It evaluates `<origin>/robots.txt` per RFC 9309 across 18 canonical AI & search crawlers plus 3 policy signals (`Google-Extended`, `Applebot-Extended`, `__usage_ai-training`), detects Cloudflare Managed Content overrides and `Content-Signal` / `Content-Usage` conflicts, fingerprints stacks/CDNs/WAFs passively (cookie names only — never values), probes `Accept: text/markdown` and `Vary: Accept` hygiene, measures UTF-8 byte offsets and Payload-to-Prose / Next.js RSC bloat, groups issues by URL template, emits stack-specific copy-paste remediation recipes, and explicitly discloses that IP/rDNS-authenticated CDN/WAF rules (Cloudflare, Akamai, Fastly) must be verified in CDN or origin access logs.
 
 ## Configuring Routes in Browser or `.env`
 
