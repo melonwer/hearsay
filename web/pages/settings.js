@@ -24,7 +24,8 @@ import {
   usd,
 } from '../layout.js';
 import { metrics, soft } from '../data.js';
-import { estimateRunCost } from '../../core/cost.js';
+import { formatLocationControl } from '../../core/config.js';
+import { estimateRunCost, evaluateSpendCap, formatUsd } from '../../core/cost.js';
 import { apiExecutionBudget, subscriptionExecutionBudget } from '../../core/execution-budget.js';
 import { apiSearchScheduleApproved, hasEnabledApiSearch } from '../../core/api-search-schedule.js';
 import { activePromptCount } from '../queries.js';
@@ -163,6 +164,31 @@ export function buildView(deps) {
     ? deps.runtime.getEnvValue('TAVILY_API_KEY')
     : String(process.env.TAVILY_API_KEY ?? '');
   const pathEnv = deps.runtime ? deps.runtime.getPathEnv() : process.env.PATH;
+  const spendCapEval = evaluateSpendCap(db, {
+    additionalEstimatedUsd: 0,
+    monthlyUsdCap: config.monthlyUsdCap,
+  });
+  const spendCap = {
+    ...spendCapEval,
+    monthUtc: new Date().toISOString().slice(0, 7),
+    utilizationPct:
+      spendCapEval.capUsd !== null && spendCapEval.capUsd > 0
+        ? Math.min(100, Math.max(0, (spendCapEval.spentUsd / spendCapEval.capUsd) * 100))
+        : null,
+  };
+  const dataforseo = {
+    configured: Boolean(config.dataforseo?.enabled),
+    loginConfigured: Boolean(config.dataforseo?.login),
+    passwordConfigured: Boolean(config.dataforseo?.password),
+    maskedLogin: maskOnboardingHint(config.dataforseo?.login),
+  };
+  const geolocation = {
+    locationCode: config.locationCode ?? null,
+    locationCountry: config.locationCountry ?? null,
+    locationCity: config.locationCity ?? null,
+    languageCode: config.languageCode ?? null,
+    locationControl: formatLocationControl(config),
+  };
 
   return {
     providers: Object.values(config.providers).map((provider) => ({
@@ -241,6 +267,12 @@ export function buildView(deps) {
     runningLanes: runningScheduleLanes(db),
     subscriptionSchedule: getSubscriptionSchedule(db),
     trackingHealth: trackingHealth({ db, config }),
+    dataforseo,
+    geolocation,
+    spendCap,
+    allowUnverifiedModels: Boolean(config.allowUnverifiedModels),
+    lastSiteCheck: deps.runtime?.getLastSiteCheck?.() ?? null,
+    lastDataForSeoHealth: deps.runtime?.getLastDataForSeoHealth?.() ?? null,
   };
 }
 
@@ -525,6 +557,244 @@ function trackingHealthPanel(view) {
   </section>`;
 }
 
+/** @param {string|null|undefined} rawUrl */
+function safeSettingsLink(rawUrl) {
+  if (!rawUrl) return html`<span class="muted">—</span>`;
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return html`<a href="${parsed.href}" target="_blank" rel="noreferrer noopener nofollow">${rawUrl}</a>`;
+    }
+  } catch { /* ignore invalid stored URL */ }
+  return html`<code>${rawUrl}</code>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function siteCheckPanel(view) {
+  const receipt = view.lastSiteCheck;
+  const gradeTone = receipt?.summary?.grade === 'pass'
+    ? 'status-pill-active'
+    : receipt?.summary?.grade === 'warn'
+      ? 'status-pill-warn'
+      : 'status-pill-off';
+  return html`<section class="card" id="site-preflight-check">
+    <h2>Site Pre-Flight Check (<code>hearsay check</code>)</h2>
+    <p class="muted small">
+      Zero-key technical audit for AI-search crawlability: RFC 9309 <code>robots.txt</code> across 9 crawlers, redirect chains, raw HTML byte-offset truncation cliffs, and CSR empty-shell signals. Runs with honest <code>HearsaySiteCheck/0.1</code> UA and blocks private/loopback hosts by default. CLI equivalent: <code>npx hearsay check https://yoursite.com</code>.
+    </p>
+    <form class="inline-form" data-api-form="/api/site-check" data-method="POST" autocomplete="off">
+      <label class="grow">
+        <span>Target URL</span>
+        <input type="url" name="url" placeholder="https://example.com" required />
+      </label>
+      <label>
+        <span>Timeout (ms)</span>
+        <input type="number" name="timeoutMs" min="500" max="60000" value="10000" />
+      </label>
+      <label class="check">
+        <input type="checkbox" name="browser" />
+        <span>Headless browser DOM diff</span>
+      </label>
+      <button type="submit" class="btn btn-primary">Run Pre-Flight Check</button>
+    </form>
+    <p class="form-error" data-form-error role="alert" hidden></p>
+    ${receipt
+      ? html`<div class="setup-subblock">
+          <div class="health-lane-head">
+            <h3>Latest pre-flight receipt</h3>
+            <span class="status-pill ${gradeTone}">${String(receipt.summary.grade).toUpperCase()}</span>
+          </div>
+          <dl class="kv">
+            <dt>Final URL</dt><dd>${safeSettingsLink(receipt.finalUrl)} (HTTP ${receipt.status ?? '—'} · ${receipt.timingMs} ms)</dd>
+            <dt>Raw HTML &amp; visible words</dt><dd>${humanSize(receipt.payload.htmlBytes)} · ${receipt.payload.visibleWordCount} words · CSR risk: <strong>${String(receipt.payload.csrRisk.level).toUpperCase()}</strong></dd>
+            <dt>AI crawlers allowed</dt><dd>${receipt.robotsTxt.allowedCount} / ${receipt.robotsTxt.crawlers.length}</dd>
+            <dt>Truncation cliffs</dt><dd>&gt;30KB start: ${receipt.payload.truncationRisks.contentStartsAfter30KB ? 'yes' : 'no'} · &gt;100KB core: ${receipt.payload.truncationRisks.coreContentPast100KB ? 'yes' : 'no'} · &gt;300KB page: ${receipt.payload.truncationRisks.pageExceeds300KB ? 'yes' : 'no'}</dd>
+          </dl>
+          ${receipt.findings.length
+            ? html`<ul>${receipt.findings.map((f) => html`<li><strong>[${String(f.severity).toUpperCase()}] ${f.title}:</strong> ${f.detail}</li>`)}</ul>`
+            : html`<p class="muted small">No crawlability, indexing, truncation, or CSR issues detected.</p>`}
+        </div>`
+      : ''}
+  </section>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function dataForSeoPanel(view) {
+  const dfs = view.dataforseo;
+  const health = view.lastDataForSeoHealth;
+  return html`<section class="card" id="dataforseo-settings">
+    <div class="health-lane-head">
+      <h2>BYOK DataForSEO (Google AIO &amp; ChatGPT Web)</h2>
+      <span class="status-pill ${dfs.configured ? 'status-pill-active' : 'status-pill-off'}">
+        ${dfs.configured ? 'Configured' : 'Not configured'}
+      </span>
+    </div>
+    <p class="muted small">
+      Optional Bring-Your-Own-Key DataForSEO v3 credentials for Google AI Overviews (<code>google-aio</code>) and ChatGPT Web Scraper (<code>chatgpt-web</code>). Credentials are written to local <code>.env</code> (<code>0600</code>) and never returned in JSON or HTML.
+    </p>
+    <dl class="kv">
+      <dt><code>DATAFORSEO_LOGIN</code></dt>
+      <dd>${dfs.loginConfigured ? html`Configured (${dfs.maskedLogin ?? '****'})` : html`<span class="muted">Not set</span>`}</dd>
+      <dt><code>DATAFORSEO_PASSWORD</code></dt>
+      <dd>${dfs.passwordConfigured ? 'Configured (hidden)' : html`<span class="muted">Not set</span>`}</dd>
+    </dl>
+    <form class="provider-key-form" data-api-form="/api/settings" data-method="POST" autocomplete="off">
+      <div class="form-grid">
+        <label>
+          <span>DataForSEO Login (<code>DATAFORSEO_LOGIN</code>)</span>
+          <input type="text" name="DATAFORSEO_LOGIN" placeholder="${dfs.loginConfigured ? 'Paste new login to replace…' : 'login@example.com'}" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>
+          <span>DataForSEO Password (<code>DATAFORSEO_PASSWORD</code>)</span>
+          <input type="password" name="DATAFORSEO_PASSWORD" placeholder="${dfs.passwordConfigured ? 'Paste new password to replace…' : 'Paste DATAFORSEO_PASSWORD…'}" autocomplete="new-password" spellcheck="false" />
+        </label>
+      </div>
+      <div class="provider-key-actions">
+        <button type="submit" class="btn btn-primary">Save DataForSEO credentials</button>
+      </div>
+      <p class="form-error" data-form-error role="alert" hidden></p>
+    </form>
+    ${dfs.loginConfigured || dfs.passwordConfigured
+      ? html`<form class="inline-form" data-api-form="/api/settings" data-method="POST">
+          <input type="hidden" name="clear_keys" data-list value="DATAFORSEO_LOGIN,DATAFORSEO_PASSWORD" />
+          <button type="submit" class="btn btn-sm">Clear DataForSEO credentials</button>
+        </form>`
+      : ''}
+    <div class="setup-subblock">
+      <h3>Health Canary</h3>
+      <p class="muted small">Send a minimal 1-request zero-retry probe to verify credentials and response shape before running a wave.</p>
+      <form class="inline-form" data-api-form="/api/dataforseo/health" data-method="POST">
+        <label>
+          <span>DataForSEO mode</span>
+          <select name="mode">
+            <option value="google-aio">Google AI Overviews (google-aio)</option>
+            <option value="chatgpt-web">ChatGPT Web Scraper (chatgpt-web)</option>
+          </select>
+        </label>
+        <button type="submit" class="btn">Run Health Canary</button>
+      </form>
+      <p class="form-error" data-form-error role="alert" hidden></p>
+      ${health
+        ? html`<dl class="kv">
+            <dt>Last canary status</dt>
+            <dd><span class="status-pill ${health.ok ? 'status-pill-active' : 'status-pill-warn'}">${health.ok ? 'Healthy' : 'Failed'}</span> · <code>${health.mode}</code> · ${health.latencyMs} ms${health.statusCode !== null ? ` · status ${health.statusCode}` : ''}${health.costUsd !== null ? ` · ${formatUsd(health.costUsd)}` : ''}</dd>
+            ${health.error ? html`<dt>Error</dt><dd>${health.error}</dd>` : ''}
+          </dl>`
+        : ''}
+    </div>
+  </section>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function geolocationPanel(view) {
+  const geo = view.geolocation;
+  return html`<section class="card" id="geolocation-settings">
+    <div class="health-lane-head">
+      <h2>Geolocation (<code>location_code</code> / country / city)</h2>
+      <span class="status-pill ${geo.locationControl === 'uncontrolled' ? 'status-pill-off' : 'status-pill-active'}">
+        <code>${geo.locationControl}</code>
+      </span>
+    </div>
+    <p class="muted small">
+      Controls DataForSEO <code>location_code</code> / <code>language_code</code> and OpenAI web-search <code>user_location</code>. Leave a field blank and save to clear it from <code>.env</code>.
+    </p>
+    <form class="provider-key-form" data-api-form="/api/settings" data-method="POST" autocomplete="off">
+      <div class="form-grid">
+        <label>
+          <span>Location code (<code>HEARSAY_LOCATION_CODE</code>)</span>
+          <input type="number" name="HEARSAY_LOCATION_CODE" min="1" step="1" value="${geo.locationCode ?? ''}" placeholder="e.g. 2840 (United States)" data-include-empty />
+        </label>
+        <label>
+          <span>Country ISO-2 (<code>HEARSAY_LOCATION_COUNTRY</code>)</span>
+          <input type="text" name="HEARSAY_LOCATION_COUNTRY" maxlength="2" value="${geo.locationCountry ?? ''}" placeholder="e.g. US, GB, DE" data-include-empty />
+        </label>
+        <label>
+          <span>City (<code>HEARSAY_LOCATION_CITY</code>)</span>
+          <input type="text" name="HEARSAY_LOCATION_CITY" maxlength="120" value="${geo.locationCity ?? ''}" placeholder="e.g. New York, London" data-include-empty />
+        </label>
+        <label>
+          <span>Language code (<code>HEARSAY_LANGUAGE_CODE</code>)</span>
+          <input type="text" name="HEARSAY_LANGUAGE_CODE" maxlength="16" value="${geo.languageCode ?? ''}" placeholder="e.g. en, en-US" data-include-empty />
+        </label>
+      </div>
+      <div class="provider-key-actions">
+        <button type="submit" class="btn btn-primary">Save geolocation</button>
+      </div>
+      <p class="form-error" data-form-error role="alert" hidden></p>
+    </form>
+  </section>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function spendCapPanel(view) {
+  const cap = view.spendCap;
+  const pctWidth = cap.utilizationPct === null ? 0 : Math.min(100, Math.max(0, Math.round(cap.utilizationPct * 10) / 10));
+  const capBadgeClass = cap.capUsd === null
+    ? 'status-pill-off'
+    : !cap.allowed || cap.remainingUsd === 0
+      ? 'status-pill-warn'
+      : 'status-pill-active';
+  const capBadgeText = cap.capUsd === null
+    ? 'No cap set'
+    : !cap.allowed || cap.remainingUsd === 0
+      ? 'Spend cap reached'
+      : 'Within monthly cap';
+  return html`<section class="card" id="spend-cap-settings">
+    <div class="health-lane-head">
+      <h2>Hard Monthly USD Spend Cap</h2>
+      <span class="status-pill ${capBadgeClass}">${capBadgeText}</span>
+    </div>
+    <p class="muted small">
+      Enforced pre-run and mid-run across live (non-seeded) API calls for the current UTC calendar month (<code>${cap.monthUtc}</code>). Leave blank and save to remove the cap.
+    </p>
+    <dl class="kv">
+      <dt>Current month live spend (${cap.monthUtc} UTC)</dt>
+      <dd><strong>${formatUsd(cap.spentUsd)}</strong></dd>
+      <dt>Configured monthly cap (<code>HEARSAY_MONTHLY_USD_CAP</code>)</dt>
+      <dd>${cap.capUsd === null ? 'Not set' : formatUsd(cap.capUsd)}</dd>
+      <dt>Remaining this month</dt>
+      <dd>${cap.remainingUsd === null ? '—' : formatUsd(cap.remainingUsd)}</dd>
+    </dl>
+    ${cap.capUsd !== null
+      ? html`<div class="run-progress" role="meter" aria-label="Monthly spend cap utilization" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pctWidth}">
+          <div class="run-progress-bar" style="width:${pctWidth}%"></div>
+        </div>
+        <p class="muted small">${pctWidth.toFixed(1)}% of ${formatUsd(cap.capUsd)} monthly cap used.</p>`
+      : ''}
+    <form class="inline-form" data-api-form="/api/settings" data-method="POST" autocomplete="off">
+      <label>
+        <span>Monthly USD cap (<code>HEARSAY_MONTHLY_USD_CAP</code>)</span>
+        <input type="number" name="HEARSAY_MONTHLY_USD_CAP" min="0.01" step="0.01" value="${cap.capUsd ?? ''}" placeholder="e.g. 25.00" data-include-empty />
+      </label>
+      <button type="submit" class="btn btn-primary">Save monthly cap</button>
+    </form>
+    <p class="form-error" data-form-error role="alert" hidden></p>
+  </section>`;
+}
+
+/** @param {ReturnType<typeof buildView>} view */
+function unverifiedModelsPanel(view) {
+  return html`<section class="card" id="unverified-models-settings">
+    <div class="health-lane-head">
+      <h2>Unverified Model Opt-In</h2>
+      <span class="status-pill ${view.allowUnverifiedModels ? 'status-pill-warn' : 'status-pill-off'}">
+        ${view.allowUnverifiedModels ? 'Opted in' : 'Strict defaults'}
+      </span>
+    </div>
+    <p class="muted small">
+      By default Hearsay restricts web-search API routes to validated model IDs so tool-call and citation contracts stay reliable. Enable this toggle only if you intentionally override a model via <code>OPENAI_MODEL</code> or <code>ANTHROPIC_MODEL</code>.
+    </p>
+    <form class="inline-form" data-api-form="/api/settings" data-method="POST">
+      <label class="check">
+        <input type="checkbox" name="HEARSAY_ALLOW_UNVERIFIED_MODELS" ${view.allowUnverifiedModels ? raw('checked') : ''} />
+        <span>Allow unverified models on web-search routes (<code>HEARSAY_ALLOW_UNVERIFIED_MODELS=1</code>)</span>
+      </label>
+      <button type="submit" class="btn btn-sm">Save opt-in</button>
+    </form>
+    <p class="form-error" data-form-error role="alert" hidden></p>
+  </section>`;
+}
+
 /**
  * @param {import('../layout.js').ShellCtx} ctx
  * @param {ReturnType<typeof buildView>} view
@@ -615,6 +885,11 @@ export function render(ctx, view) {
       </dl>
     </section>
     ${costPanel(view)}
+    ${spendCapPanel(view)}
+    ${siteCheckPanel(view)}
+    ${dataForSeoPanel(view)}
+    ${geolocationPanel(view)}
+    ${unverifiedModelsPanel(view)}
     <section class="card">
       <h2>Share of voice</h2>
       <label class="check">
