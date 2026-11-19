@@ -1,0 +1,225 @@
+# Hearsay Unattended Weekly Measurement Wave
+#
+# Runs an optional zero-key `hearsay check` pre-flight audit, executes one bounded
+# API measurement wave with a hard monthly USD spend cap (`HEARSAY_MONTHLY_USD_CAP`),
+# and uploads a self-contained HTML Evidence Dossier plus SQLite/JSON artifacts.
+#
+# Required Repository Secrets (Settings -> Secrets and variables -> Actions -> Secrets):
+#   Configure at least one direct API provider key for the measurement wave:
+#   - OPENAI_API_KEY       OpenAI API key (supports search policies: off, auto, required)
+#   - ANTHROPIC_API_KEY    Anthropic API key (supports search policies: off, auto)
+#   - GEMINI_API_KEY       Google Gemini API key (supports search policies: off, auto)
+#   - PERPLEXITY_API_KEY   Perplexity Sonar API key (built-in legacy retrieval)
+#
+# Optional BYOK DataForSEO Secrets (for Google AI Overview & ChatGPT Web surfaces):
+#   - DATAFORSEO_LOGIN     DataForSEO HTTP Basic username
+#   - DATAFORSEO_PASSWORD  DataForSEO HTTP Basic password
+#
+# Optional Repository Variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   - HEARSAY_SITE_URL         Default URL to audit with `hearsay check` on every wave
+#   - HEARSAY_LOCATION_CODE    Optional DataForSEO numeric location_code (e.g. 2840)
+#   - HEARSAY_LOCATION_COUNTRY Optional ISO country code (e.g. US, GB)
+#   - HEARSAY_LOCATION_CITY    Optional city name (e.g. London)
+#   - HEARSAY_LANGUAGE_CODE    Optional language code (e.g. en)
+#
+# Important:
+#   1. Seed or initialize your brand, competitors, and reviewed buyer prompts in
+#      `data/hearsay.db` first (e.g. via the local UI or CLI) before running waves.
+#   2. GitHub Actions caches expire after 7 days of inactivity. For multi-month
+#      citation persistence history, persist `data/hearsay.db` in private object
+#      storage or restore it from the previous wave artifact.
+
+name: Hearsay Weekly Wave
+
+on:
+  workflow_dispatch:
+    inputs:
+      search_policy:
+        description: 'API web-search policy (Anthropic and Gemini map "required" to "auto")'
+        type: choice
+        default: 'auto'
+        options:
+          - 'auto'
+          - 'required'
+          - 'off'
+      max_monthly_usd:
+        description: 'Hard monthly USD spend cap kill-switch (HEARSAY_MONTHLY_USD_CAP)'
+        type: string
+        default: '15'
+      site_url:
+        description: 'Optional URL for zero-key `hearsay check` pre-flight audit (overrides vars.HEARSAY_SITE_URL)'
+        type: string
+        default: ''
+      samples:
+        description: 'Samples per prompt per provider for this wave (1-10)'
+        type: string
+        default: '3'
+      brand_label:
+        description: 'Optional white-label header title for the exported HTML Evidence Dossier'
+        type: string
+        default: ''
+
+  # Opt-in weekly schedule — uncomment ONLY after configuring repository secrets
+  # and verifying a manual `workflow_dispatch` run. Left commented by default so
+  # forks never incur unexpected API spend.
+  # schedule:
+  #   - cron: '0 7 * * 1' # Every Monday at 07:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hearsay-wave-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  weekly-wave:
+    name: Site Pre-Flight & Measurement Wave
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Verify Node.js runtime
+        run: node --version
+
+      - name: Restore SQLite history cache (best-effort rolling state)
+        uses: actions/cache@v4
+        with:
+          path: data/hearsay.db
+          key: hearsay-db-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            hearsay-db-${{ github.ref_name }}-
+
+      - name: Prepare workspace directories
+        run: mkdir -p data artifacts
+
+      - name: Run zero-key site pre-flight audit (`hearsay check`)
+        if: ${{ inputs.site_url != '' || vars.HEARSAY_SITE_URL != '' }}
+        env:
+          TARGET_URL: ${{ inputs.site_url || vars.HEARSAY_SITE_URL }}
+        run: |
+          set -euo pipefail
+          node bin/hearsay.js check "$TARGET_URL" \
+            --html artifacts/site-check.html \
+            --json > artifacts/site-check.json
+          node -e '
+            const fs = require("node:fs");
+            const r = JSON.parse(fs.readFileSync("artifacts/site-check.json", "utf8"));
+            console.log(`Pre-flight grade: ${r.summary.grade.toUpperCase()} (${r.summary.criticalCount} critical, ${r.summary.warningCount} warning, ${r.summary.infoCount} info) for ${r.finalUrl}`);
+          '
+
+      - name: Execute bounded measurement wave
+        env:
+          HEARSAY_DEMO: '0'
+          HEARSAY_DB_PATH: './data/hearsay.db'
+          HEARSAY_MONTHLY_USD_CAP: ${{ inputs.max_monthly_usd || '15' }}
+          HEARSAY_SAMPLES: ${{ inputs.samples || '3' }}
+          SEARCH_POLICY_INPUT: ${{ inputs.search_policy || 'auto' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          DATAFORSEO_LOGIN: ${{ secrets.DATAFORSEO_LOGIN }}
+          DATAFORSEO_PASSWORD: ${{ secrets.DATAFORSEO_PASSWORD }}
+          HEARSAY_LOCATION_CODE: ${{ vars.HEARSAY_LOCATION_CODE }}
+          HEARSAY_LOCATION_COUNTRY: ${{ vars.HEARSAY_LOCATION_COUNTRY }}
+          HEARSAY_LOCATION_CITY: ${{ vars.HEARSAY_LOCATION_CITY }}
+          HEARSAY_LANGUAGE_CODE: ${{ vars.HEARSAY_LANGUAGE_CODE }}
+        run: |
+          set -euo pipefail
+
+          case "$SEARCH_POLICY_INPUT" in
+            off|auto|required) ;;
+            *)
+              echo "Invalid search_policy: $SEARCH_POLICY_INPUT (expected off, auto, or required)" >&2
+              exit 2
+              ;;
+          esac
+
+          export HEARSAY_OPENAI_SEARCH_POLICY="$SEARCH_POLICY_INPUT"
+          if [ "$SEARCH_POLICY_INPUT" = "required" ]; then
+            export HEARSAY_ANTHROPIC_SEARCH_POLICY="auto"
+            export HEARSAY_GEMINI_SEARCH_POLICY="auto"
+          else
+            export HEARSAY_ANTHROPIC_SEARCH_POLICY="$SEARCH_POLICY_INPUT"
+            export HEARSAY_GEMINI_SEARCH_POLICY="$SEARCH_POLICY_INPUT"
+          fi
+
+          node scripts/run-panel.js --estimate > artifacts/wave-quote.json
+
+          QUOTE_INFO="$(node -e '
+            const fs = require("node:fs");
+            const q = JSON.parse(fs.readFileSync("artifacts/wave-quote.json", "utf8"));
+            console.log(JSON.stringify({
+              calls: q.calls ?? 0,
+              quoteId: q.quoteId ?? "",
+              estUsd: q.estUsd ?? null,
+              costStatus: q.costStatus ?? "unavailable"
+            }));
+          ')"
+          echo "Wave quote: $QUOTE_INFO"
+
+          CALLS="$(node -e 'const q = JSON.parse(process.argv[1]); console.log(q.calls);' "$QUOTE_INFO")"
+          QUOTE_ID="$(node -e 'const q = JSON.parse(process.argv[1]); console.log(q.quoteId);' "$QUOTE_INFO")"
+
+          if [ "$CALLS" -eq 0 ]; then
+            echo "Skipping measurement wave: 0 active targets (configure at least one provider API key secret and active prompts in data/hearsay.db)."
+            exit 0
+          fi
+
+          if [ -n "$QUOTE_ID" ]; then
+            node scripts/run-panel.js --confirm-quote "$QUOTE_ID" | tee artifacts/wave-summary.json
+          else
+            node scripts/run-panel.js | tee artifacts/wave-summary.json
+          fi
+
+      - name: Export HTML Evidence Dossier, JSON backup, and SQLite snapshot
+        if: always()
+        env:
+          HEARSAY_DB_PATH: './data/hearsay.db'
+          BRAND_LABEL: ${{ inputs.brand_label }}
+        run: |
+          set -euo pipefail
+          if [ ! -f data/hearsay.db ]; then
+            echo "No data/hearsay.db present; skipping dossier and database export."
+            exit 0
+          fi
+          node --input-type=module -e '
+            import { copyFileSync, writeFileSync } from "node:fs";
+            import { openDb } from "./core/db.js";
+            import { buildClientReport, renderClientReportHtml } from "./core/client-export.js";
+            import { exportAll } from "./web/queries.js";
+
+            const dbPath = process.env.HEARSAY_DB_PATH || "./data/hearsay.db";
+            const brandLabel = (process.env.BRAND_LABEL || "").trim();
+            const db = openDb(dbPath);
+            try {
+              const report = buildClientReport(db, {
+                days: 30,
+                ...(brandLabel ? { brandLabel } : {}),
+              });
+              const html = renderClientReportHtml(report);
+              writeFileSync("artifacts/evidence-dossier.html", html, "utf8");
+              writeFileSync("artifacts/export.json", JSON.stringify(exportAll(db), null, 2), "utf8");
+              db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+            } finally {
+              db.close();
+            }
+            copyFileSync(dbPath, "artifacts/hearsay.db");
+            console.log("Exported artifacts/evidence-dossier.html, artifacts/export.json, and artifacts/hearsay.db");
+          '
+
+      - name: Upload Evidence Dossier and SQLite/JSON artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hearsay-wave-${{ github.run_number }}
+          path: artifacts/
+          retention-days: 90
+          if-no-files-found: warn

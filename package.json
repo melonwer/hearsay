@@ -1,12 +1,48 @@
 {
   "name": "hearsay",
   "version": "0.1.0",
-  "private": true,
-  "description": "App visibility research in your current agent, with optional account measurements, scheduling and dashboard imports.",
+  "private": false,
+  "description": "Open-source AI-search forensics and measurement for technical SEOs and builders: zero-key crawlability pre-flight audits, retrieval-to-citation attrition, memory-vs-search deltas, and multi-wave citation persistence.",
   "license": "MIT",
   "type": "module",
   "bin": {
     "hearsay": "./bin/hearsay.js"
+  },
+  "files": [
+    "bin/",
+    "core/",
+    "web/",
+    "public/",
+    "mcp/",
+    "server.js",
+    "skill/",
+    "README.md",
+    "METHODOLOGY.md",
+    "LICENSE",
+    "SECURITY.md",
+    ".env.example"
+  ],
+  "keywords": [
+    "ai-search",
+    "ai-visibility",
+    "seo",
+    "technical-seo",
+    "geo",
+    "forensics",
+    "citations",
+    "retrieval",
+    "robots-txt",
+    "mcp",
+    "sqlite",
+    "zero-dependencies"
+  ],
+  "homepage": "https://melonwer.github.io/hearsay/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/melonwer/hearsay.git"
+  },
+  "bugs": {
+    "url": "https://github.com/melonwer/hearsay/issues"
   },
   "engines": {
     "node": ">=22.13"

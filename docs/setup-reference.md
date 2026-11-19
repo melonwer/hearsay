@@ -1,11 +1,12 @@
 # Setup, Providers & API Reference
 
-This guide covers environment configuration, direct API search policies, subscription CLI runners, MCP integration, background services, and HTTP endpoints for Hearsay. For conceptual design and statistical rules, see [Methodology](../METHODOLOGY.md).
+This guide covers environment configuration, the zero-key `hearsay check` CLI, direct API search policies, BYOK DataForSEO setup, geolocation, hard monthly USD spend caps, subscription CLI runners, white-label HTML Evidence Dossier exports, unattended GitHub Actions weekly waves, MCP integration, background services, and HTTP endpoints for Hearsay. For conceptual design and statistical rules, see [Methodology](../METHODOLOGY.md).
 
 ## Runtime, Ports & Workspace Paths
 
 - **Requirements:** [Node.js ≥ 22.13](https://nodejs.org) (uses built-in `node:sqlite` — zero `npm install` or external database needed).
-- **Port selection:** `node server.js` binds to `127.0.0.1` on an available ephemeral port (`PORT=0` by default) and writes the active port to `data/hearsay.port`. Set `PORT=3100 node server.js` only when a local reverse proxy needs a fixed port.
+- **Starting the dashboard:** Run `npx hearsay serve` (or `node server.js` from a checkout). Supports `--port PORT` and `--host HOST`.
+- **Port selection:** `node server.js` binds to `127.0.0.1` on an available ephemeral port (`PORT=0` by default) and writes the active port to `data/hearsay.port`. Set `PORT=3100 node server.js` (or `hearsay serve --port 3100`) only when a local reverse proxy needs a fixed port.
 - **Common startup errors:**
   - `command not found: node` — install Node.js LTS (≥ 22.13) from [nodejs.org](https://nodejs.org).
   - `ERR_UNKNOWN_BUILTIN_MODULE` — upgrade Node.js to 22.13 or newer.
@@ -17,9 +18,29 @@ This guide covers environment configuration, direct API search policies, subscri
   - If a legacy demo database lives at `data/hearsay.db`, set `HEARSAY_DEMO_DB_PATH=./data/hearsay.db` and `HEARSAY_DB_PATH=./data/real/hearsay.db` before restarting; Hearsay refuses to merge or overwrite mismatched databases.
 - **Standalone study workspaces:** Agent-led website studies store project state, page captures, drafts, runs, and outcomes in `.hearsay/<app-id>/` inside your project workspace.
 
+## Zero-Key Site Pre-Flight Audit (`hearsay check <url>`)
+
+Run a zero-key technical AI crawlability and raw-HTML payload audit without starting the server or configuring API keys:
+
+```sh
+npx hearsay check https://example.com
+# or from a git checkout:
+node bin/hearsay.js check https://example.com --html preflight.html --json
+```
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--json` | off (text report) | Output the structured `SiteCheckReport` JSON object to stdout (for CI pipelines or agent parsing). |
+| `--html FILE` | unset | Write a self-contained printable HTML pre-flight report to `FILE` (creates parent directories automatically). |
+| `--browser` | off | Optionally render the final URL in local headless Chromium, Google Chrome, or Playwright to quantify the raw-HTML vs. rendered-DOM word and heading hydration gap. Gracefully reports `status: "unavailable"` if no local browser binary is present. |
+| `--timeout MS` | `10000` | Positive per-request HTTP timeout in milliseconds. |
+| `--allow-private-hosts` | off | Opt-in override for auditing `localhost` or private-network staging servers. By default, Hearsay's SSRF guard blocks loopback, RFC 1918, link-local/metadata, and DNS-resolved private IPs on the initial URL and every redirect hop. |
+
+**Honest User-Agent & WAF notice:** `hearsay check` sends `HearsaySiteCheck/0.1` and never spoofs AI crawler User-Agents. It evaluates `<origin>/robots.txt` per RFC 9309 across 9 crawlers (`OAI-SearchBot`, `ChatGPT-User`, `GPTBot`, `ClaudeBot`, `Claude-SearchBot`, `PerplexityBot`, `Google-Extended`, `Googlebot`, `Bingbot`), measures UTF-8 byte offsets and truncation cliffs (`30 KB` / `100 KB` / `300 KB`), detects CSR empty-shell risk, and explicitly discloses that IP/rDNS-authenticated CDN/WAF rules (Cloudflare, Akamai, Fastly) must be verified in CDN or origin access logs.
+
 ## Configuring Routes in Browser or `.env`
 
-You can configure API keys and toggle detected local CLI runners directly in the browser under **`/setup`** or **`/settings`** — Hearsay writes `.env` atomically with `0600` permissions and masks keys in every response. You can also edit `.env` manually (`cp .env.example .env`).
+You can configure API keys, BYOK DataForSEO credentials, geolocation, spend caps, and local CLI runners directly in the browser under **`/setup`** or **`/settings`** — Hearsay writes `.env` atomically with `0600` permissions and masks secrets in every response. You can also edit `.env` manually (`cp .env.example .env`). Real environment variables take precedence over `.env`.
 
 ### Subscription & Account CLI Runners
 
@@ -45,23 +66,69 @@ Add one or more optional keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_AP
 
 | Route & Default Model | Search Policy Env Var | Behavior, Bounds & Caveats |
 | --- | --- | --- |
-| **OpenAI API** (`gpt-5.6-luna`) | `HEARSAY_OPENAI_SEARCH_POLICY=off\|auto\|required` | Default `off` uses Chat Completions. `auto` or `required` uses Responses API `web_search`. Hosted search has no enforceable internal per-request call ceiling. |
+| **OpenAI API** (`gpt-5.6-luna`) | `HEARSAY_OPENAI_SEARCH_POLICY=off\|auto\|required` | Default `off` uses Chat Completions. `auto` or `required` uses Responses API `web_search` (and forwards `user_location` when `HEARSAY_LOCATION_COUNTRY` or `HEARSAY_LOCATION_CITY` is set). Hosted search has no enforceable internal per-request call ceiling. |
 | **Anthropic API** (`claude-sonnet-5`) | `HEARSAY_ANTHROPIC_SEARCH_POLICY=off\|auto` | `auto` enables basic server-side `web_search_20250305`, bounded to 3 search calls and 1 continuation per target timeout. Confirmed no-search `auto` answers stay comparable. |
 | **Gemini API** (`gemini-3.6-flash`) | `HEARSAY_GEMINI_SEARCH_POLICY=off\|auto` | `auto` enables `GenerateContent` Google Search grounding. Renders required Google Search Suggestions in an isolated sandboxed iframe; searched responses omitting Suggestions fail and are suppressed. Search call billing stays partial when unreported. |
 | **Perplexity API** (`sonar`) | Built-in (`legacy`) | Preserves `search_results` and final `citations` separately. Exact search query wording is not exposed by Sonar and is marked `unavailable`. |
 | **Tavily Search** (Website studies) | `TAVILY_API_KEY` | Optional search collector for standalone studies. Six basic searches/day use 180 credits over 30 days (+ 20-credit diagnostic allowance) within Tavily's 1,000 free monthly credits; strict free mode requires a provider-side cap preventing paid overage. |
 
-### Cost Quotes & Schedule Consent
+### Unverified Model Opt-In (`HEARSAY_ALLOW_UNVERIFIED_MODELS`)
 
-- **Pre-run quotes:** API runs preview estimated usage (`GET /api/cost/estimate`) from the checked price table in `core/cost.js` (verified 2026-09-24). Search quotes forecast 1 search call per target; quotes are forecasts, not invoices or hard hosted-tool caps. Missing billing quantities remain `unknown` alongside any known USD subtotal.
+By default (`HEARSAY_ALLOW_UNVERIFIED_MODELS=0`), web-search API routes enforce Hearsay's validated models (`gpt-5.6-luna`, `claude-sonnet-5`, `gemini-3.6-flash`) and reject custom `OPENAI_MODEL` / `ANTHROPIC_MODEL` / `GEMINI_MODEL` overrides with a `RangeError`.
+
+Set `HEARSAY_ALLOW_UNVERIFIED_MODELS=1` (in `.env` or `/settings`) to explicitly opt into running newer or unvalidated models on web-search API routes. Hearsay flags those budgets with `unverifiedModelWarning: true`. If you switch to a model outside `core/cost.js`'s checked price table, also set `HEARSAY_PRICE_<PROVIDER>_IN` and `HEARSAY_PRICE_<PROVIDER>_OUT` (USD per 1M tokens) so pre-run quotes and spend tracking stay priced rather than `unpriced`.
+
+### BYOK DataForSEO (`google-aio` & `chatgpt-web`)
+
+Hearsay supports Bring-Your-Own-Key **DataForSEO v3** integration (`core/providers/dataforseo.js`, registered under `OPTIONAL_PROVIDERS` separately from the core 4-provider API series):
+
+```ini
+DATAFORSEO_LOGIN=you@example.com
+DATAFORSEO_PASSWORD=your-api-password
+```
+
+- **Secrets hygiene:** Credentials travel strictly in the HTTP `Authorization: Basic ...` header, are saved to `.env` with `0600` permissions when configured via `/settings`, are scrubbed from all error messages and logs, and are never persisted to SQLite or returned unmasked in any API/UI response.
+- **Two explicit surfaces:**
+  - `google-aio` (`POST https://api.dataforseo.com/v3/serp/google/organic/live/advanced` with `load_async_ai_overview: true`, `expand_ai_overview: true`): captures Google AI Overview text and native citations alongside organic SERP `source_observations`. When Google returns no AI Overview (including task status `40102`), Hearsay cleanly returns `noAioPresent: true` and `answerStatus: 'empty'`.
+  - `chatgpt-web` (`POST https://api.dataforseo.com/v3/ai_optimization/chat_gpt/llm_scraper/live/advanced` with `web_search: true` default): captures ChatGPT web answer text, fan-out search queries, returned sources, and native citations.
+- **Pre-wave health canary:** Before committing a full wave, run the 1-request zero-retry health check (`POST /api/dataforseo/health` with `{ "mode": "google-aio" | "chatgpt-web" }`, or click **Test DataForSEO Health** in `/settings`, or call `checkDataForSeoHealth()` directly). It sends a minimal probe (`"weather"` by default) and returns `{ ok, mode, statusCode, latencyMs, costUsd, error }` with credentials scrubbed.
+
+### Geolocation & Language Control
+
+Leave all geo variables unset to keep `location_control=uncontrolled` and `language_control=uncontrolled` (default). When set, Hearsay records deterministic `location_control` metadata in execution profiles so geo-targeted runs never silently blend with uncontrolled series:
+
+| Env Var | Example | Effect |
+| --- | --- | --- |
+| `HEARSAY_LOCATION_CODE` | `2840` | Numeric DataForSEO `location_code` (e.g. `2840` = United States; defaults to `2840` on direct DataForSEO calls if unset). Recorded as `location_code:2840`. |
+| `HEARSAY_LOCATION_COUNTRY` | `US`, `GB` | ISO country code (normalized to uppercase). Forwarded to OpenAI Responses `web_search.user_location.country` when search is enabled, and recorded in `location_control`. |
+| `HEARSAY_LOCATION_CITY` | `London` | Optional city name. Forwarded to OpenAI Responses `web_search.user_location.city` when search is enabled, and recorded in `location_control`. |
+| `HEARSAY_LANGUAGE_CODE` | `en` | Optional language code (defaults to `en` on direct DataForSEO calls). Forwarded to DataForSEO `language_code` and recorded as `lang:<code>`. |
+
+### Cost Quotes, Hard Monthly USD Spend Cap & Schedule Consent
+
+- **Pre-run quotes:** API runs preview estimated usage (`GET /api/cost/estimate`) from the checked price table in `core/cost.js` (verified 2026-09-24). Search quotes forecast 1 search call per target; quotes are forecasts, not invoices. Missing billing quantities remain `unknown` alongside any known USD subtotal.
+- **Hard monthly USD spend cap (`HEARSAY_MONTHLY_USD_CAP`):** Unset by default (no cap). Set to a positive number (e.g. `HEARSAY_MONTHLY_USD_CAP=25`) in `.env`, CI, or `/settings` to enforce a hard UTC calendar-month USD kill-switch across all live (non-seeded) API runs:
+  - Sums live `responses` spend in the current UTC month (`cost_usd`, falling back to `cost_known_subtotal_usd` and `reported_charge_usd`; seeded demo runs are always excluded).
+  - **Pre-run gate:** refuses to start with `spend_cap_exceeded` (`SpendCapExceededError`) if current UTC month spend plus the run estimate exceeds `HEARSAY_MONTHLY_USD_CAP`.
+  - **Mid-run gate:** stops remaining calls mid-wave and marks skipped calls with `error = 'spend_cap_exceeded'` if accumulated spend reaches the cap.
+  - Inspect live month-to-date spend and remaining budget anytime via `GET /api/spend-cap` or `/settings`.
 - **Recurring search consent:** Daily scheduled API runs keep web search `off` until you explicitly confirm `POST /api/search-schedule` with a `target_ceiling` and `quoteId`. Changing the execution profile or exceeding `target_ceiling` suspends scheduled search. Revoke consent anytime with `DELETE /api/search-schedule`.
 - **Saved vs. active schedules:** Saving a schedule configuration does not start a background daemon. Check the schedule badge in `/dashboard` or `/settings` (or `hearsay schedule inspect`) to confirm whether collection is active, suspended pending quote consent, or awaiting a host cron job.
+
+## Unattended Weekly Waves in GitHub Actions
+
+Hearsay ships an opt-in GitHub Actions workflow at [`.github/workflows/hearsay-wave.yml`](../.github/workflows/hearsay-wave.yml) for unattended weekly forensics waves without running a persistent server:
+
+- **Safe by default for forks:** Triggered via `workflow_dispatch` with inputs for `search_policy` (`auto` | `required` | `off`), `max_monthly_usd` (enforced via `HEARSAY_MONTHLY_USD_CAP`, default `15`), optional `site_url`, `samples`, and optional `brand_label`. The weekly `schedule` cron (`0 7 * * 1`) is commented out by default so forks never unexpectedly incur API charges; uncomment it only after configuring secrets and verifying a manual dispatch.
+- **Required secrets (configure at least one provider key):** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`, plus optional BYOK `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`.
+- **Optional repository variables:** `HEARSAY_SITE_URL`, `HEARSAY_LOCATION_CODE`, `HEARSAY_LOCATION_COUNTRY`, `HEARSAY_LOCATION_CITY`, `HEARSAY_LANGUAGE_CODE`.
+- **Artifacts uploaded via `actions/upload-artifact@v4`:** `artifacts/evidence-dossier.html` (self-contained HTML Evidence Dossier), `artifacts/site-check.html` & `artifacts/site-check.json` (when `site_url` / `HEARSAY_SITE_URL` is provided), `artifacts/export.json` (full database JSON export), `artifacts/hearsay.db` (WAL-checkpointed SQLite snapshot), plus `wave-quote.json` and `wave-summary.json`.
 
 ## CLI, Plugin Bundles & MCP Setup
 
 ### Standalone CLI & Bundles
 
-With Node ≥ 22.13, `node bin/hearsay.js --help` (or `npm link` for `hearsay`) runs agent discovery, bounded panels, website studies, Tavily collection, outcome tracking, and report generation without an HTTP server. See the [CLI Guide](../skill/references/cli.md) and [Website Studies Guide](../skill/references/studies.md).
+With Node ≥ 22.13, `npx hearsay --help` or `node bin/hearsay.js --help` (or `npm link` for global `hearsay`) runs zero-key pre-flight audits (`hearsay check`), the local dashboard (`hearsay serve`), agent discovery, bounded panels, website studies, Tavily collection, outcome tracking, and report generation. See the [CLI Guide](../skill/references/cli.md) and [Website Studies Guide](../skill/references/studies.md).
 
 To build portable skill archives, Codex/Claude plugins, and the Gemini CLI extension locally into `dist/`:
 
@@ -74,7 +141,7 @@ See [Installation, Upgrades & Removal](../skill/references/installation.md) for 
 
 ### Connecting MCP Clients
 
-Register `mcp/server.mjs` from the repository directory (discovers `data/hearsay.port` automatically, or reads `HEARSAY_URL` for fixed/remote deployments):
+Register `mcp/server.mjs` from the repository directory (discovers `data/hearsay.port` automatically, or reads `HEARSAY_URL` for fixed/remote deployments; `hearsay_site_check` runs directly with zero server running, and `hearsay_retrieval_attrition`, `hearsay_memory_vs_search`, and `hearsay_citation_persistence` fall back to reading the local SQLite database directly when `server.js` is not running):
 
 ```sh
 codex mcp add hearsay -- node "$PWD/mcp/server.mjs"
@@ -102,12 +169,20 @@ Hearsay never installs background services automatically. To keep the local work
 
 All mutating endpoints enforce localhost/same-origin checks (`HOST` defaults to `127.0.0.1`; see [Security](../SECURITY.md)). There is no index document at `/api`.
 
-- **Status & Browser Onboarding:** `GET /api/status`, `GET /api/onboarding/state`, `POST /api/onboarding/providers`, `POST /api/onboarding/mode`
+- **Status, Settings & Browser Onboarding:** `GET /api/status`, `GET /api/settings`, `POST /api/settings`, `GET /api/spend-cap`, `POST /api/dataforseo/health`, `GET /api/onboarding/state`, `POST /api/onboarding/providers`, `POST /api/onboarding/mode`
+- **Site Pre-Flight & Forensics:**
+  - `POST /api/site-check` — zero-key technical pre-flight audit (`{ url, browser?, timeoutMs? }`, SSRF-guarded by default).
+  - `GET /api/forensics/attrition` — Retrieved-but-Dropped attrition & Own-Site Hijack report (`surface`, `provider`, `model`, `search_policy`, `run_id`, `include_seeded`).
+  - `GET /api/forensics/memory-vs-search` — Paired Parametric Memory vs. Grounded Retrieval delta (`surface`, `provider`, `model`, `run_id`, `include_seeded`).
+  - `GET /api/forensics/persistence` — Multi-Wave Citation Persistence & Off-Site Targets (`surface`, `provider`, `model`, `search_policy`, `run_id`, `include_seeded`).
 - **Benchmark Setup:** `POST /api/prompts/suggest`, `POST /api/setup/drafts`, `GET /api/setup/drafts/:id/review`, `POST /api/setup/drafts/:id/approve` (see [Benchmark Setup](benchmark-setup.md))
 - **Quotes, Runs & Search Schedules:** `GET /api/cost/estimate`, `POST /api/run`, `GET /api/runs/latest`, `POST /api/search-schedule`, `DELETE /api/search-schedule`
 - **Series, Evidence & Alerts:** `GET /api/series`, `GET /api/series/summary`, `GET /api/series/evidence?series_id=...&intent_id=...`, `GET /api/answers?series_id=...`, `GET /api/alerts`, `GET /api/summary?days=30` (legacy)
 - **Standalone Research Imports:** `POST /api/research/import`, `GET /api/research`, `GET /api/research/:id` (also via `hearsay import <evidence.json> --database /abs/path/hearsay.db`; retains external provenance and never enters native series)
 - **Outcomes & Weekly Review:** `POST /api/outcomes`, `POST /api/outcomes/import`, `GET /api/outcomes/export`, `POST /api/ledger`, `GET /api/weekly-review?series_id=...&start=...&end=...`, `GET /api/weekly-review/export`
-- **Client Report & Full Backup:**
-  - `GET /api/export/report?series_id=...&days=...` — self-contained dark/light/printable HTML B2B client report (`Ctrl+P` → Save as PDF).
+- **White-Label Evidence Dossier & Full Backup:**
+  - `GET /api/export/report?series_id=...&days=...` — self-contained dark/light/printable HTML Evidence Dossier (`Ctrl+P` → Save as PDF) with Wilson 95% CIs, Mention vs. Citation vs. Recommendation separation, retrieval attrition, own-site hijacks, memory-vs-search delta, and multi-wave off-site targets. Supports optional white-label query parameters:
+    - `brand_label` — custom agency or client title shown in the report header (strictly HTML-escaped; defaults to Hearsay branding when omitted).
+    - `accent_color` — custom hex accent color strictly validated against `/^#[0-9a-fA-F]{3,8}$/` (invalid values are rejected/ignored to prevent CSS injection).
+    - `footer_note` — custom report footer line (strictly HTML-escaped).
   - `GET /api/export` — full JSON backup of all database tables (prompts, runs, answers, evidence, opportunities, interventions, outcomes, ledger; see [Export Schema](export-schema.md)). Back up `data/artifacts/` separately.
