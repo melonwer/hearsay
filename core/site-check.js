@@ -415,6 +415,20 @@ export class SiteCheckError extends Error {
  */
 
 /**
+ * @typedef {Object} SiteCheckProgressEvent
+ * @property {'started'|'page'|'competitor'|'done'|'error'} type
+ * @property {string} [url]
+ * @property {string} [finalUrl]
+ * @property {string} [template]
+ * @property {number|null} [status]
+ * @property {number} [audited]
+ * @property {number} [maxPages]
+ * @property {number} [index]
+ * @property {number} [total]
+ * @property {string} [message]
+ */
+
+/**
  * @typedef {CheckSiteOptions & {
  *   single?: boolean,
  *   maxPages?: number,
@@ -423,6 +437,7 @@ export class SiteCheckError extends Error {
  *   vs?: string[],
  *   checkCaching?: boolean,
  *   ignoreRobotsForOwnSite?: boolean,
+ *   includeAuthRoutes?: boolean,
  *   failOn?: null|'critical'|'attention'|'warning',
  *   failOnCodes?: string[],
  *   ignoreCodes?: string[],
@@ -430,6 +445,7 @@ export class SiteCheckError extends Error {
  *   failOnRegression?: boolean,
  *   skipLlmsProbe?: boolean,
  *   sleepFn?: (ms: number) => Promise<void>,
+ *   onProgress?: (event: SiteCheckProgressEvent) => void,
  * }} CheckSiteV2Options
  */
 
@@ -651,7 +667,7 @@ export function isPrivateIp(ip) {
  * @param {string} hostname
  * @returns {boolean}
  */
-function isBlockedHostLiteral(hostname) {
+export function isBlockedHostLiteral(hostname) {
   const clean = stripHostBrackets(hostname).replace(/\.+$/, '');
   if (!clean) return true;
   if (isIP(clean)) return isPrivateIp(clean);
@@ -3524,6 +3540,26 @@ export async function checkSiteV2(rawUrl, options = {}) {
   const fetchFn = options.fetch ?? globalThis.fetch;
   const lookupFn = options.lookup === null ? null : (options.lookup ?? (options.fetch ? null : dnsLookup));
 
+  /** @param {SiteCheckProgressEvent} event */
+  const emitProgress = (event) => {
+    if (typeof options.onProgress !== 'function') return;
+    try {
+      options.onProgress(event);
+    } catch {
+      /* ignore listener failure */
+    }
+  };
+
+  emitProgress({
+    type: 'started',
+    url: rawUrl,
+    audited: 0,
+    maxPages,
+    message: `Starting Site X-Ray for ${rawUrl}`,
+  });
+
+  let progressAudited = 0;
+
   // Capture raw /robots.txt text from crawlSitePages's own fetch with zero extra requests
   const robotsCapture = { text: '' };
   /** @type {typeof globalThis.fetch} */
@@ -3725,6 +3761,18 @@ export async function checkSiteV2(rawUrl, options = {}) {
       ...(pageStack.primaryHosting ? [pageStack.primaryHosting] : []),
     ];
 
+    progressAudited += 1;
+    emitProgress({
+      type: 'page',
+      url: ctx.url,
+      finalUrl: ctx.finalUrl,
+      template: ctx.template,
+      status: ctx.status,
+      audited: progressAudited,
+      maxPages,
+      message: `Audited ${ctx.finalUrl} (${progressAudited}/${maxPages})`,
+    });
+
     return {
       title: meta.title,
       canonical: meta.canonical,
@@ -3744,6 +3792,7 @@ export async function checkSiteV2(rawUrl, options = {}) {
     maxPerTemplate,
     allowPrivateHosts,
     ignoreRobotsForOwnSite: options.ignoreRobotsForOwnSite === true,
+    includeAuthRoutes: options.includeAuthRoutes === true,
     checkCaching: options.checkCaching === true,
     pageChecker,
     fetchImpl: robotsCaptureFetch,
@@ -4177,9 +4226,17 @@ export async function checkSiteV2(rawUrl, options = {}) {
   if (Array.isArray(options.vs) && options.vs.length > 0) {
     const compUrls = options.vs.map((u) => String(u).trim()).filter(Boolean);
     if (compUrls.length > 0) {
+      let compDone = 0;
       const compReports = await Promise.all(
-        compUrls.map((compUrl) =>
-          checkSiteV2(compUrl, {
+        compUrls.map(async (compUrl, idx) => {
+          emitProgress({
+            type: 'competitor',
+            url: compUrl,
+            index: idx + 1,
+            total: compUrls.length,
+            message: `Auditing competitor ${idx + 1}/${compUrls.length}: ${compUrl}`,
+          });
+          const compReport = await checkSiteV2(compUrl, {
             single,
             maxPages,
             maxPerTemplate,
@@ -4189,6 +4246,7 @@ export async function checkSiteV2(rawUrl, options = {}) {
             maxConcurrency: options.maxConcurrency,
             allowPrivateHosts,
             ignoreRobotsForOwnSite: options.ignoreRobotsForOwnSite,
+            includeAuthRoutes: options.includeAuthRoutes,
             checkCaching: options.checkCaching,
             browser: options.browser,
             browserBinary: options.browserBinary,
@@ -4202,8 +4260,18 @@ export async function checkSiteV2(rawUrl, options = {}) {
             skipMarkdownProbe: options.skipMarkdownProbe,
             skipLlmsProbe: options.skipLlmsProbe,
             signal: options.signal,
-          }),
-        ),
+          });
+          compDone += 1;
+          emitProgress({
+            type: 'competitor',
+            url: compUrl,
+            finalUrl: compReport.finalUrl,
+            index: compDone,
+            total: compUrls.length,
+            message: `Completed competitor ${compDone}/${compUrls.length}: ${compReport.domain}`,
+          });
+          return compReport;
+        }),
       );
       report.competitorXray = compareCompetitors(report, compReports);
     }

@@ -10,6 +10,7 @@
 import { sendHtml } from '../router.js';
 import * as alertsPage from './alerts.js';
 import * as answersPage from './answers.js';
+import * as checkPage from './check.js';
 import * as dashboardPage from './dashboard.js';
 import * as entitiesPage from './entities.js';
 import * as evidencePage from './evidence.js';
@@ -59,6 +60,10 @@ export function shellCtx({ db, config, version }) {
  */
 export function registerPageRoutes(router, deps) {
   const { db, config } = deps;
+
+  router.add('GET', '/check', (ctx) => {
+    sendHtml(ctx.res, 200, checkPage.render(shellCtx(deps), checkPage.buildView(deps, ctx.url.searchParams)));
+  });
 
   router.add('GET', '/research', (ctx) => {
     sendHtml(ctx.res, 200, researchPage.render(shellCtx(deps), researchPage.buildView(deps, ctx.url.searchParams)));

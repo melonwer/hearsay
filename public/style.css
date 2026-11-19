@@ -1028,3 +1028,772 @@ p {
 .research-pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; background: var(--surface); padding: 1rem; border-radius: .5rem; max-height: 60rem; overflow: auto; }
 .research-actions input { max-width: 100%; }
 @media (max-width: 700px) { .research-grid { grid-template-columns: minmax(0, 1fr); } }
+
+
+/* ---------- /check Site X-Ray Workbench ---------- */
+
+.xray-form {
+  display: grid;
+  gap: 12px;
+}
+
+.xray-primary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.xray-url-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.xray-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.xray-url-field input,
+.xray-number-field input,
+.xray-vs-field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+}
+
+.xray-url-field input:focus-visible,
+.xray-number-field input:focus-visible,
+.xray-vs-field textarea:focus-visible,
+.xray-tab:focus-visible,
+.xray-advanced > summary:focus-visible {
+  outline: 2px solid var(--s1);
+  outline-offset: 2px;
+}
+
+.xray-run-btn {
+  padding: 8px 16px;
+  white-space: nowrap;
+}
+
+.xray-advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.xray-advanced > summary {
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.xray-advanced-body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.xray-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.xray-number-field,
+.xray-vs-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.xray-vs-field textarea {
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.xray-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+
+.xray-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.xray-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.xray-progress-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--grid);
+  overflow: hidden;
+}
+
+.xray-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--s1);
+  transition: width 160ms ease-out;
+}
+
+.xray-progress-log {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--muted);
+  max-height: 110px;
+  overflow-y: auto;
+}
+
+.xray-scope-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.xray-scope-title-wrap {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.xray-scope-topline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xray-scope-domain {
+  margin: 0;
+  font-size: 18px;
+}
+
+.xray-scope-url {
+  margin: 4px 0 2px;
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.xray-scope-page-title {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.xray-scope-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xray-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.xray-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--page);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.xray-pill-good {
+  background: color-mix(in srgb, var(--good) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--good) 38%, var(--border));
+  color: var(--good-text);
+}
+
+.xray-pill-warn {
+  background: color-mix(in srgb, var(--warn) 18%, var(--surface));
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+  color: var(--ink);
+}
+
+.xray-pill-crit {
+  background: color-mix(in srgb, var(--critical) 15%, var(--surface));
+  border-color: color-mix(in srgb, var(--critical) 42%, var(--border));
+  color: var(--critical);
+}
+
+.xray-pill-info {
+  background: color-mix(in srgb, var(--s1) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--s1) 36%, var(--border));
+  color: var(--s1);
+}
+
+.xray-pill-stack {
+  background: color-mix(in srgb, var(--s3) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--s3) 34%, var(--border));
+  color: var(--ink);
+}
+
+.xray-hard-gate {
+  margin: 12px 0 8px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--critical) 55%, var(--border));
+  border-left: 4px solid var(--critical);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--critical) 10%, var(--surface));
+}
+
+.xray-hard-gate p {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+.xray-scope-note {
+  margin: 8px 0 0;
+  font-size: 13.5px;
+}
+
+.xray-disclaimers {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.xray-disclaimers > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.xray-disclaimer-list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  color: var(--ink-2);
+}
+
+.xray-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+.xray-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--page);
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.xray-tab:hover {
+  color: var(--ink);
+  border-color: var(--baseline);
+}
+
+.xray-tab.is-active {
+  background: color-mix(in srgb, var(--s1) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--s1) 45%, var(--border));
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.xray-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--grid);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.xray-tab-badge.is-crit {
+  background: var(--critical);
+  color: #ffffff;
+}
+
+.xray-tab-badge.is-warn {
+  background: var(--warn);
+  color: #0b0b0b;
+}
+
+.xray-tab-badge.is-good {
+  background: color-mix(in srgb, var(--good) 20%, var(--surface));
+  color: var(--good-text);
+}
+
+.xray-section {
+  margin-bottom: 18px;
+}
+
+.xray-section h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.xray-finding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.xray-finding-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--baseline);
+  border-radius: 6px;
+  background: var(--page);
+  min-width: 0;
+}
+
+.xray-finding-item.xray-sev-crit {
+  border-left-color: var(--critical);
+}
+
+.xray-finding-item.xray-sev-warn {
+  border-left-color: var(--warn);
+}
+
+.xray-finding-item.xray-sev-good {
+  border-left-color: var(--good);
+}
+
+.xray-finding-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.xray-finding-item p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.xray-sample-urls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.xray-url-chip {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+.xray-remediation-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.xray-recipe-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--s1);
+  border-radius: var(--radius);
+  background: var(--page);
+  min-width: 0;
+}
+
+.xray-recipe-card.xray-sev-crit {
+  border-left-color: var(--critical);
+}
+
+.xray-recipe-card.xray-sev-warn {
+  border-left-color: var(--warn);
+}
+
+.xray-recipe-head h4 {
+  margin: 6px 0 4px;
+  font-size: 15px;
+}
+
+.xray-recipe-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.xray-recipe-trigger {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.xray-recipe-steps {
+  margin: 6px 0 10px;
+  padding-left: 20px;
+  font-size: 14px;
+}
+
+.xray-snippet-wrap {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.xray-snippet-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.xray-code {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.xray-budget-card {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--page);
+  margin-bottom: 14px;
+}
+
+.xray-budget-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.xray-budget-subhead {
+  margin-top: 14px;
+}
+
+.xray-budget-track {
+  position: relative;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--grid);
+  overflow: hidden;
+}
+
+.xray-budget-fill {
+  height: 100%;
+  border-radius: 6px;
+}
+
+.xray-budget-fill.is-good {
+  background: var(--s3);
+}
+
+.xray-budget-fill.is-warn {
+  background: var(--s4);
+}
+
+.xray-budget-fill.is-crit {
+  background: var(--critical);
+}
+
+.xray-budget-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--ink);
+  opacity: 0.3;
+}
+
+.xray-budget-h1-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--s1);
+}
+
+.xray-cliff-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.xray-cliff-marks .is-hit {
+  color: var(--critical);
+  font-weight: 600;
+}
+
+.xray-stacked-bar {
+  display: flex;
+  height: 14px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--grid);
+}
+
+.xray-stacked-bar > span {
+  display: block;
+  height: 100%;
+}
+
+.seg-prose { background: var(--s3); }
+.seg-rsc { background: var(--s2); }
+.seg-jscss { background: var(--s4); }
+.seg-media { background: var(--s1); }
+.seg-markup { background: var(--baseline); }
+
+.xray-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin: 8px 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.xray-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.xray-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.xray-callout {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  margin: 10px 0;
+  font-size: 13.5px;
+}
+
+.xray-callout-warn {
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  border-color: color-mix(in srgb, var(--warn) 42%, var(--border));
+}
+
+.xray-split-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+
+.xray-diff-pane {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--page);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.xray-pane-title {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.xray-md-preview {
+  margin: 0;
+  padding: 12px;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.xray-md-empty {
+  padding: 16px 12px;
+  font-size: 13.5px;
+}
+
+.xray-diff-hunks {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.xray-hunk-hdr {
+  padding: 4px 10px;
+  background: var(--grid);
+  color: var(--ink-2);
+}
+
+.xray-diff-line {
+  padding: 2px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.xray-diff-line.is-add {
+  background: color-mix(in srgb, var(--good) 14%, var(--surface));
+}
+
+.xray-diff-line.is-rem {
+  background: color-mix(in srgb, var(--critical) 14%, var(--surface));
+}
+
+.xray-policy-grid,
+.xray-deltas-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.xray-policy-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--page);
+  min-width: 0;
+}
+
+.xray-policy-card h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.xray-compact-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13.5px;
+}
+
+.xray-compact-list li {
+  margin-bottom: 5px;
+  overflow-wrap: anywhere;
+}
+
+.xray-target-row {
+  background: color-mix(in srgb, var(--s1) 7%, var(--surface));
+}
+
+.xray-history-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.xray-history-table tr.is-selected {
+  background: color-mix(in srgb, var(--s1) 8%, var(--surface));
+}
+
+.xray-history-url {
+  font-size: 12px;
+}
+
+.xray-stack-mini,
+.xray-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.xray-drift-panel {
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--s1) 40%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--s1) 4%, var(--surface));
+}
+
+.xray-drift-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.xray-coverage-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+@media (max-width: 720px) {
+  .xray-primary-row,
+  .xray-advanced-grid,
+  .xray-toggle-grid,
+  .xray-split-diff,
+  .xray-policy-grid,
+  .xray-deltas-grid {
+    grid-template-columns: 1fr;
+  }
+}

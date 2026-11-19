@@ -5,6 +5,7 @@
  * one SQLite file.
  */
 
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -26,7 +27,21 @@ import { scrubSecrets } from './core/providers/shared.js';
 import { recoverStaleRuns } from './core/runner.js';
 import { localDate, startScheduler } from './core/scheduler.js';
 import { seedIfDemoAndEmpty } from './core/seed.js';
-import { checkSite, renderSiteCheckText, SiteCheckError, validateSiteUrl } from './core/site-check.js';
+import {
+  checkSite,
+  checkSiteV2,
+  isBlockedHostLiteral,
+  renderSiteCheckHtml,
+  renderSiteCheckText,
+  SiteCheckError,
+  validateSiteUrl,
+} from './core/site-check.js';
+import {
+  diffSavedSiteChecks,
+  getSiteCheck,
+  listSiteChecks,
+  saveSiteCheck,
+} from './core/site-check-store.js';
 import { getSubscriptionSchedule } from './core/subscription-scheduler.js';
 import { maskOnboardingHint, SURFACE_LABEL } from './web/layout.js';
 import { createRouter, isLoopbackRequest, sendError, sendJson } from './web/router.js';
@@ -168,10 +183,41 @@ function envFromConfig(cfg, overrides = {}) {
 /**
  * @typedef {Object} SiteCheckDi
  * @property {typeof checkSite} [checkSite]
+ * @property {typeof checkSiteV2} [checkSiteV2]
+ * @property {typeof checkSiteV2} [checkSiteV2Impl]
  * @property {boolean} [allowPrivateHosts]
  * @property {typeof globalThis.fetch} [fetch]
- * @property {(hostname: string, opts: {all: true}) => Promise<Array<{address: string, family: number}>>} [lookup]
+ * @property {((hostname: string, opts: {all: true}) => Promise<Array<{address: string, family: number}>>)|null} [lookup]
+ * @property {(url: string, timeoutMs: number) => Promise<{engine: string, html: string}|null>} [browserRunner]
+ * @property {import('./core/tech-detect.js').DnsResolverLike} [dnsResolver]
+ * @property {(ms: number) => Promise<void>} [sleepFn]
  */
+
+/**
+ * @typedef {Object} CheckJobEvent
+ * @property {'progress'|'complete'|'error'} event
+ * @property {Record<string, unknown>} data
+ */
+
+/**
+ * @typedef {Object} CheckJob
+ * @property {string} id
+ * @property {'running'|'done'|'error'} status
+ * @property {number} createdAtMs
+ * @property {number} updatedAtMs
+ * @property {CheckJobEvent[]} events
+ * @property {Set<(ev: CheckJobEvent) => void>} listeners
+ * @property {import('./core/site-check-store.js').SiteCheckSummary|null} summary
+ * @property {Record<string, any>|null} report
+ * @property {{code: string, message: string}|null} error
+ */
+
+const CHECK_JOB_TTL_MS = 15 * 60 * 1000;
+const CHECK_JOB_MAX_ENTRIES = 50;
+const CHECK_JOB_MAX_BUFFERED_EVENTS = 200;
+const CHECK_MAX_PAGES_MIN = 1;
+const CHECK_MAX_PAGES_MAX = 25;
+const CHECK_MAX_COMPETITORS = 3;
 
 const SETTINGS_ENV_KEYS = /** @type {const} */ ([
   'DATAFORSEO_LOGIN',
@@ -494,8 +540,209 @@ function buildSettingsSnapshot(db, cfg) {
 }
 
 /**
- * Register Wave 2 HTTP API endpoints (forensics, pre-flight site check, spend cap,
- * DataForSEO health canary, extended `.env` settings, and white-label report export).
+ * Evict expired or excess in-memory Site X-Ray jobs so memory stays bounded.
+ * @param {Map<string, CheckJob>} jobs
+ * @param {number} [nowMs]
+ */
+function pruneCheckJobs(jobs, nowMs = Date.now()) {
+  for (const [id, job] of jobs) {
+    const expiredCompleted = job.status !== 'running' && nowMs - job.updatedAtMs > CHECK_JOB_TTL_MS;
+    const expiredStale = nowMs - job.createdAtMs > CHECK_JOB_TTL_MS * 2;
+    if (expiredCompleted || expiredStale) {
+      jobs.delete(id);
+    }
+  }
+  while (jobs.size >= CHECK_JOB_MAX_ENTRIES) {
+    /** @type {string|null} */
+    let evictKey = null;
+    for (const [id, job] of jobs) {
+      if (job.status !== 'running') {
+        evictKey = id;
+        break;
+      }
+    }
+    if (evictKey === null) {
+      evictKey = jobs.keys().next().value ?? null;
+    }
+    if (evictKey === null) break;
+    jobs.delete(evictKey);
+  }
+}
+
+/**
+ * Validate a single HTTP/HTTPS URL for `/api/check` and enforce SSRF literal-host
+ * rejection unless trusted test DI explicitly enabled `allowPrivateHosts`.
+ *
+ * @param {unknown} rawUrl
+ * @param {string} field
+ * @param {boolean} allowPrivateHosts
+ * @returns {string}
+ */
+function validateCheckTargetUrl(rawUrl, field, allowPrivateHosts) {
+  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
+    throw new ApiError(422, 'invalid_url', `${field} must be a non-empty http:// or https:// string`);
+  }
+  const trimmed = rawUrl.trim();
+  if (trimmed.length > 2048) {
+    throw new ApiError(422, 'invalid_url', `${field} must be 2048 characters or fewer`);
+  }
+  const parsed = validateSiteUrl(trimmed);
+  if (!allowPrivateHosts && isBlockedHostLiteral(parsed.hostname)) {
+    throw new SiteCheckError(
+      'ssrf_blocked',
+      `Blocked private, loopback, or link-local host "${parsed.hostname}"`,
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * Parse and bound-check the JSON body for `POST /api/check`.
+ * NEVER accepts `allowPrivateHosts` from the request body.
+ *
+ * @param {Record<string, unknown>} body
+ * @param {boolean} allowPrivateHosts
+ * @returns {{
+ *   url: string,
+ *   single: boolean,
+ *   maxPages: number,
+ *   vs: string[],
+ *   browser: boolean,
+ *   checkCaching: boolean,
+ *   ignoreRobotsForOwnSite: boolean,
+ *   includeAuthRoutes: boolean,
+ *   timeoutMs: number,
+ * }}
+ */
+function parseCheckRequestBody(body, allowPrivateHosts) {
+  const url = validateCheckTargetUrl(body.url, 'url', allowPrivateHosts);
+
+  const single =
+    body.single === undefined || body.single === null
+      ? false
+      : parseBooleanField(body.single, 'single');
+
+  const rawMaxPages = body.maxPages ?? body.max_pages;
+  const maxPages =
+    rawMaxPages === undefined || rawMaxPages === null || rawMaxPages === ''
+      ? 15
+      : parseBoundedNumber(rawMaxPages, 'maxPages', {
+          integer: true,
+          min: CHECK_MAX_PAGES_MIN,
+          max: CHECK_MAX_PAGES_MAX,
+        });
+
+  /** @type {string[]} */
+  const vs = [];
+  if (body.vs !== undefined && body.vs !== null && body.vs !== '') {
+    /** @type {unknown[]} */
+    let rawVsList;
+    if (Array.isArray(body.vs)) {
+      rawVsList = body.vs;
+    } else if (typeof body.vs === 'string') {
+      rawVsList = body.vs
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter((s) => s !== '');
+    } else {
+      throw new ApiError(422, 'unprocessable', 'vs must be an array of URLs or a comma/newline-separated string');
+    }
+    if (rawVsList.length > CHECK_MAX_COMPETITORS) {
+      throw new ApiError(422, 'unprocessable', `vs accepts at most ${CHECK_MAX_COMPETITORS} competitor URLs`);
+    }
+    for (let i = 0; i < rawVsList.length; i += 1) {
+      const item = rawVsList[i];
+      if (typeof item === 'string' && item.trim() === '') continue;
+      vs.push(validateCheckTargetUrl(item, `vs[${i}]`, allowPrivateHosts));
+    }
+  }
+
+  const browser =
+    body.browser === undefined || body.browser === null
+      ? false
+      : parseBooleanField(body.browser, 'browser');
+
+  const rawCaching = body.checkCaching ?? body.check_caching;
+  const checkCaching =
+    rawCaching === undefined || rawCaching === null
+      ? false
+      : parseBooleanField(rawCaching, 'checkCaching');
+
+  const rawIgnoreRobots = body.ignoreRobotsForOwnSite ?? body.ignore_robots_for_own_site;
+  const ignoreRobotsForOwnSite =
+    rawIgnoreRobots === undefined || rawIgnoreRobots === null
+      ? false
+      : parseBooleanField(rawIgnoreRobots, 'ignoreRobotsForOwnSite');
+
+  const rawIncludeAuth = body.includeAuthRoutes ?? body.include_auth_routes;
+  const includeAuthRoutes =
+    rawIncludeAuth === undefined || rawIncludeAuth === null
+      ? false
+      : parseBooleanField(rawIncludeAuth, 'includeAuthRoutes');
+
+  const rawTimeout = body.timeoutMs ?? body.timeout_ms;
+  const timeoutMs =
+    rawTimeout === undefined || rawTimeout === null || rawTimeout === ''
+      ? 10_000
+      : parseBoundedNumber(rawTimeout, 'timeoutMs', { integer: true, min: 500, max: 60_000 });
+
+  return {
+    url,
+    single,
+    maxPages,
+    vs,
+    browser,
+    checkCaching,
+    ignoreRobotsForOwnSite,
+    includeAuthRoutes,
+    timeoutMs,
+  };
+}
+
+/**
+ * Parse a required positive integer identifier from path params or query strings.
+ * @param {string|null|undefined} raw
+ * @param {string} name
+ * @returns {number}
+ */
+function parsePositiveId(raw, name) {
+  if (raw === null || raw === undefined || raw.trim() === '' || !/^\d+$/.test(raw.trim())) {
+    throw new ApiError(400, 'bad_request', `${name} must be a positive integer`);
+  }
+  const n = Number(raw.trim());
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw new ApiError(400, 'bad_request', `${name} must be a positive integer`);
+  }
+  return n;
+}
+
+/**
+ * Broadcast an event to a `CheckJob`'s buffer and all active SSE listeners.
+ * @param {CheckJob} job
+ * @param {CheckJobEvent} ev
+ */
+function publishCheckJobEvent(job, ev) {
+  job.updatedAtMs = Date.now();
+  if (ev.event === 'progress') {
+    if (job.events.length < CHECK_JOB_MAX_BUFFERED_EVENTS) {
+      job.events.push(ev);
+    }
+  } else {
+    job.events.push(ev);
+  }
+  for (const listener of [...job.listeners]) {
+    try {
+      listener(ev);
+    } catch {
+      job.listeners.delete(listener);
+    }
+  }
+}
+
+/**
+ * Register Wave 2 HTTP API endpoints (forensics, pre-flight site check, Site X-Ray v2
+ * jobs/SSE/history/diff, spend cap, DataForSEO health canary, extended `.env` settings,
+ * and white-label report export).
  *
  * @param {import('./web/router.js').Router} router
  * @param {{
@@ -503,6 +750,7 @@ function buildSettingsSnapshot(db, cfg) {
  *   config: import('./core/config.js').Config,
  *   runtime?: OnboardingRuntime,
  *   siteCheck?: SiteCheckDi,
+ *   checkJobs?: Map<string, CheckJob>,
  *   dataforseoHealth?: typeof checkDataForSeoHealth,
  *   clientExport?: typeof defaultClientExport,
  * }} deps
@@ -510,6 +758,276 @@ function buildSettingsSnapshot(db, cfg) {
 function registerWave2Routes(router, deps) {
   const getDb = () => (deps.runtime ? deps.runtime.getDb() : deps.db);
   const getConfig = () => (deps.runtime ? deps.runtime.getConfig() : deps.config);
+  /** @type {Map<string, CheckJob>} */
+  const checkJobs = deps.checkJobs ?? new Map();
+
+  router.add(
+    'POST',
+    '/api/check',
+    wave2Json(async (ctx) => {
+      assertLoopback(ctx);
+      const body = requireJsonObject(ctx.body);
+      const di = deps.siteCheck ?? {};
+      const allowPrivateHosts = di.allowPrivateHosts === true;
+      const parsed = parseCheckRequestBody(body, allowPrivateHosts);
+      const runCheckV2 = di.checkSiteV2 ?? di.checkSiteV2Impl ?? checkSiteV2;
+
+      /** @type {import('./core/site-check.js').CheckSiteV2Options} */
+      const baseOptions = {
+        single: parsed.single,
+        maxPages: parsed.maxPages,
+        vs: parsed.vs,
+        browser: parsed.browser,
+        checkCaching: parsed.checkCaching,
+        ignoreRobotsForOwnSite: parsed.ignoreRobotsForOwnSite,
+        includeAuthRoutes: parsed.includeAuthRoutes,
+        timeoutMs: parsed.timeoutMs,
+        // Strictly enforced: never unlockable from HTTP request body.
+        allowPrivateHosts,
+        ...(di.fetch ? { fetch: di.fetch } : {}),
+        ...(di.lookup !== undefined ? { lookup: di.lookup } : {}),
+        ...(di.browserRunner ? { browserRunner: di.browserRunner } : {}),
+        ...(di.dnsResolver ? { dnsResolver: di.dnsResolver } : {}),
+        ...(di.sleepFn ? { sleepFn: di.sleepFn } : {}),
+      };
+
+      const syncMode = parseBoolQuery(ctx.url, ['sync']) === true;
+      if (syncMode) {
+        const report = await runCheckV2(parsed.url, baseOptions);
+        const summary = saveSiteCheck(getDb(), report);
+        return { id: summary.id, summary, report };
+      }
+
+      pruneCheckJobs(checkJobs);
+      const jobId = randomUUID();
+      const nowMs = Date.now();
+      /** @type {CheckJob} */
+      const job = {
+        id: jobId,
+        status: 'running',
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+        events: [],
+        listeners: new Set(),
+        summary: null,
+        report: null,
+        error: null,
+      };
+      checkJobs.set(jobId, job);
+
+      publishCheckJobEvent(job, {
+        event: 'progress',
+        data: {
+          type: 'started',
+          jobId,
+          url: parsed.url,
+          single: parsed.single,
+          maxPages: parsed.single ? 1 : parsed.maxPages,
+          vsCount: parsed.vs.length,
+          audited: 0,
+          message: `Starting Site X-Ray for ${parsed.url}`,
+        },
+      });
+
+      void (async () => {
+        try {
+          const report = await runCheckV2(parsed.url, {
+            ...baseOptions,
+            onProgress: (ev) => {
+              if (ev.type === 'started') return;
+              publishCheckJobEvent(job, {
+                event: 'progress',
+                data: { jobId, ...ev },
+              });
+            },
+          });
+
+          const summary = saveSiteCheck(getDb(), report);
+          job.status = 'done';
+          job.summary = summary;
+          job.report = report;
+          publishCheckJobEvent(job, {
+            event: 'complete',
+            data: {
+              type: 'done',
+              jobId,
+              id: summary.id,
+              summary,
+              report,
+            },
+          });
+          job.listeners.clear();
+        } catch (err) {
+          const code =
+            err instanceof SiteCheckError
+              ? err.code
+              : err instanceof ApiError
+                ? err.code
+                : 'check_failed';
+          const message =
+            err instanceof Error ? scrubSecrets(err.message) : 'Site X-Ray check failed';
+          job.status = 'error';
+          job.error = { code, message };
+          publishCheckJobEvent(job, {
+            event: 'error',
+            data: {
+              type: 'error',
+              jobId,
+              code,
+              message,
+            },
+          });
+          job.listeners.clear();
+        }
+      })();
+
+      sendJson(ctx.res, 202, { jobId, status: 'running' });
+      return undefined;
+    }),
+  );
+
+  router.add(
+    'GET',
+    '/api/check/history',
+    wave2Json((ctx) => {
+      const domain = parseStrQuery(ctx.url, ['domain'], 255);
+      const limit = parseIntQuery(ctx.url, 'limit', 25, 1, 200);
+      const items = listSiteChecks(getDb(), { domain, limit });
+      return { items, count: items.length };
+    }),
+  );
+
+  router.add(
+    'GET',
+    '/api/check/diff',
+    wave2Json((ctx) => {
+      const currentId = parsePositiveId(ctx.url.searchParams.get('current'), 'current');
+      const baselineId = parsePositiveId(ctx.url.searchParams.get('baseline'), 'baseline');
+      const result = diffSavedSiteChecks(getDb(), currentId, baselineId);
+      if (!result) {
+        throw new ApiError(
+          404,
+          'not_found',
+          `Saved site check #${currentId} or baseline #${baselineId} not found`,
+        );
+      }
+      return result;
+    }),
+  );
+
+  router.add('GET', '/api/check/:jobId/stream', (ctx) => {
+    pruneCheckJobs(checkJobs);
+    const job = checkJobs.get(ctx.params.jobId);
+    if (!job) {
+      sendError(ctx, 404, `Site X-Ray job "${ctx.params.jobId}" not found`, {}, 'not_found');
+      return;
+    }
+
+    ctx.res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+      'X-Content-Type-Options': 'nosniff',
+    });
+
+    let closed = false;
+    /** @type {ReturnType<typeof setInterval>|null} */
+    let heartbeat = null;
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      job.listeners.delete(onEvent);
+      if (heartbeat !== null) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+    };
+
+    /** @param {CheckJobEvent} ev */
+    const writeSse = (ev) => {
+      if (closed || ctx.res.writableEnded || ctx.res.destroyed) return;
+      ctx.res.write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
+    };
+
+    /** @param {CheckJobEvent} ev */
+    const onEvent = (ev) => {
+      writeSse(ev);
+      if (ev.event === 'complete' || ev.event === 'error') {
+        cleanup();
+        if (!ctx.res.writableEnded && !ctx.res.destroyed) ctx.res.end();
+      }
+    };
+
+    // Replay buffered events so clients subscribing after initial progress never miss them.
+    for (const past of job.events) {
+      writeSse(past);
+    }
+
+    if (job.status !== 'running') {
+      closed = true;
+      if (!ctx.res.writableEnded && !ctx.res.destroyed) ctx.res.end();
+      return;
+    }
+
+    job.listeners.add(onEvent);
+    heartbeat = setInterval(() => {
+      if (closed || ctx.res.writableEnded || ctx.res.destroyed) {
+        cleanup();
+        return;
+      }
+      ctx.res.write(': keepalive\n\n');
+    }, 15_000);
+    heartbeat.unref?.();
+
+    ctx.req.on('close', cleanup);
+    ctx.res.on('close', cleanup);
+  });
+
+  router.add(
+    'GET',
+    '/api/check/:id',
+    wave2Json((ctx) => {
+      const id = parsePositiveId(ctx.params.id, 'id');
+      const saved = getSiteCheck(getDb(), id);
+      if (!saved) {
+        throw new ApiError(404, 'not_found', `Saved site check #${id} not found`);
+      }
+
+      const format = (ctx.url.searchParams.get('format') ?? '').trim().toLowerCase();
+      if (format === 'html') {
+        const htmlBody = renderSiteCheckHtml(/** @type {any} */ (saved.report));
+        const slug =
+          saved.domain
+            .toLowerCase()
+            .replace(/[^a-z0-9.-]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 60) || 'site';
+        const filename = `hearsay-site-xray-${slug}-${saved.id}.html`;
+        const inline = parseBoolQuery(ctx.url, ['inline']) === true;
+
+        ctx.res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Length': Buffer.byteLength(htmlBody),
+          'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${filename}"`,
+          'Content-Security-Policy':
+            "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'",
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'no-referrer',
+          'Cache-Control': 'no-store',
+        });
+        ctx.res.end(htmlBody);
+        return undefined;
+      }
+
+      if (format !== '' && format !== 'json') {
+        throw new ApiError(400, 'bad_request', 'format must be json or html');
+      }
+
+      return saved;
+    }),
+  );
 
   router.add(
     'POST',
@@ -958,20 +1476,34 @@ function registerWave2Routes(router, deps) {
  * @param {import('./core/config.js').Config} deps.config
  * @param {OnboardingRuntime} [deps.runtime]
  * @param {SiteCheckDi} [deps.siteCheck]
+ * @param {typeof checkSiteV2} [deps.checkSiteV2Impl]
+ * @param {Map<string, CheckJob>} [deps.checkJobs]
  * @param {typeof checkDataForSeoHealth} [deps.dataforseoHealth]
  * @param {typeof defaultClientExport} [deps.clientExport]
  * @returns {import('./web/router.js').Router}
  */
-export function buildRouter({ db, config, runtime, siteCheck, dataforseoHealth, clientExport }) {
+export function buildRouter({
+  db,
+  config,
+  runtime,
+  siteCheck,
+  checkSiteV2Impl,
+  checkJobs,
+  dataforseoHealth,
+  clientExport,
+}) {
   const router = createRouter({ publicDir: PUBLIC_DIR });
   const routeDeps = { db, config, version: VERSION, ...(runtime ? { runtime } : {}) };
+  const mergedSiteCheck =
+    checkSiteV2Impl !== undefined ? { ...(siteCheck ?? {}), checkSiteV2Impl } : siteCheck;
   registerPageRoutes(router, routeDeps);
   registerApiRoutes(router, routeDeps);
   registerWave2Routes(router, {
     db,
     config,
     runtime,
-    siteCheck,
+    siteCheck: mergedSiteCheck,
+    checkJobs,
     dataforseoHealth,
     clientExport,
   });
@@ -991,6 +1523,7 @@ export function buildRouter({ db, config, runtime, siteCheck, dataforseoHealth, 
  * @param {boolean} [opts.syncProcessEnv]
  * @param {import('./core/config.js').Config} [opts.config]
  * @param {SiteCheckDi} [opts.siteCheck]
+ * @param {typeof checkSiteV2} [opts.checkSiteV2Impl]
  * @param {typeof checkDataForSeoHealth} [opts.dataforseoHealth]
  * @param {typeof defaultClientExport} [opts.clientExport]
  * @param {(message: string) => void} [opts.log] boot diagnostics; stderr by default
@@ -1074,8 +1607,13 @@ export async function startServer(opts = {}) {
     router: /** @type {*} */ (null),
   };
 
+  /** @type {Map<string, CheckJob>} */
+  const checkJobs = new Map();
+
   const routerExtras = {
     ...(opts.siteCheck ? { siteCheck: opts.siteCheck } : {}),
+    ...(opts.checkSiteV2Impl ? { checkSiteV2Impl: opts.checkSiteV2Impl } : {}),
+    checkJobs,
     ...(opts.dataforseoHealth ? { dataforseoHealth: opts.dataforseoHealth } : {}),
     ...(opts.clientExport ? { clientExport: opts.clientExport } : {}),
   };
@@ -1240,6 +1778,10 @@ export async function startServer(opts = {}) {
     },
     close: async () => {
       await mutationQueue;
+      for (const job of checkJobs.values()) {
+        job.listeners.clear();
+      }
+      checkJobs.clear();
       state.scheduler.stop();
       server.closeIdleConnections?.();
       server.closeAllConnections?.();

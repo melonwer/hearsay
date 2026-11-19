@@ -84,6 +84,7 @@ export function html(strings, ...values) {
 /** @type {{href: string, label: string}[]} */
 const NAV = [
   { href: '/', label: 'Dashboard' },
+  { href: '/check', label: 'Site X-Ray' },
   { href: '/answers', label: 'Answers' },
   { href: '/evidence', label: 'Evidence' },
   { href: '/opportunities', label: 'Opportunities' },
@@ -111,9 +112,10 @@ const MARK = raw(`<svg class="mark" width="16" height="16" viewBox="0 0 16 16" r
  * @param {string} opts.active nav href of the current page
  * @param {RawHtml} opts.body
  * @param {ShellCtx} opts.ctx
+ * @param {string[]} [opts.scripts] optional extra same-origin module scripts (e.g. `/public/check.js`)
  * @returns {string}
  */
-export function layout({ title, active, body, ctx }) {
+export function layout({ title, active, body, ctx, scripts = [] }) {
   const nav = NAV.map((item) => {
     const isActive = item.href === active;
     const badge =
@@ -136,6 +138,10 @@ export function layout({ title, active, body, ctx }) {
         </div>
       </div>`
     : '';
+
+  const extraScripts = scripts.map(
+    (src) => html`\n    <script src="${src}" type="module"></script>`,
+  );
 
   const doc = html`<!doctype html>
 <html lang="en">
@@ -179,7 +185,7 @@ export function layout({ title, active, body, ctx }) {
         ${body}
       </main>
     </div>
-    <script src="/public/app.js" type="module"></script>
+    <script src="/public/app.js" type="module"></script>${extraScripts}
   </body>
 </html>
 `;
