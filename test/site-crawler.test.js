@@ -1165,3 +1165,96 @@ test('discoverSitemapUrls rejects gzipped POSIX tar archive masquerading as .xml
   assert.equal(discovered.urls.length, 0);
   assert.ok(discovered.rejected.some((r) => r.url.endsWith('/disguised.xml.gz') && r.reason === 'ignored_archive'));
 });
+
+test('trailing-slash preservation: keeps true HTTP finalUrl, avoids unnecessary 301s, and still deduplicates slash/slashless URLs', async (t) => {
+  const fetchedPaths = [];
+  const { baseUrl } = await startFixtureServer(t, (req, res) => {
+    const reqPath = (req.url ?? '/').split('?')[0];
+    fetchedPaths.push(reqPath);
+    if (reqPath === '/robots.txt') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end(`User-agent: *\nAllow: /\nSitemap: http://127.0.0.1:${req.socket.localPort}/sitemap.xml\n`);
+      return;
+    }
+    if (reqPath === '/sitemap.xml') {
+      const origin = `http://127.0.0.1:${req.socket.localPort}`;
+      res.writeHead(200, { 'content-type': 'application/xml' });
+      res.end(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${origin}/</loc></url>
+  <url><loc>${origin}/compare/</loc></url>
+  <url><loc>${origin}/compare</loc></url>
+  <url><loc>${origin}/docs</loc></url>
+  <url><loc>${origin}/old-docs</loc></url>
+</urlset>`);
+      return;
+    }
+    if (reqPath === '/compare' || reqPath === '/docs' || reqPath === '/old-docs') {
+      const target = reqPath === '/compare' ? '/compare/' : '/docs/';
+      res.writeHead(301, { location: target });
+      res.end();
+      return;
+    }
+    if (reqPath === '/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        '<html><head><title>Home</title></head><body>' +
+          '<nav><a href="/compare/">Compare</a><a href="/compare">Compare Dup</a><a href="/docs">Docs</a><a href="/old-docs">Old Docs</a></nav>' +
+          '<h1>Home</h1><p>Welcome to our trailing-slash static site with full SSR content for crawlers.</p></body></html>',
+      );
+      return;
+    }
+    if (reqPath === '/compare/' || reqPath === '/docs/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        `<html><head><title>${reqPath}</title></head><body><h1>${reqPath}</h1><p>Full server-rendered body content for ${reqPath}.</p></body></html>`,
+      );
+      return;
+    }
+    res.writeHead(404).end();
+  });
+
+  // 1. discoverSitemapUrls preserves /compare/ and deduplicates /compare
+  const discovered = await discoverSitemapUrls(baseUrl, { allowPrivateHosts: true });
+  assert.ok(discovered.urls.includes(`${baseUrl}/compare/`), 'sitemap must preserve trailing slash');
+  assert.ok(!discovered.urls.includes(`${baseUrl}/compare`), 'duplicate slashless URL must be deduplicated');
+
+  // 2. selectKeyPages preserves trailing slash while deduplicating slash/slashless
+  const selected = selectKeyPages({
+    homepageUrl: `${baseUrl}/`,
+    navLinks: [`${baseUrl}/compare/`, `${baseUrl}/compare`],
+    sitemapUrls: [`${baseUrl}/compare`],
+    maxPages: 5,
+  });
+  assert.deepEqual(selected.urls, [`${baseUrl}/`, `${baseUrl}/compare/`]);
+
+  // 3. Multi-page crawl fetches /compare/ directly (0 hops), preserves /docs/ finalUrl after 301, and deduplicates /old-docs -> /docs/
+  fetchedPaths.length = 0;
+  const multi = await crawlSitePages(`${baseUrl}/`, {
+    allowPrivateHosts: true,
+    maxPages: 10,
+    maxConcurrency: 1,
+    sleepFn: async () => {},
+  });
+  const comparePage = multi.pages.find((p) => p.finalUrl === `${baseUrl}/compare/`);
+  assert.ok(comparePage, `expected page with finalUrl ${baseUrl}/compare/, got: ${multi.pages.map((p) => p.finalUrl)}`);
+  assert.equal(comparePage.redirects.count, 0, 'trailing-slash nav/sitemap link should fetch directly with 0 redirect hops');
+  assert.ok(!fetchedPaths.includes('/compare'), 'must not strip trailing slash and trigger unnecessary 301 on /compare');
+
+  const docsPage = multi.pages.find((p) => p.finalUrl === `${baseUrl}/docs/`);
+  assert.ok(docsPage, 'redirected /docs -> /docs/ must preserve trailing-slash finalUrl');
+  assert.equal(docsPage.redirects.count, 1);
+  assert.ok(
+    multi.redirectsResolved.some((r) => r.from === `${baseUrl}/old-docs` && r.to === `${baseUrl}/docs/`),
+    `expected /old-docs -> /docs/ deduplicated in redirectsResolved, got: ${JSON.stringify(multi.redirectsResolved)}`,
+  );
+
+  // 4. Single-page crawl starting on /compare/ preserves trailing slash on crawl.finalUrl and pages[0].finalUrl
+  const single = await crawlSitePages(`${baseUrl}/compare/`, {
+    allowPrivateHosts: true,
+    single: true,
+    sleepFn: async () => {},
+  });
+  assert.equal(single.finalUrl, `${baseUrl}/compare/`);
+  assert.equal(single.pages[0].finalUrl, `${baseUrl}/compare/`);
+});

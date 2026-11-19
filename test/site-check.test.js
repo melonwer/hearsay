@@ -1455,3 +1455,89 @@ test('SiteCheckV2Report x site-diff & UX regression: markdownNegotiation boolean
   assert.ok(htmlOut.includes('<details'), 'cap-skipped URLs should be collapsible');
   assert.ok(htmlOut.includes('more URL(s) omitted by crawl cap'), 'cap-skipped rows should be capped at 15');
 });
+
+test('checkSiteV2 trailing-slash canonical regression: 0 false canonical_mismatch on /dir/ routes while still catching real mismatches', async (t) => {
+  const prose =
+    'Complete server-rendered guide for API routing, latency reduction, and reliable AI crawler indexing across production pages.';
+
+  const srv = await startFixtureServer(t, (req, res) => {
+    const reqPath = (req.url ?? '/').split('?')[0];
+    const origin = `http://127.0.0.1:${req.socket.localPort}`;
+    if (reqPath === '/robots.txt') {
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end(`User-agent: *\nAllow: /\nSitemap: ${origin}/sitemap.xml\n`);
+      return;
+    }
+    if (reqPath === '/sitemap.xml') {
+      res.writeHead(200, { 'content-type': 'application/xml; charset=utf-8' });
+      res.end(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>${origin}/</loc></url>
+  <url><loc>${origin}/compare/</loc></url>
+  <url><loc>${origin}/blog/</loc></url>
+  <url><loc>${origin}/real-mismatch</loc></url>
+</urlset>`);
+      return;
+    }
+    if (reqPath === '/compare' || reqPath === '/blog') {
+      res.writeHead(301, { location: `${reqPath}/` });
+      res.end();
+      return;
+    }
+    if (reqPath === '/' || reqPath === '/compare/' || reqPath === '/blog/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', etag: '"ts-v1"' });
+      res.end(`<!doctype html><html><head>
+        <title>Trailing Slash ${reqPath}</title>
+        <meta name="description" content="Clean trailing-slash directory page for ${reqPath}." />
+        <link rel="canonical" href="${origin}${reqPath}" />
+      </head><body>
+        <nav><a href="/compare/">Compare</a><a href="/blog/">Blog</a><a href="/real-mismatch">Mismatch</a></nav>
+        <main><h1>Directory ${reqPath}</h1><p>${prose}</p></main>
+      </body></html>`);
+      return;
+    }
+    if (reqPath === '/real-mismatch') {
+      // Deliberately returns HTTP 200 on slashless URL while canonical claims trailing slash
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(`<!doctype html><html><head>
+        <title>Real Mismatch</title>
+        <meta name="description" content="Page with a genuine canonical trailing-slash mismatch." />
+        <link rel="canonical" href="${origin}/real-mismatch/" />
+      </head><body>
+        <main><h1>Real Mismatch</h1><p>${prose}</p></main>
+      </body></html>`);
+      return;
+    }
+    res.writeHead(404).end();
+  });
+
+  // 1. Single-page check directly on /compare/ has exact finalUrl and 0 canonical_mismatch
+  const singleReport = await checkSiteV2(`${srv.baseUrl}/compare/`, {
+    allowPrivateHosts: true,
+    single: true,
+    sleepFn: async () => {},
+  });
+  assert.equal(singleReport.finalUrl, `${srv.baseUrl}/compare/`);
+  assert.equal(singleReport.meta.canonicalMatchesFinal, true);
+  assert.equal(
+    singleReport.findings.some((f) => f.id === 'canonical_mismatch'),
+    false,
+    `unexpected canonical_mismatch on /compare/: ${JSON.stringify(singleReport.findings)}`,
+  );
+
+  // 2. Multi-page check has 0 canonical_mismatch on /compare/ and /blog/, while STILL flagging /real-mismatch
+  const multiReport = await checkSiteV2(`${srv.baseUrl}/`, {
+    allowPrivateHosts: true,
+    maxPages: 10,
+    sleepFn: async () => {},
+  });
+  const comparePage = multiReport.pages.find((p) => p.finalUrl === `${srv.baseUrl}/compare/`);
+  const blogPage = multiReport.pages.find((p) => p.finalUrl === `${srv.baseUrl}/blog/`);
+  const mismatchPage = multiReport.pages.find((p) => p.finalUrl === `${srv.baseUrl}/real-mismatch`);
+  assert.ok(comparePage, 'expected /compare/ page with trailing slash');
+  assert.ok(blogPage, 'expected /blog/ page with trailing slash');
+  assert.ok(mismatchPage, 'expected /real-mismatch page without trailing slash');
+  assert.equal(comparePage.findings.some((f) => f.id === 'canonical_mismatch'), false);
+  assert.equal(blogPage.findings.some((f) => f.id === 'canonical_mismatch'), false);
+  assert.equal(mismatchPage.findings.some((f) => f.id === 'canonical_mismatch'), true);
+});

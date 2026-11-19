@@ -724,25 +724,42 @@ function decodeBasicEntities(value) {
 }
 
 /**
- * Normalize a same-site URL for deduplication (strips `#hash` and redundant trailing slash except root).
+ * Sanitize and resolve a candidate HTTP(S) URL while preserving its exact pathname
+ * (including any trailing slash). Strips `#hash` and rejects credentials or non-HTTP(S) schemes.
  * @param {string} rawUrl
  * @param {string} [baseUrl]
  * @returns {string|null}
  */
-function normalizeCandidateUrl(rawUrl, baseUrl) {
+function sanitizeCandidateUrl(rawUrl, baseUrl) {
   if (typeof rawUrl !== 'string' || !rawUrl.trim()) return null;
   try {
     const parsed = baseUrl ? new URL(rawUrl.trim(), baseUrl) : new URL(rawUrl.trim());
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
     if (parsed.username || parsed.password) return null;
     parsed.hash = '';
-    if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
-      parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
-    }
     return parsed.href;
   } catch {
     return null;
   }
+}
+
+/**
+ * Compute a trailing-slash-insensitive deduplication key for a same-site URL.
+ * Use ONLY for deduplication keys (`Set`/`Map` lookups) — never to overwrite the
+ * true HTTP `finalUrl` or fetched URL, because trailing slashes are significant
+ * for canonical URL equality and redirect detection.
+ * @param {string} rawUrl
+ * @param {string} [baseUrl]
+ * @returns {string|null}
+ */
+function normalizeCandidateUrl(rawUrl, baseUrl) {
+  const sanitized = sanitizeCandidateUrl(rawUrl, baseUrl);
+  if (!sanitized) return null;
+  const parsed = new URL(sanitized);
+  if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+  }
+  return parsed.href;
 }
 
 /**
@@ -925,13 +942,13 @@ export async function discoverSitemapUrls(origin, options = {}) {
 
   if (Array.isArray(options.robotsSitemaps)) {
     for (const sm of options.robotsSitemaps) {
-      const normalized = normalizeCandidateUrl(sm, targetOrigin);
-      if (normalized) seedSitemaps.add(normalized);
+      const sanitized = sanitizeCandidateUrl(sm, targetOrigin);
+      if (sanitized) seedSitemaps.add(sanitized);
     }
   } else if (typeof options.robotsTxt === 'string') {
     for (const sm of parseRobotsTxt(options.robotsTxt).sitemaps) {
-      const normalized = normalizeCandidateUrl(sm, targetOrigin);
-      if (normalized) seedSitemaps.add(normalized);
+      const sanitized = sanitizeCandidateUrl(sm, targetOrigin);
+      if (sanitized) seedSitemaps.add(sanitized);
     }
   } else {
     // Fetch /robots.txt to discover Sitemap: directives
@@ -952,8 +969,8 @@ export async function discoverSitemapUrls(origin, options = {}) {
         const ct = robotsFetch.response.headers.get('content-type');
         if (!isHtmlSoft404Document(text, ct)) {
           for (const sm of parseRobotsTxt(text).sitemaps) {
-            const normalized = normalizeCandidateUrl(sm, targetOrigin);
-            if (normalized) seedSitemaps.add(normalized);
+            const sanitized = sanitizeCandidateUrl(sm, targetOrigin);
+            if (sanitized) seedSitemaps.add(sanitized);
           }
         }
       } else {
@@ -992,9 +1009,10 @@ export async function discoverSitemapUrls(origin, options = {}) {
       return;
     }
     if (depth > maxDepth) return;
-    const normalizedSm = normalizeCandidateUrl(sitemapUrl, targetOrigin);
-    if (!normalizedSm || visitedSitemaps.has(normalizedSm)) return;
-    visitedSitemaps.add(normalizedSm);
+    const normalizedSm = sanitizeCandidateUrl(sitemapUrl, targetOrigin);
+    const sitemapDedupKey = normalizedSm ? normalizeCandidateUrl(normalizedSm) : null;
+    if (!normalizedSm || !sitemapDedupKey || visitedSitemaps.has(sitemapDedupKey)) return;
+    visitedSitemaps.add(sitemapDedupKey);
 
     /** @type {URL} */
     let smParsed;
@@ -1206,13 +1224,14 @@ export async function discoverSitemapUrls(origin, options = {}) {
         truncated = true;
         break;
       }
-      const norm = normalizeCandidateUrl(item.loc, targetOrigin);
-      if (!norm) continue;
-      const candidateParsed = new URL(norm);
+      const candidateUrl = sanitizeCandidateUrl(item.loc, targetOrigin);
+      const dedupKey = candidateUrl ? normalizeCandidateUrl(candidateUrl) : null;
+      if (!candidateUrl || !dedupKey) continue;
+      const candidateParsed = new URL(candidateUrl);
       if (candidateParsed.origin !== targetOrigin) continue;
-      if (seenUrls.has(norm)) continue;
-      seenUrls.add(norm);
-      entries.push({ url: norm, lastmod: item.lastmod, sourceSitemap: normalizedSm });
+      if (seenUrls.has(dedupKey)) continue;
+      seenUrls.add(dedupKey);
+      entries.push({ url: candidateUrl, lastmod: item.lastmod, sourceSitemap: normalizedSm });
       addedHere += 1;
     }
 
@@ -1236,7 +1255,7 @@ export async function discoverSitemapUrls(origin, options = {}) {
 
   return {
     origin: targetOrigin,
-    urls: [...seenUrls],
+    urls: entries.map((e) => e.url),
     entries,
     sitemapsChecked,
     rejected,
@@ -1407,7 +1426,8 @@ export function selectKeyPages({
 }) {
   const parsedHome = validateSiteUrl(homepageUrl);
   const targetOrigin = parsedHome.origin;
-  const normalizedHome = normalizeCandidateUrl(parsedHome.href) ?? parsedHome.href;
+  const sanitizedHome = sanitizeCandidateUrl(parsedHome.href) ?? parsedHome.href;
+  const homeDedupKey = normalizeCandidateUrl(sanitizedHome) ?? sanitizedHome;
   const effectiveMaxPages = Math.max(1, Math.floor(Number.isFinite(maxPages) ? maxPages : DEFAULT_MAX_PAGES));
   const effectiveMaxPerTemplate = Math.max(
     1,
@@ -1456,7 +1476,7 @@ export function selectKeyPages({
   };
 
   // (1) Homepage is always first
-  trySelect(normalizedHome, 'homepage', 'homepage');
+  trySelect(sanitizedHome, 'homepage', 'homepage');
 
   /**
    * Normalize, filter to same-origin non-asset HTML candidates, and deduplicate.
@@ -1469,15 +1489,16 @@ export function selectKeyPages({
     /** @type {Array<{url: string, pathname: string, depth: number, template: string, intentRank: number, source: 'nav'|'sitemap'}>} */
     const items = [];
     for (const raw of rawList) {
-      const norm = normalizeCandidateUrl(raw, targetOrigin);
-      if (!norm || norm === normalizedHome || globalSeen.has(norm)) continue;
-      const parsed = new URL(norm);
+      const candidateUrl = sanitizeCandidateUrl(raw, targetOrigin);
+      const dedupKey = candidateUrl ? normalizeCandidateUrl(candidateUrl) : null;
+      if (!candidateUrl || !dedupKey || dedupKey === homeDedupKey || globalSeen.has(dedupKey)) continue;
+      const parsed = new URL(candidateUrl);
       if (parsed.origin !== targetOrigin) continue;
       if (STATIC_ASSET_EXT_RE.test(parsed.pathname)) continue;
-      globalSeen.add(norm);
+      globalSeen.add(dedupKey);
       const depth = parsed.pathname.split('/').filter(Boolean).length;
       items.push({
-        url: norm,
+        url: candidateUrl,
         pathname: parsed.pathname,
         depth,
         template: normalizeUrlTemplate(parsed.pathname),
@@ -1489,7 +1510,7 @@ export function selectKeyPages({
   };
 
   /** @type {Set<string>} */
-  const seenCandidates = new Set([normalizedHome]);
+  const seenCandidates = new Set([homeDedupKey]);
   const navPool = preparePool(Array.isArray(navLinks) ? navLinks : [], 'nav', seenCandidates);
   const sitemapPool = preparePool(Array.isArray(sitemapUrls) ? sitemapUrls : [], 'sitemap', seenCandidates);
 
@@ -1770,10 +1791,10 @@ function extractPageLinks(html, pageUrl) {
     }
   }
 
-  /** @type {Set<string>} */
-  const navSet = new Set();
-  /** @type {Set<string>} */
-  const bodySet = new Set();
+  /** @type {Map<string, string>} */
+  const navMap = new Map();
+  /** @type {Map<string, string>} */
+  const bodyMap = new Map();
 
   let navDepth = 0;
   const tagRe = /<(\/?)(nav|header|a)\b([^>]*)>/gi;
@@ -1791,20 +1812,21 @@ function extractPageLinks(html, pageUrl) {
       if (!hrefMatch) continue;
       const rawHref = decodeBasicEntities((hrefMatch[1] ?? hrefMatch[2] ?? hrefMatch[3] ?? '').trim());
       if (!rawHref || rawHref.startsWith('#') || /^(?:mailto:|tel:|javascript:|data:)/i.test(rawHref)) continue;
-      const normalized = normalizeCandidateUrl(rawHref, baseUrl);
-      if (!normalized) continue;
-      const resolved = new URL(normalized);
+      const candidateUrl = sanitizeCandidateUrl(rawHref, baseUrl);
+      const dedupKey = candidateUrl ? normalizeCandidateUrl(candidateUrl) : null;
+      if (!candidateUrl || !dedupKey) continue;
+      const resolved = new URL(candidateUrl);
       if (resolved.origin !== origin) continue;
       if (STATIC_ASSET_EXT_RE.test(resolved.pathname)) continue;
       if (navDepth > 0) {
-        navSet.add(normalized);
-      } else if (!navSet.has(normalized)) {
-        bodySet.add(normalized);
+        if (!navMap.has(dedupKey)) navMap.set(dedupKey, candidateUrl);
+      } else if (!navMap.has(dedupKey) && !bodyMap.has(dedupKey)) {
+        bodyMap.set(dedupKey, candidateUrl);
       }
     }
   }
 
-  return { navLinks: [...navSet], bodyLinks: [...bodySet] };
+  return { navLinks: [...navMap.values()], bodyLinks: [...bodyMap.values()] };
 }
 
 /**
@@ -2584,7 +2606,9 @@ export async function crawlSitePages(startUrl, options = {}) {
     };
   }
 
-  const finalHomeUrl = normalizeCandidateUrl(homeFetch.finalUrl) ?? homeFetch.finalUrl;
+  const finalHomeUrl = sanitizeCandidateUrl(homeFetch.finalUrl) ?? homeFetch.finalUrl;
+  const finalHomeDedupKey = normalizeCandidateUrl(finalHomeUrl) ?? finalHomeUrl;
+  const requestedDedupKey = normalizeCandidateUrl(requestedUrl) ?? requestedUrl;
   const finalHomeParsed = new URL(finalHomeUrl);
   const finalOrigin = finalHomeParsed.origin;
   const domain = finalHomeParsed.hostname.toLowerCase();
@@ -2900,21 +2924,22 @@ export async function crawlSitePages(startUrl, options = {}) {
       /** @type {string[]} */
       const kept = [];
       for (const raw of urls) {
-        const norm = normalizeCandidateUrl(raw, finalOrigin);
-        if (!norm || norm === finalHomeUrl || norm === requestedUrl) {
+        const candidateUrl = sanitizeCandidateUrl(raw, finalOrigin);
+        const dedupKey = candidateUrl ? normalizeCandidateUrl(candidateUrl) : null;
+        if (!candidateUrl || !dedupKey || dedupKey === finalHomeDedupKey || dedupKey === requestedDedupKey) {
           kept.push(raw);
           continue;
         }
-        const parsed = new URL(norm);
+        const parsed = new URL(candidateUrl);
         if (parsed.origin !== finalOrigin || STATIC_ASSET_EXT_RE.test(parsed.pathname)) {
           kept.push(raw);
           continue;
         }
         if (isAuthOrUtilityPath(parsed.pathname)) {
-          if (!seenAuthSkipped.has(norm)) {
-            seenAuthSkipped.add(norm);
+          if (!seenAuthSkipped.has(dedupKey)) {
+            seenAuthSkipped.add(dedupKey);
             skipped.push({
-              url: norm,
+              url: candidateUrl,
               template: normalizeUrlTemplate(parsed.pathname),
               reason: 'auth_or_utility_route',
               rule: null,
@@ -2940,7 +2965,9 @@ export async function crawlSitePages(startUrl, options = {}) {
       maxPerTemplate,
     });
 
-    const uniqueDiscovered = new Set([finalHomeUrl, ...combinedNav, ...sitemapResult.urls]);
+    const uniqueDiscovered = new Set(
+      [finalHomeUrl, ...combinedNav, ...sitemapResult.urls].map((u) => normalizeCandidateUrl(u, finalOrigin) ?? u),
+    );
     discoveredCount = uniqueDiscovered.size;
     selectedCount = selection.selected.length;
 
@@ -2960,7 +2987,7 @@ export async function crawlSitePages(startUrl, options = {}) {
     // Filter remaining selected URLs (excluding homepage at index 0) through robots.txt
     /** @type {Array<{index: number, url: string, template: string, robotsDisallowed: boolean}>} */
     const crawlQueue = [];
-    const seenFinalUrls = new Set([finalHomeUrl]);
+    const seenFinalUrls = new Set([finalHomeDedupKey]);
 
     for (let idx = 1; idx < selection.selected.length; idx++) {
       const candidate = selection.selected[idx];
@@ -3042,9 +3069,10 @@ export async function crawlSitePages(startUrl, options = {}) {
 
         aimd.recordResponse({ status: res.response.status, timingMs: res.timingMs });
 
-        const resolvedFinal = normalizeCandidateUrl(res.finalUrl) ?? res.finalUrl;
+        const resolvedFinal = sanitizeCandidateUrl(res.finalUrl) ?? res.finalUrl;
+        const resolvedFinalDedupKey = normalizeCandidateUrl(resolvedFinal) ?? resolvedFinal;
         // Resolve 301/308 redirects pointing to already-audited URLs without counting as duplicate pages
-        if (res.hops.length > 0 && seenFinalUrls.has(resolvedFinal)) {
+        if (res.hops.length > 0 && seenFinalUrls.has(resolvedFinalDedupKey)) {
           await res.response.body?.cancel().catch(() => {});
           redirectsResolved.push({
             from: item.url,
@@ -3053,7 +3081,7 @@ export async function crawlSitePages(startUrl, options = {}) {
           });
           continue;
         }
-        seenFinalUrls.add(resolvedFinal);
+        seenFinalUrls.add(resolvedFinalDedupKey);
 
         let bodyHtml = '';
         let bodyBytes = 0;
