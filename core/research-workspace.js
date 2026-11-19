@@ -7,6 +7,7 @@ import { validateProject, validateEvidence, researchHash, ResearchError, questio
 import { renderResearchReport, compareResearch } from './research-report.js';
 import { AGENT_ROUTES, agentRoute } from './agent-routes.js';
 import { createAgentRunner, agentExecutionProfile } from './agent-runners.js';
+import { isAgyVersionSupported } from './agy-agent.js';
 import { discoverCli, probeAuthentication, AgentProcessError } from './agent-process.js';
 import { redactEvent, redactCapturedOutput } from './artifacts.js';
 import { analyzeResponse, STANCE_REVISION } from './analyze.js';
@@ -48,10 +49,11 @@ export async function discoverAgents(env = process.env) {
     try {
       const discovered = await discoverCli({ executable: env[route.pathEnv] || route.executable, helpArgsList: route.helpArgs, env });
       const missing = route.requiredFlags.filter((flag) => !discovered.help.includes(flag));
+      const versionSupported = route.id === 'agy-cli' ? isAgyVersionSupported(discovered.version) : true;
       const login = route.authArgs.length ? await probeAuthentication({ executable: discovered.executable, args: route.authArgs, env }) : null;
       return { id: route.id, provider: route.provider, label: route.label, executable: discovered.executable, installed: true, version: discovered.version,
-        profile: route.profile, profileReady: missing.length === 0, configuredLogin: login?.authenticated ? 'available' : route.authArgs.length ? 'unavailable' : 'unverified', authentication: 'unverified',
-        reason: missing.length ? 'Required invocation flags missing' : null,
+        profile: route.profile, profileReady: missing.length === 0 && versionSupported, configuredLogin: login?.authenticated ? 'available' : route.authArgs.length ? 'unavailable' : 'unverified', authentication: 'unverified',
+        reason: !versionSupported ? 'unsupported_cli_version' : missing.length ? 'Required invocation flags missing' : null,
         cost: null, remainingAllowance: null };
     } catch (error) {
       return { id: route.id, provider: route.provider, label: route.label, executable: null, installed: false, version: null,
@@ -81,6 +83,7 @@ export async function previewResearchRun(directory, options = {}) {
     const route = agentRoute(selected.id);
     try {
       const discovered = await discoverCli({ executable: selected.executable || route.executable, helpArgsList: route.helpArgs });
+      if (route.id === 'agy-cli' && !isAgyVersionSupported(discovered.version)) throw new AgentProcessError('unsupported_cli_version', 'Agy version needs compatibility validation');
       if (route.requiredFlags.some((flag) => !discovered.help.includes(flag))) throw new AgentProcessError('unsupported_profile', 'Required restricted flags missing');
       return { id: route.id, executable: discovered.executable, version: discovered.version, profile: route.profile,
         profileHash: agentExecutionProfile(route.id).hash };
@@ -146,7 +149,7 @@ function captureResult(bundle, sample, result) {
     const answerId = add('answer', { text });
     const brands = [bundle.app, ...bundle.panel.competitors];
     const entities = brands.map((/** @type {Record} */ b, /** @type {number} */ index) => ({ id: index + 1, name: b.name, aliases: b.aliases, domains: b.url ? [new URL(b.url).hostname] : [] }));
-    const ordered = [...text.matchAll(/^\s*(\d{1,3})[.)]\s+(.+)$/gm)].filter((line) => Number(line[1]) > 0);
+    const ordered = [...text.matchAll(/^\s*(?:#{1,6}\s+)?(\d{1,3})[.)]\s+(.+)$/gm)].filter((line) => Number(line[1]) > 0);
     for (const mention of analyzeResponse(text, entities).mentions) {
       const explicit = mention.stance === 'positive' ? ordered.find((line) => analyzeResponse(line[2], entities).mentions.some((item) => item.entity_id === mention.entity_id && item.stance === 'positive')) : undefined;
       sample.mentions.push({ brandId: brands[mention.entity_id - 1].id, answerId,
@@ -243,11 +246,14 @@ export async function runResearchPanel(directory, options = {}) {
           sample.status = 'failed'; sample.errorCode = /** @type {Record} */ (error).code ?? 'execution_failed';
           if (error instanceof AgentProcessError && error.output) {
             if (/unauthenticated|authentication required|login required|not logged in|invalid.*credential/i.test(error.output.stderr)) sample.errorCode = 'authentication_failed';
-            else if (/quota|rate.limit|resource.exhausted|usage.limit/i.test(error.output.stderr)) sample.errorCode = 'quota_exhausted';
+            else if (/quota|rate.limit|resource.exhausted|usage.limit|credits?.required/i.test(error.output.stderr)) sample.errorCode = 'quota_exhausted';
             if (error.output.stdout) {
               writeFileSync(join(runDirectory, 'captures', `${sample.id}-partial.txt`), redactCapturedOutput(error.output.stdout), { mode: 0o600 });
               try {
-                const partial = agentExecutionProfile(route.id).parser(error.output.stdout); captureResult(bundle, sample, partial); if (partial.text) sample.status = 'partial';
+                const partial = agentExecutionProfile(route.id).parser(error.output.stdout);
+                captureResult(bundle, sample, partial);
+                if (partial.errorCode && (sample.errorCode === 'nonzero_exit' || sample.errorCode === 'execution_failed')) sample.errorCode = partial.errorCode;
+                if (partial.text) sample.status = 'partial';
               } catch {}
             }
           }

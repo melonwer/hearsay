@@ -21,21 +21,54 @@ test('current Codex web_search events retain exact queries, returned sources and
   const parsed = parseCodexJsonl(stream());
   assert.equal(parsed.webStatus, 'verified');
   assert.equal(parsed.model, null);
+  assert.equal(parsed.searchEvents.length, 1);
   assert.equal(parsed.searchEvents.filter((event) => event.status === 'completed').length, 1);
-  assert.deepEqual(parsed.searchEvents[1].queries, ['newsletter software', 'self hosted newsletters']);
-  assert.deepEqual(parsed.searchEvents[1].results, [{ title: 'Newsletter product', url: 'https://source.example/', rank: null }]);
+  assert.deepEqual(parsed.searchEvents[0].queries, ['newsletter software', 'self hosted newsletters']);
+  assert.deepEqual(parsed.searchEvents[0].results, [{ title: 'Newsletter product', url: 'https://source.example/', rank: null }]);
   assert.deepEqual(parsed.citations, ['https://citation.example/']);
 });
 
-test('current Codex open, find and unknown actions do not establish completed search', () => {
-  for (const type of ['open', 'find', 'other']) {
+test('current Codex open, find, open_page, find_in_page and unknown actions do not establish completed search', () => {
+  for (const type of ['open', 'find', 'open_page', 'find_in_page', 'other']) {
     const parsed = parseCodexJsonl(stream({ type, url: 'https://source.example/' }));
     assert.notEqual(parsed.webStatus, 'verified');
     assert.equal(parsed.searchEvents.filter((event) => event.eventType === 'search' && event.status === 'completed').length, 0);
   }
+  const openPage = parseCodexJsonl(stream({ type: 'open_page', url: 'https://source.example/' }));
+  assert.equal(openPage.searchEvents.length, 1);
+  assert.equal(openPage.searchEvents[0].eventType, 'fetch');
+  assert.equal(openPage.searchEvents[0].status, 'completed');
+  assert.equal(openPage.searchEvents[0].url, 'https://source.example/');
+  assert.equal(openPage.searchEvents[0].title, 'Newsletter product');
+  assert.equal(openPage.searchEvents[0].results?.length, 1);
+
+  const findInPage = parseCodexJsonl(stream({ type: 'find_in_page', pattern: 'pricing' }));
+  assert.equal(findInPage.searchEvents.length, 1);
+  assert.equal(findInPage.searchEvents[0].eventType, 'fetch');
+  assert.equal(findInPage.searchEvents[0].status, 'completed');
+  assert.equal(findInPage.searchEvents[0].results?.length, 1);
+
   const failed = parseCodexJsonl(stream(undefined, 'rate_limited'));
   assert.equal(failed.errorCode, 'rate_limited');
   assert.equal(failed.webStatus, 'failed');
+});
+
+test('Claude Code 429 credits_required stream preserves init model, classifies quota_exhausted, and emits no fake answer or citation', () => {
+  const claude429 = jsonl([
+    { type: 'system', subtype: 'init', model: 'claude-fable-5-2' },
+    { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', errorCode: 'credits_required' } },
+    { type: 'assistant', is_api_error_message: true, error: 'rate_limit', api_error_status: 429, api_error_code: 'credits_required',
+      message: { model: '<synthetic>', content: [{ type: 'text', text: 'Requires usage credits at https://claude.ai/settings/usage' }] } },
+    { type: 'result', subtype: 'success', is_error: true, terminal_reason: 'api_error', api_error_status: 429,
+      api_error_code: 'credits_required', api_error_type: 'rate_limit_error',
+      result: 'Requires usage credits at https://claude.ai/settings/usage', usage: { input_tokens: 0, output_tokens: 0 } },
+  ]);
+  const parsed = parseClaudeStreamJsonl(claude429);
+  assert.equal(parsed.model, 'claude-fable-5-2');
+  assert.equal(parsed.text, null);
+  assert.deepEqual(parsed.citations, []);
+  assert.equal(parsed.errorCode, 'quota_exhausted');
+  assert.equal(parsed.webStatus, 'unavailable');
 });
 
 test('only exposed model metadata becomes an observed model', async (t) => {

@@ -2,7 +2,7 @@ import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { runPrompt, endpoint, responsesEndpoint } from '../core/providers/openai.js';
+import { runPrompt, endpoint, responsesEndpoint, SEARCH_MAX_OUTPUT_TOKENS } from '../core/providers/openai.js';
 import { _setFetch, _setSleep, ProviderError } from '../core/providers/shared.js';
 import { assessObservation } from '../core/measurement-contract.js';
 import { priceUsage } from '../core/cost.js';
@@ -37,7 +37,7 @@ test('search request is explicit and keeps actions, sources, citations, and usag
   assert.deepEqual(calls[0].body, {
     model: 'gpt-5.6-luna', input: [{ role: 'user', content: 'Which camera should I buy?' }],
     tools: [{ type: 'web_search' }], tool_choice: 'required',
-    include: ['web_search_call.action.sources'], max_output_tokens: 2048,
+    include: ['web_search_call.action.sources'], max_output_tokens: SEARCH_MAX_OUTPUT_TOKENS,
   });
   assert.equal(result.text, 'Try Acme. See this guide.');
   assert.deepEqual(result.searchActions?.map(({ kind, status, queries, queryMetadata }) =>
@@ -182,4 +182,13 @@ test('search policy and model are validated before a network call; default route
     HEARSAY_OPENAI_SEARCH_POLICY: 'required' });
   assert.equal(apiExecutionBudget(config, 'openai').route, 'openai-responses-web-search-v1');
   assert.equal(apiExecutionBudget(config, 'openai').searchCallLimitEnforced, false);
+  assert.equal(apiExecutionBudget(config, 'openai').answerTokenLimit, SEARCH_MAX_OUTPUT_TOKENS);
+});
+
+test('overlapping action.query and action.queries are deduplicated in order', async () => {
+  const body = { ...fixture, output: [{ ...fixture.output[0],
+    action: { type: 'search', query: 'best issue trackers', queries: ['best issue trackers', 'linear vs jira', 'best issue trackers'], sources: [] } }, fixture.output[2]] };
+  stub([body]);
+  const result = await runPrompt('q', { ...options, searchPolicy: 'auto' });
+  assert.deepEqual(result.searchActions?.[0].queries, ['best issue trackers', 'linear vs jira']);
 });

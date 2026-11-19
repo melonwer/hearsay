@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgyCliRunner, parseAgyJsonl, prepareAgyInvocation } from '../core/agy-agent.js';
+import { AgyCliRunner, isAgyVersionSupported, parseAgyJsonl, prepareAgyInvocation } from '../core/agy-agent.js';
 import { agentExecutionProfile } from '../core/agent-runners.js';
 import { AgentProcessError, safeEnvironment, spawnBounded } from '../core/agent-process.js';
 import { readArtifact } from '../core/artifacts.js';
@@ -282,4 +282,24 @@ test('captured agy 1.2.11 search extracts web evidence from its broad tool inven
   assert.equal(parsed.model, null);
   assert.equal(parsed.usage.inputTokens, 10525);
   assert.equal(parsed.usage.outputTokens, 1952);
+});
+
+test('agy version compatibility allows 1.x >= 1.2.11 and rejects older or major-bumped versions', async (t) => {
+  assert.equal(isAgyVersionSupported('1.2.11'), true);
+  assert.equal(isAgyVersionSupported('1.5.12'), true);
+  assert.equal(isAgyVersionSupported('agy 1.10.0'), true);
+  assert.equal(isAgyVersionSupported('1.2.10'), false);
+  assert.equal(isAgyVersionSupported('2.0.0'), false);
+  assert.equal(isAgyVersionSupported('unknown'), false);
+
+  if (process.platform === 'linux') {
+    const root = directory(t);
+    const agy15 = fakeExecutable(root, 'fake-agy-15', `process.stdout.write(process.argv.includes('--version') ? '1.5.12\\n' : '--print --output-format --agent\\n');`);
+    const agy20 = fakeExecutable(root, 'fake-agy-20', `process.stdout.write(process.argv.includes('--version') ? '2.0.0\\n' : '--print --output-format --agent\\n');`);
+    fakeExecutable(root, 'bwrap', '');
+    environment(t, { PATH: root, DBUS_SESSION_BUS_ADDRESS: 'unix:path=/synthetic/bus', XDG_RUNTIME_DIR: '/synthetic/runtime' });
+    const ok = await new AgyCliRunner({ executable: agy15, dataDir: join(root, 'data') }).preflight();
+    assert.equal(ok.version, '1.5.12');
+    await assert.rejects(new AgyCliRunner({ executable: agy20, dataDir: join(root, 'data') }).preflight(), { code: 'unsupported_cli_version' });
+  }
 });

@@ -1,6 +1,10 @@
 import { agentRoute } from './agent-routes.js';
 import { assertRoutePolicy } from './measurement-contract.js';
-import { endpoint as openaiEndpoint, responsesEndpoint as openaiResponsesEndpoint } from './providers/openai.js';
+import {
+  endpoint as openaiEndpoint,
+  responsesEndpoint as openaiResponsesEndpoint,
+  SEARCH_MAX_OUTPUT_TOKENS as openaiSearchMaxTokens,
+} from './providers/openai.js';
 import { endpoint as anthropicEndpoint, MAX_TOKENS as anthropicMaxTokens } from './providers/anthropic.js';
 import { endpointFor as geminiEndpointFor } from './providers/gemini.js';
 import { endpoint as perplexityEndpoint } from './providers/perplexity.js';
@@ -31,7 +35,7 @@ export function apiExecutionBudget(config, providerId) {
   const searchPolicy = config.apiSearchPolicies[providerId];
   const definition = providerId === 'openai' && searchPolicy !== 'off'
     ? { route: 'openai-responses-web-search-v1', policy: searchPolicy,
-      endpoint: openaiResponsesEndpoint, answerTokenLimit: 2048 }
+      endpoint: openaiResponsesEndpoint, answerTokenLimit: openaiSearchMaxTokens }
     : providerId === 'anthropic' && searchPolicy === 'auto'
       ? { route: 'anthropic-messages-web-search-v1', policy: searchPolicy,
         endpoint: anthropicEndpoint, answerTokenLimit: anthropicMaxTokens }

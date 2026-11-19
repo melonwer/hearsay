@@ -323,3 +323,52 @@ test('containsAlias shares the analyzer boundary rules with branded tagging (§6
   assert.equal(containsAlias('Is Notewell any good?', ['Notewell', 'Notewell AI']), true);
   assert.equal(containsAlias('Best notewellness apps', ['Notewell']), false);
 });
+
+test('multi-mention endorsements are not erased by secondary passive mentions or citation links', () => {
+  const entities = [
+    { id: 1, name: 'Linear', aliases: ['Linear.app'], domains: ['linear.app'] },
+    { id: 2, name: 'Shortcut', aliases: [], domains: ['shortcut.com'] },
+    { id: 3, name: 'Jira', aliases: [], domains: ['atlassian.com'] },
+  ];
+  const sample2 = [
+    '**Choose Linear Basic** for a 25-person product engineering startup. [Linear pricing](https://linear.app/pricing)',
+    '- **Choose Shortcut if you qualify for its startup offer.** [Shortcut pricing](https://www.shortcut.com/pricing/)',
+    '- **Choose Jira if you already rely on Atlassian.** [Jira](https://www.atlassian.com/software/jira)',
+  ].join('\n');
+  const m2 = extractMentions(sample2, entities);
+  assert.equal(forEntity(m2, 1)?.stance, 'positive');
+  assert.equal(forEntity(m2, 1)?.recommended, 1);
+  assert.equal(forEntity(m2, 2)?.stance, 'uncertain');
+  assert.equal(forEntity(m2, 2)?.recommended, 0);
+  assert.equal(forEntity(m2, 3)?.stance, 'uncertain');
+  assert.equal(forEntity(m2, 3)?.recommended, 0);
+
+  const sample1 = [
+    '**Linear is my first pick for most fast-moving software teams in 2026.**',
+    '',
+    '1. **Linear — best overall.** Dedicated triage queue. [Linear](https://linear.app/)',
+    '2. **Jira — best for complex workflows.** [Jira](https://www.atlassian.com/software/jira)',
+  ].join('\n');
+  const m1 = extractMentions(sample1, entities);
+  assert.equal(forEntity(m1, 1)?.stance, 'positive');
+  assert.equal(forEntity(m1, 1)?.recommended, 1);
+
+  const headingAnswer = [
+    '## 1. [Linear](https://linear.app/) — Best overall for modern product-engineering teams',
+    'Linear is purpose-built for software teams. ([linear.app](https://linear.app/integrations?utm_source=openai))',
+    'At $10/user + GitHub sync, it is less comprehensive than Linear for some workflows.',
+  ].join('\n');
+  const mHeading = extractMentions(headingAnswer, entities);
+  assert.equal(forEntity(mHeading, 1)?.stance, 'positive');
+  assert.equal(forEntity(mHeading, 1)?.recommended, 1);
+
+  const stillMixed = 'I recommend Linear, but it costs too much. [Linear](https://linear.app/)';
+  const mMixed = extractMentions(stillMixed, entities);
+  assert.equal(forEntity(mMixed, 1)?.stance, 'uncertain');
+  assert.equal(forEntity(mMixed, 1)?.rule_id, 'mixed_claims');
+
+  const italicHeading = '### 1. Linear — *Best Overall for Fast-Moving Product & Engineering Teams*\n* **Official link:** [linear.app](https://linear.app/)';
+  const mItalic = extractMentions(italicHeading, entities);
+  assert.equal(forEntity(mItalic, 1)?.stance, 'positive');
+  assert.equal(forEntity(mItalic, 1)?.recommended, 1);
+});

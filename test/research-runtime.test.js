@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { AgentProcessError } from '../core/agent-process.js';
 import { agentRoute } from '../core/agent-routes.js';
 import { parseAgyJsonl } from '../core/agy-agent.js';
-import { acquireResearchLock, loadResearchRun, previewResearchRun, runResearchPanel, writeJson } from '../core/research-workspace.js';
+import { acquireResearchLock, discoverAgents, loadResearchRun, previewResearchRun, runResearchPanel, writeJson } from '../core/research-workspace.js';
 import { enableResearchSchedule, previewResearchSchedule, readResearchSchedule, researchScheduleTick } from '../core/research-schedule.js';
 
 const workspaceModule = new URL('../core/research-workspace.js', import.meta.url).href;
@@ -457,4 +457,61 @@ test('uncertain recommendation stance does not erase an observed brand mention',
   assert.equal(result.summary[0].mentioned, 1);
   assert.equal(result.summary[0].recommended, 0);
   assert.equal(result.evidence.samples[0].mentions[0].stance, 'uncertain');
+});
+
+test('markdown numbered headings extract explicit recommendation position', async (t) => {
+  const fixture = workspace(t, { questions: 1 });
+  const preview = await approved(fixture);
+  const text = '## 1. [TaskNest](https://tasknest.example/) — Best overall for small teams\nTaskNest simplifies client work. [TaskNest](https://tasknest.example/pricing)';
+  const result = await runResearchPanel(fixture.directory, { execute: true, preview, runnerFactory: () => ({ run: async () => answer({ text }) }) });
+  assert.equal(result.evidence.samples[0].mentions[0].positive, true);
+  assert.equal(result.evidence.samples[0].mentions[0].position, 1);
+});
+
+test('Claude 429 credits_required nonzero exit fails cleanly, strips fake citations, and stops the route', async (t) => {
+  const fixture = workspace(t, { questions: 2, providers: ['claude-code-agent'] });
+  const preview = await approved(fixture);
+  const claudeStdout = [
+    { type: 'system', subtype: 'init', model: 'claude-fable-5-2' },
+    { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', errorCode: 'credits_required' } },
+    { type: 'assistant', is_api_error_message: true, error: 'rate_limit', api_error_status: 429, api_error_code: 'credits_required',
+      message: { model: '<synthetic>', content: [{ type: 'text', text: 'Requires credits at https://claude.ai/settings/usage' }] } },
+    { type: 'result', subtype: 'success', is_error: true, api_error_status: 429, api_error_code: 'credits_required',
+      result: 'Requires credits at https://claude.ai/settings/usage', usage: { input_tokens: 0, output_tokens: 0 } },
+  ].map((event) => JSON.stringify(event)).join('\n');
+  let calls = 0;
+  const result = await runResearchPanel(fixture.directory, {
+    execute: true,
+    preview,
+    runnerFactory: () => ({
+      run: async () => {
+        calls += 1;
+        const err = new AgentProcessError('nonzero_exit', 'exited with status 1');
+        err.output = { stdout: claudeStdout, stderr: '', exitCode: 1, signal: null };
+        throw err;
+      },
+    }),
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.evidence.samples[0].status, 'failed');
+  assert.equal(result.evidence.samples[0].errorCode, 'quota_exhausted');
+  assert.equal(result.evidence.samples[0].model, 'claude-fable-5-2');
+  assert.equal(result.evidence.evidence.filter((e) => e.type === 'final_citation' || e.type === 'answer').length, 0);
+  assert.equal(result.evidence.samples[1].status, 'skipped');
+  assert.equal(result.evidence.samples[1].errorCode, 'route_stopped');
+});
+
+test('discoverAgents and previewResearchRun flag unsupported agy-cli versions before execution', async (t) => {
+  const fixture = workspace(t, { questions: 1, providers: ['agy-cli'] });
+  const fakeAgy = join(fixture.directory, 'fake-agy-cli');
+  writeFileSync(fakeAgy, `#!${process.execPath}\nprocess.stdout.write(process.argv.includes('--version') ? '2.0.0\\n' : '--print --output-format --agent\\n');\n`, { mode: 0o700 });
+  const agents = await discoverAgents({ ...process.env, HEARSAY_AGY_PATH: fakeAgy });
+  const agy = agents.find((a) => a.id === 'agy-cli');
+  assert.equal(agy?.installed, true);
+  assert.equal(agy?.profileReady, false);
+  assert.equal(agy?.reason, 'unsupported_cli_version');
+
+  const preview = await previewResearchRun(fixture.directory);
+  assert.equal(preview.snapshot.identities[0].error, 'unsupported_cli_version');
+  await assert.rejects(runResearchPanel(fixture.directory, { execute: true, preview, confirm: preview.quoteId }), { code: 'unsupported_profile' });
 });

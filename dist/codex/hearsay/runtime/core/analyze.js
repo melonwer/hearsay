@@ -229,7 +229,7 @@ function clauseSpan(text, match) {
   let end = lineEnd;
   const punctuation = /[.!?;](?=\s|$)/g;
   const line = text.slice(lineStart, lineEnd);
-  const listMarker = /^\s*\d+[.)]\s+/.exec(line);
+  const listMarker = /^\s*(?:#{1,6}\s+)?\d+[.)]\s+/.exec(line);
   for (const hit of line.matchAll(punctuation)) {
     const at = lineStart + (hit.index ?? 0);
     if (listMarker && at < lineStart + listMarker[0].length) continue;
@@ -249,8 +249,13 @@ function clauseSpan(text, match) {
  */
 function stanceForMatch(text, match, ambiguousName) {
   const span = clauseSpan(text, match);
-  const before = text.slice(span.start, match.start).replace(/[\s*`_]+$/g, '');
-  const after = text.slice(match.end, span.end).replace(/^[\s*`_]+/g, '');
+  const rawBefore = text.slice(span.start, match.start);
+  const rawAfter = text.slice(match.end, span.end);
+  const linkedAfter = /\[[\s*`_]*$/.test(rawBefore)
+    ? rawAfter.replace(/^[\s*`_]*\]\(\s*<?https?:\/\/[^\s)>]+>?\s*\)/i, '')
+    : rawAfter;
+  const before = rawBefore.replace(/[\s*`_\[]+$/g, '');
+  const after = linkedAfter.replace(/^[\s*`_]+/g, '');
   const clause = text.slice(span.start, span.end);
   /** @type {string[]} */
   const flags = [];
@@ -260,7 +265,7 @@ function stanceForMatch(text, match, ambiguousName) {
     ({ stance, ruleId, start, end, flags });
   if (ambiguousName) return decision('uncertain', 'identity_review');
   const withoutAlias = `${before} ${after}`;
-  if (/[^\p{Script=Latin}\p{Number}\p{Punctuation}\p{Separator}\p{Mark}]/u.test(withoutAlias)) {
+  if (/(?!\p{Script=Latin})\p{Letter}/u.test(withoutAlias)) {
     flags.push('unsupported_language');
     return decision('uncertain', 'unsupported_language');
   }
@@ -306,7 +311,8 @@ function stanceForMatch(text, match, ambiguousName) {
   if (/\b(?:recommend|suggest|choose|pick|use|go\s+with)\s*$/i.test(before) ||
       /\b(?:best|top|strongest|first)\s+(?:pick|choice|option|recommendation)(?:\s+\w+){0,2}\s+(?:is|:)\s*$/i.test(before) ||
       /#1\s*:\s*$/i.test(before) ||
-      /^(?:is|would\s+be|remains)\s+(?:(?:the|a)\s+)?(?:best|top|great|good|strong|excellent|usual|recommended)\s+(?:pick|choice|option|fit|tool|product)\b/i.test(after)) {
+      /^(?:is|would\s+be|remains)\s+(?:(?:the|a|my|our)\s+)?(?:best|top|first|strongest|leading|#1|great|good|strong|excellent|usual|recommended)\s+(?:(?:overall|all-around|all\s+around)\s+)?(?:pick|choice|option|fit|tool|product|recommendation)\b/i.test(after) ||
+      /^[-–—:][\s*`_]*(?:best\s+overall|(?:the\s+)?(?:top|best|first|#1)\s+(?:overall\s+)?(?:pick|choice|option|recommendation))\b/i.test(after)) {
     return decision('positive', 'explicit_endorsement');
   }
   if (/^(?:offers|supports|includes|provides|has|integrates|costs|stores|exports)\b/i.test(after) ||
@@ -456,11 +462,17 @@ export function extractMentions(text, entities) {
     const first = entityMatches[0];
     const ambiguousName = entities.some((entity) => entity.id === entityId && entity.ambiguousName === true);
     const decisions = entityMatches.map((match) => stanceForMatch(body, match, ambiguousName));
-    const labels = new Set(decisions.map((decision) => decision.stance).filter((stance) => stance !== 'neutral'));
-    const conflict = labels.size > 1 || decisions.some((decision) => decision.stance === 'uncertain') && decisions.length > 1;
-    const selected = conflict
-      ? /** @type {StanceDecision} */ ({ stance: 'uncertain', ruleId: 'mixed_claims', start: decisions[0].start, end: decisions.at(-1)?.end ?? decisions[0].end, flags: ['mixed_claims'] })
-      : decisions.find((decision) => decision.stance !== 'neutral') ?? decisions[0];
+    const definite = new Set(decisions.map((decision) => decision.stance).filter((stance) => stance === 'positive' || stance === 'negative'));
+    const hasMixed = decisions.some((decision) => decision.ruleId === 'mixed_claims');
+    const reviewBlocker = decisions.find((decision) => decision.ruleId === 'identity_review' || decision.ruleId === 'unsupported_language');
+    const conflict = definite.size > 1 || hasMixed;
+    const selected = reviewBlocker
+      ?? (conflict
+        ? /** @type {StanceDecision} */ ({ stance: 'uncertain', ruleId: 'mixed_claims', start: decisions[0].start, end: decisions.at(-1)?.end ?? decisions[0].end, flags: ['mixed_claims'] })
+        : decisions.find((decision) => decision.stance === 'positive' || decision.stance === 'negative')
+          ?? decisions.find((decision) => decision.stance === 'uncertain' && decision.ruleId !== 'no_supported_claim')
+          ?? decisions.find((decision) => decision.stance === 'neutral')
+          ?? decisions[0]);
     mentions.push({
       entity_id: entityId,
       first_index: first.start,

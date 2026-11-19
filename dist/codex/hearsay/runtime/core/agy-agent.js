@@ -9,6 +9,16 @@ import { createArtifactStore, writeArtifact } from './artifacts.js';
 import { agentRoute } from './agent-routes.js';
 
 export const AGY_INSPECTED_VERSION = '1.2.11';
+const AGY_MIN_VERSION = [1, 2, 11];
+
+/** @param {string|null|undefined} version @returns {boolean} */
+export function isAgyVersionSupported(version) {
+  const match = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(String(version ?? ''));
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  if (major !== AGY_MIN_VERSION[0]) return false;
+  return minor > AGY_MIN_VERSION[1] || (minor === AGY_MIN_VERSION[1] && patch >= AGY_MIN_VERSION[2]);
+}
 export const AGY_PROFILE = agentRoute('agy-cli').profile;
 export const AGY_AGENT_DEFINITION = `---
 name: hearsay-neutral-web
@@ -113,7 +123,7 @@ export class AgyCliRunner {
   async discover() { return discoverCli({ executable: this.options.executable, dataDir: this.options.dataDir }); }
   async preflight() {
     const discovered = await this.discover();
-    if (!new RegExp(`\\b${AGY_INSPECTED_VERSION.replace(/\./g, '\\.')}\\b`).test(discovered.version)) throw new AgentProcessError('unsupported_cli_version', 'Agy version needs compatibility validation');
+    if (!isAgyVersionSupported(discovered.version)) throw new AgentProcessError('unsupported_cli_version', 'Agy version needs compatibility validation');
     if (process.platform !== 'linux') throw new AgentProcessError('unsupported_profile', 'Agy isolation currently requires Linux bubblewrap and the native keyring');
     resolveExecutable('bwrap');
     if (!process.env.DBUS_SESSION_BUS_ADDRESS || !process.env.XDG_RUNTIME_DIR) throw new AgentProcessError('authentication_missing', 'Native keyring session is unavailable');

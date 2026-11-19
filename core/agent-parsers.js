@@ -249,6 +249,98 @@ function terminalSearchErrorCode(rawStatus, isError = false) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function observedModel(value) {
+  const text = optionalString(value);
+  if (text === null || /^<[^>]+>$/.test(text)) return null;
+  return text;
+}
+
+/**
+ * @param {Record<string, unknown>} event
+ * @returns {string|null}
+ */
+function claudeEventErrorCode(event) {
+  const type = String(event.type ?? '');
+  if (type === 'rate_limit_event') {
+    const info = event.rate_limit_info && typeof event.rate_limit_info === 'object'
+      ? /** @type {Record<string, unknown>} */ (event.rate_limit_info) : null;
+    if (!info) return null;
+    const status = String(info.status ?? '').toLowerCase();
+    const code = String(info.errorCode ?? info.error_code ?? '').toLowerCase();
+    if (status !== 'rejected' && code === '') return null;
+    if (/(?:credit|quota|allowance|overage|usage.?limit|exhausted)/.test(`${code} ${status}`)) return 'quota_exhausted';
+    return 'rate_limited';
+  }
+  const diag = [
+    event.api_error_code,
+    event.api_error,
+    event.api_error_type,
+    event.error,
+    event.terminal_reason,
+    typeof event.result === 'string' ? event.result : null,
+  ].filter((part) => typeof part === 'string' && part.trim() !== '').join(' ').toLowerCase();
+  const status = optionalNumber(event.api_error_status);
+  if (status === 401 || status === 403 || /(?:unauthenticated|authentication|login|credential)/.test(diag)) {
+    return 'authentication_failed';
+  }
+  if (/(?:credits?_required|usage.?credits?|model_requires_usage_credits|quota|allowance|usage.?limit|resource.?exhausted)/.test(diag)) {
+    return 'quota_exhausted';
+  }
+  if (status === 429 || /(?:rate.?limit|throttl)/.test(diag)) return 'rate_limited';
+  return 'agent_failed';
+}
+
+/**
+ * @param {SearchEvent[]} searchEvents
+ * @param {Map<string, number>} byActionId
+ * @param {SearchEvent} eventRow
+ * @returns {void}
+ */
+function upsertCodexSearchEvent(searchEvents, byActionId, eventRow) {
+  if (eventRow.actionId !== null && byActionId.has(eventRow.actionId)) {
+    const existing = searchEvents[/** @type {number} */ (byActionId.get(eventRow.actionId))];
+    if (existing.status === 'started' && eventRow.status !== 'started') {
+      existing.eventType = eventRow.eventType;
+      existing.status = eventRow.status;
+      existing.providerEventType = eventRow.providerEventType;
+    } else if (existing.status === eventRow.status && eventRow.eventType !== existing.eventType && existing.queries?.length === 0 && existing.url === null) {
+      existing.eventType = eventRow.eventType;
+    }
+    if (eventRow.url) {
+      existing.url = eventRow.url;
+      existing.domain = eventRow.domain;
+    }
+    if (eventRow.title) existing.title = eventRow.title;
+    existing.observedAt ??= eventRow.observedAt;
+    const mergedQueries = [...(existing.queries ?? [])];
+    for (const query of eventRow.queries ?? []) {
+      if (!mergedQueries.includes(query)) mergedQueries.push(query);
+    }
+    if (mergedQueries.length > 0 || existing.queries) {
+      existing.queries = mergedQueries;
+      existing.query = mergedQueries[0] ?? existing.query ?? null;
+    }
+    if (eventRow.results && eventRow.results.length > 0) {
+      existing.results ??= [];
+      const seen = new Set(existing.results.map((item) => `${item.url}\u0000${item.rank ?? ''}`));
+      for (const item of eventRow.results) {
+        const key = `${item.url}\u0000${item.rank ?? ''}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          existing.results.push(item);
+        }
+      }
+    }
+    return;
+  }
+  if (eventRow.actionId !== null) byActionId.set(eventRow.actionId, searchEvents.length);
+  searchEvents.push(eventRow);
+}
+
+/**
  * @param {string} input
  * @param {{maxLineBytes?:number, maxOutputBytes?:number, maxDepth?:number, maxEvents?:number}} [options]
  * @returns {ParsedAgentOutput}
@@ -257,6 +349,8 @@ export function parseCodexJsonl(input, options = {}) {
   const rawEvents = parseLines(input, options);
   /** @type {SearchEvent[]} */
   const searchEvents = [];
+  /** @type {Map<string, number>} */
+  const byActionId = new Map();
   let text = null;
   let model = null;
   let errorCode = null;
@@ -267,7 +361,7 @@ export function parseCodexJsonl(input, options = {}) {
     const item = event.item && typeof event.item === 'object' ? /** @type {Record<string, unknown>} */ (event.item) : event;
     const itemType = String(item.type ?? '').toLowerCase();
     const action = item.action && typeof item.action === 'object' ? /** @type {Record<string, unknown>} */ (item.action) : item;
-    model = optionalString(event.model ?? item.model) ?? model;
+    model = observedModel(event.model ?? item.model) ?? model;
     const searchAction = String(action.type ?? '');
     if (itemType === 'web_search_call' || itemType === 'websearch' || itemType === 'web_search' && (searchAction === 'search' || searchAction === 'other' || searchAction === '')) {
       const rawStatus = item.status ?? action.status;
@@ -285,17 +379,22 @@ export function parseCodexJsonl(input, options = {}) {
       eventRow.results = results;
       eventRow.providerEventType = eventType;
       eventRow.actionId = optionalString(item.id ?? action.id);
-      searchEvents.push(eventRow);
-    } else if (itemType === 'web_fetch_call' || itemType === 'webfetch' || itemType === 'web_search' && ['open', 'find'].includes(searchAction)) {
+      upsertCodexSearchEvent(searchEvents, byActionId, eventRow);
+    } else if (itemType === 'web_fetch_call' || itemType === 'webfetch' || itemType === 'web_search' && ['open', 'find', 'open_page', 'find_in_page'].includes(searchAction)) {
       const rawStatus = item.status ?? action.status;
+      const results = exposedResults(item.results ?? action.results);
+      const url = httpUrl(action.url ?? item.url);
+      const title = optionalString(action.title ?? item.title) ?? results.find((entry) => entry.url === url)?.title ?? null;
       const eventRow = evidence('fetch', terminalSearchStatus(eventType, rawStatus), {
-        url: action.url ?? item.url,
+        url,
+        title,
         timestamp: event.timestamp,
       });
       errorCode ??= terminalSearchErrorCode(rawStatus, eventType === 'item.failed');
+      eventRow.results = results;
       eventRow.providerEventType = eventType;
       eventRow.actionId = optionalString(item.id ?? action.id);
-      searchEvents.push(eventRow);
+      upsertCodexSearchEvent(searchEvents, byActionId, eventRow);
     } else if (itemType === 'agent_message' || itemType === 'agentmessage') {
       const message = item.text ?? item.content;
       if (typeof message === 'string') text = message;
@@ -338,9 +437,19 @@ export function parseClaudeStreamJsonl(input, options = {}) {
   /** @type {AgentUsage} */
   let usage = { inputTokens: null, outputTokens: null };
   for (const event of rawEvents) {
+    const type = String(event.type ?? '');
     const message = event.message && typeof event.message === 'object' ? /** @type {Record<string, unknown>} */ (event.message) : null;
-    model = optionalString(message?.model ?? event.model) ?? model;
-    if (String(event.type ?? '') === 'assistant' && message) {
+    const isApiErrorAssistant = type === 'assistant' && (event.is_api_error_message === true || (typeof event.error === 'string' && event.error !== ''));
+    if (!isApiErrorAssistant) model = observedModel(message?.model ?? event.model) ?? model;
+    if (type === 'rate_limit_event') {
+      const rateLimitError = claudeEventErrorCode(event);
+      if (rateLimitError) errorCode ??= rateLimitError;
+    }
+    if (type === 'assistant' && message) {
+      if (isApiErrorAssistant) {
+        errorCode ??= claudeEventErrorCode(event) ?? 'agent_failed';
+        continue;
+      }
       const chunks = contentItems(message.content).filter((item) => item.type === 'text' && typeof item.text === 'string');
       if (chunks.length) text = chunks.map((item) => item.text).join('\n');
       for (const item of contentItems(message.content)) {
@@ -364,7 +473,7 @@ export function parseClaudeStreamJsonl(input, options = {}) {
         }
       }
     }
-    if (String(event.type ?? '') === 'user') {
+    if (type === 'user') {
       const userMessage = event.message && typeof event.message === 'object' ? /** @type {Record<string, unknown>} */ (event.message) : {};
       for (const item of contentItems(userMessage.content)) {
         if (item.type !== 'tool_result') continue;
@@ -386,11 +495,16 @@ export function parseClaudeStreamJsonl(input, options = {}) {
         if (failed) errorCode ??= terminalSearchErrorCode(resultStatus, item.is_error === true);
       }
     }
-    if (String(event.type ?? '') === 'result') {
-      if (event.is_error === true || (typeof event.subtype === 'string' && event.subtype.startsWith('error'))) {
-        errorCode ??= 'agent_failed';
+    if (type === 'result') {
+      const resultFailed = event.is_error === true
+        || (typeof event.subtype === 'string' && event.subtype.startsWith('error'))
+        || event.terminal_reason === 'api_error';
+      if (resultFailed) {
+        const classified = claudeEventErrorCode(event);
+        errorCode = errorCode && errorCode !== 'agent_failed' ? errorCode : (classified ?? 'agent_failed');
+      } else if (typeof event.result === 'string') {
+        text = event.result;
       }
-      if (typeof event.result === 'string') text = event.result;
       if (event.usage && typeof event.usage === 'object') {
         const resultUsage = /** @type {Record<string, unknown>} */ (event.usage);
         usage = {

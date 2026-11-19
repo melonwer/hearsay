@@ -31,6 +31,7 @@ import {
 export const id = 'openai';
 export const endpoint = 'https://api.openai.com/v1/chat/completions';
 export const responsesEndpoint = 'https://api.openai.com/v1/responses';
+export const SEARCH_MAX_OUTPUT_TOKENS = 4096;
 
 /** @param {unknown} json */
 function reportedUsage(json) {
@@ -92,10 +93,10 @@ function parseResponses(json, model, latencyMs, res) {
       const action = object(item.action);
       const providerType = typeof action?.type === 'string' ? action.type : null;
       const id = `${typeof item.id === 'string' ? item.id : 'web_search_call'}:${itemIndex}`;
-      const queries = [
+      const queries = [...new Set([
         ...(typeof action?.query === 'string' ? [action.query] : []),
         ...(Array.isArray(action?.queries) ? action.queries.filter((q) => typeof q === 'string') : []),
-      ].map((q) => q.trim()).filter(Boolean);
+      ].map((q) => q.trim()).filter(Boolean))];
       const status = item.status === 'completed' ? 'completed'
         : item.status === 'failed' ? 'failed'
           : item.status === 'in_progress' || item.status === 'searching' ? 'started' : 'unavailable';
@@ -173,10 +174,10 @@ export async function runPrompt(text, opts = {}) {
   if (searchPolicy !== 'off' && model !== 'gpt-5.6-luna') {
     throw new RangeError(`OpenAI web search is not validated for ${model}`);
   }
-  const maxOutputTokens = opts.maxOutputTokens ?? 2048;
+  const maxOutputTokens = opts.maxOutputTokens ?? SEARCH_MAX_OUTPUT_TOKENS;
   const maxResponseBytes = opts.maxResponseBytes ?? 2 * 1024 * 1024;
-  if (searchPolicy !== 'off' && (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 2048)) {
-    throw new RangeError('OpenAI search max_output_tokens must be between 1 and 2048');
+  if (searchPolicy !== 'off' && (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > SEARCH_MAX_OUTPUT_TOKENS)) {
+    throw new RangeError(`OpenAI search max_output_tokens must be between 1 and ${SEARCH_MAX_OUTPUT_TOKENS}`);
   }
   if (searchPolicy !== 'off' && (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 2 * 1024 * 1024)) {
     throw new RangeError('OpenAI search response size limit must be between 1 and 2097152 bytes');
