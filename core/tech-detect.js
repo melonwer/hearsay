@@ -1012,6 +1012,7 @@ export function detectStackAndWaf(input = {}) {
     // 1. Headers
     if (sig.headers) {
       for (const [hdrKey, pattern] of Object.entries(sig.headers)) {
+        if (pattern === undefined) continue;
         const hdrVal = headerMap.get(hdrKey);
         if (hdrVal === undefined) continue;
         if (pattern === null) {
@@ -1042,6 +1043,7 @@ export function detectStackAndWaf(input = {}) {
     // 3. Meta tags
     if (sig.meta && scanned.meta.size > 0) {
       for (const [metaKey, pattern] of Object.entries(sig.meta)) {
+        if (pattern === undefined) continue;
         const values = scanned.meta.get(metaKey);
         if (!values) continue;
         for (const val of values) {

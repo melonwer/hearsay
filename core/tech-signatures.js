@@ -55,9 +55,9 @@
  * @property {string} name - Human-readable technology name.
  * @property {TechCategory} category - Primary stack layer.
  * @property {string[]} [implies] - Transitive technology IDs implied by this match.
- * @property {Record<string, PatternRule|null>} [headers] - Lowercase header names mapped to pattern (null = presence match).
+ * @property {Record<string, PatternRule|null|undefined>} [headers] - Lowercase header names mapped to pattern (null = presence match).
  * @property {CookieNameRule[]} [cookies] - Cookie NAME matchers (cookie values are never inspected).
- * @property {Record<string, PatternRule>} [meta] - Lowercase `<meta name="...">` mapped to content pattern.
+ * @property {Record<string, PatternRule|undefined>} [meta] - Lowercase `<meta name="...">` mapped to content pattern.
  * @property {PatternRule[]} [scripts] - Patterns matched against `<script src>` and `<link href>` URLs.
  * @property {PatternRule[]} [html] - Patterns matched against raw HTML (literal pre-filtered).
  * @property {ComboRule[]} [combos] - Multi-signal conjunctions (all sub-patterns must match).
@@ -286,9 +286,9 @@ export const AI_CRAWLER_BY_TOKEN = crawlerByTokenMap;
  * Every HTML pattern uses a lowercase `literal` pre-filter and strictly bounded
  * quantifiers to avoid ReDoS even on multi-megabyte HTML payloads.
  *
- * @type {readonly TechSignature[]}
+ * @type {TechSignature[]}
  */
-export const TECH_SIGNATURES = Object.freeze([
+const RAW_TECH_SIGNATURES = [
   // =========================================================================
   // FRAMEWORKS & BUILD TOOLS (22)
   // =========================================================================
@@ -1243,4 +1243,10 @@ export const TECH_SIGNATURES = Object.freeze([
       'x-sigsci-requestid': null,
     },
   },
-]);
+];
+
+/**
+ * Frozen read-only export of all curated passive technology signatures.
+ * @type {readonly TechSignature[]}
+ */
+export const TECH_SIGNATURES = Object.freeze(RAW_TECH_SIGNATURES);
