@@ -184,6 +184,94 @@ function extractDomain(crawl) {
 }
 
 /**
+ * Normalize `markdownNegotiation` from either a boolean or a `MarkdownNegotiationResult` object.
+ * @param {unknown} val
+ * @returns {boolean}
+ */
+function isMarkdownNegotiationSupported(val) {
+  if (typeof val === 'boolean') return val;
+  if (val && typeof val === 'object' && 'supported' in val) {
+    return Boolean(/** @type {{ supported?: unknown }} */ (val).supported);
+  }
+  return false;
+}
+
+/**
+ * Format `robotsPolicy.contentSignals.effective` record into a canonical string, or null.
+ * @param {unknown} effective
+ * @returns {string|null}
+ */
+function formatEffectiveContentSignals(effective) {
+  if (!effective || typeof effective !== 'object') return null;
+  const parts = Object.entries(/** @type {Record<string, unknown>} */ (effective))
+    .filter(([, v]) => typeof v === 'string' && v.trim() !== '')
+    .map(([k, v]) => `${k}=${String(v).trim()}`);
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+/**
+ * Extract stack labels from either a `string[]` or a `StackAndWafResult` object.
+ * @param {unknown} src
+ * @param {Set<string>} target
+ */
+function collectStackLabels(src, target) {
+  if (Array.isArray(src)) {
+    for (const item of src) {
+      if (typeof item === 'string' && item.trim()) target.add(item.trim());
+    }
+  } else if (src && typeof src === 'object') {
+    const obj = /** @type {Record<string, unknown>} */ (src);
+    for (const key of ['primaryFramework', 'primaryCms', 'primaryCdn', 'primaryHosting']) {
+      const val = obj[key];
+      if (typeof val === 'string' && val.trim()) target.add(val.trim());
+    }
+  }
+}
+
+/**
+ * Extract normalized bot allowance entries, preferring the 18-bot `robotsPolicy.bots`
+ * (excluding non-crawler `policy_signal` tokens) over legacy 9-bot `robotsTxt.crawlers`.
+ * @param {Record<string, any>|null|undefined} report
+ * @returns {Array<{bot: string, allowed: boolean, rule: string|null, matchedGroup: string|null}>}
+ */
+function extractBotEntries(report) {
+  if (Array.isArray(report?.robotsPolicy?.bots) && report.robotsPolicy.bots.length > 0) {
+    /** @type {Array<{bot: string, allowed: boolean, rule: string|null, matchedGroup: string|null}>} */
+    const out = [];
+    for (const b of report.robotsPolicy.bots) {
+      if (b?.category === 'policy_signal') continue;
+      const name = String(b?.token ?? b?.bot ?? '').trim();
+      if (!name) continue;
+      out.push({
+        bot: name,
+        allowed: Boolean(b.allowed),
+        rule: typeof b.rule === 'string' ? b.rule : null,
+        matchedGroup: typeof b.matchedGroup === 'string' ? b.matchedGroup : null,
+      });
+    }
+    if (out.length > 0) return out;
+  }
+
+  if (Array.isArray(report?.robotsTxt?.crawlers)) {
+    /** @type {Array<{bot: string, allowed: boolean, rule: string|null, matchedGroup: string|null}>} */
+    const out = [];
+    for (const c of report.robotsTxt.crawlers) {
+      const name = String(c?.bot ?? '').trim();
+      if (!name) continue;
+      out.push({
+        bot: name,
+        allowed: Boolean(c.allowed),
+        rule: typeof c.rule === 'string' ? c.rule : null,
+        matchedGroup: typeof c.matchedGroup === 'string' ? c.matchedGroup : null,
+      });
+    }
+    return out;
+  }
+
+  return [];
+}
+
+/**
  * Extract all page-like entries from either a multi-page crawl or a single-page report.
  * @param {Record<string, any>|null|undefined} report
  * @returns {Array<Record<string, any>>}
@@ -192,6 +280,9 @@ function extractPages(report) {
   if (!report || typeof report !== 'object') return [];
   if (Array.isArray(report.pages)) return report.pages;
   if (typeof report.finalUrl === 'string' || typeof report.requestedUrl === 'string') {
+    /** @type {Set<string>} */
+    const stackSet = new Set();
+    collectStackLabels(report.stack, stackSet);
     return [
       {
         url: report.requestedUrl ?? report.finalUrl,
@@ -201,14 +292,16 @@ function extractPages(report) {
         visibleWordCount: report.payload?.visibleWordCount ?? report.visibleWordCount ?? null,
         renderedWordCount: report.browserDiff?.renderedWordCount ?? report.renderedWordCount ?? null,
         proseParityPct: report.proseParityPct ?? null,
-        payloadToProseRatio: report.payloadToProseRatio ?? null,
+        payloadToProseRatio: report.payloadToProseRatio ?? report.extraction?.forensics?.payloadToProseRatio ?? null,
         htmlBytes: report.payload?.htmlBytes ?? report.htmlBytes ?? null,
         payload: report.payload ?? null,
-        soft404: report.soft404 === true,
-        wafState: report.wafState ?? 'none',
-        markdownNegotiation: report.markdownNegotiation === true,
-        contentSignal: report.contentSignal ?? null,
-        stack: Array.isArray(report.stack) ? report.stack : [],
+        soft404: report.soft404 === true || report.extraction?.forensics?.soft404?.detected === true,
+        wafState: report.waf?.state ?? report.stack?.waf?.state ?? report.wafState ?? 'none',
+        markdownNegotiation: isMarkdownNegotiationSupported(report.markdownNegotiation),
+        contentSignal:
+          (typeof report.contentSignal === 'string' ? report.contentSignal : null) ??
+          formatEffectiveContentSignals(report.robotsPolicy?.contentSignals?.effective),
+        stack: [...stackSet],
         findings: Array.isArray(report.findings) ? report.findings : [],
       },
     ];
@@ -218,6 +311,10 @@ function extractPages(report) {
 
 /**
  * Collect deduplicated findings across site-level and per-page arrays.
+ * For v2 multi-page reports (`Array.isArray(report.pages)`), reads strictly from
+ * `report.siteFindings` and `report.pages[*].findings` so merged `report.findings`
+ * never double-counts or fabricates phantom homepage entries.
+ *
  * @param {Record<string, any>|null|undefined} report
  * @returns {NormalizedFinding[]}
  */
@@ -258,19 +355,23 @@ function collectAllFindings(report) {
     });
   };
 
-  if (Array.isArray(report.siteFindings)) {
-    for (const f of report.siteFindings) pushFinding(f, 'site');
-  }
-  if (Array.isArray(report.findings)) {
-    const scopeUrl = typeof report.finalUrl === 'string' ? normalizeUrlKey(report.finalUrl) : 'site';
-    for (const f of report.findings) pushFinding(f, scopeUrl || 'site');
-  }
   if (Array.isArray(report.pages)) {
+    if (Array.isArray(report.siteFindings)) {
+      for (const f of report.siteFindings) pushFinding(f, 'site');
+    }
     for (const page of report.pages) {
       const pageUrl = normalizeUrlKey(page?.finalUrl ?? page?.url ?? '') || 'page';
       if (Array.isArray(page?.findings)) {
         for (const f of page.findings) pushFinding(f, pageUrl);
       }
+    }
+  } else {
+    if (Array.isArray(report.siteFindings)) {
+      for (const f of report.siteFindings) pushFinding(f, 'site');
+    }
+    if (Array.isArray(report.findings)) {
+      const scopeUrl = typeof report.finalUrl === 'string' ? normalizeUrlKey(report.finalUrl) : 'site';
+      for (const f of report.findings) pushFinding(f, scopeUrl || 'site');
     }
   }
   return list;
@@ -377,7 +478,7 @@ function extractBotSummary(crawl) {
     };
   }
 
-  const crawlers = Array.isArray(crawl?.robotsTxt?.crawlers) ? crawl.robotsTxt.crawlers : [];
+  const crawlers = extractBotEntries(crawl);
   let allowed = 0;
   let searchAllowed = 0;
   let searchTotal = 0;
@@ -385,14 +486,13 @@ function extractBotSummary(crawl) {
   const blockedBots = [];
 
   for (const c of crawlers) {
-    const botName = String(c?.bot ?? '');
-    const isAllowed = Boolean(c?.allowed);
-    if (isAllowed) allowed += 1;
+    const botName = c.bot;
+    if (c.allowed) allowed += 1;
     else if (botName) blockedBots.push(botName);
 
     if (SEARCH_BOT_NAMES.has(botName.toLowerCase())) {
       searchTotal += 1;
-      if (isAllowed) searchAllowed += 1;
+      if (c.allowed) searchAllowed += 1;
     }
   }
 
@@ -465,31 +565,34 @@ function buildCompetitorRow(crawl, isTarget) {
           ? crawl.browserDiff.renderedWordCount
           : null;
 
-  const markdownNegotiation = Boolean(
-    crawl?.markdownNegotiation ?? homepage?.markdownNegotiation ?? false,
-  );
+  const markdownNegotiation =
+    crawl?.markdownNegotiation !== undefined
+      ? isMarkdownNegotiationSupported(crawl.markdownNegotiation)
+      : isMarkdownNegotiationSupported(homepage?.markdownNegotiation);
 
   const contentSignal =
-    typeof crawl?.contentSignal === 'string'
+    typeof crawl?.contentSignal === 'string' && crawl.contentSignal.trim()
       ? crawl.contentSignal
-      : typeof homepage?.contentSignal === 'string'
-        ? homepage.contentSignal
-        : typeof crawl?.robotsTxt?.contentSignal === 'string'
-          ? crawl.robotsTxt.contentSignal
-          : null;
+      : formatEffectiveContentSignals(crawl?.robotsPolicy?.contentSignals?.effective) ??
+        (typeof homepage?.contentSignal === 'string' && homepage.contentSignal.trim()
+          ? homepage.contentSignal
+          : typeof crawl?.robotsTxt?.contentSignal === 'string' && crawl.robotsTxt.contentSignal.trim()
+            ? crawl.robotsTxt.contentSignal
+            : null);
 
   /** @type {Set<string>} */
   const stackSet = new Set();
   for (const src of [crawl?.stack, crawl?.tech?.stack, homepage?.stack]) {
-    if (Array.isArray(src)) {
-      for (const item of src) {
-        if (typeof item === 'string' && item.trim()) stackSet.add(item.trim());
-      }
-    }
+    collectStackLabels(src, stackSet);
   }
 
   const wafState = String(
-    crawl?.wafState ?? homepage?.wafState ?? crawl?.tech?.wafState ?? 'none',
+    crawl?.waf?.state ??
+      crawl?.stack?.waf?.state ??
+      crawl?.wafState ??
+      homepage?.wafState ??
+      crawl?.tech?.wafState ??
+      'none',
   );
 
   const criticalCount =
@@ -500,8 +603,11 @@ function buildCompetitorRow(crawl, isTarget) {
         : 0;
 
   const status = String(
-    crawl?.status ??
-      (crawl?.hardGate?.triggered ? 'blocked_hard_gate' : crawl?.summary?.grade ?? (criticalCount > 0 ? 'critical' : 'pass')),
+    (typeof crawl?.crawlStatus === 'string' && crawl.crawlStatus.trim() ? crawl.crawlStatus : null) ??
+      (typeof crawl?.status === 'string' && crawl.status.trim() ? crawl.status : null) ??
+      (crawl?.hardGate?.triggered
+        ? 'blocked_hard_gate'
+        : crawl?.summary?.crawlStatus ?? crawl?.summary?.grade ?? (criticalCount > 0 ? 'critical' : 'pass')),
   );
 
   return {
@@ -875,30 +981,23 @@ export function diffAgainstBaseline(currentReport, baselineReport, options = {})
     }
   }
 
-  // Newly blocked AI / search bots diff
+  // Newly blocked AI / search bots diff (prefers 18-bot robotsPolicy, falls back to 9-bot robotsTxt)
   /** @type {Map<string, boolean>} */
   const baselineBots = new Map();
-  if (Array.isArray(baselineReport?.robotsTxt?.crawlers)) {
-    for (const c of baselineReport.robotsTxt.crawlers) {
-      const name = String(c?.bot ?? '').trim();
-      if (name) baselineBots.set(name.toLowerCase(), Boolean(c.allowed));
-    }
+  for (const entry of extractBotEntries(baselineReport)) {
+    baselineBots.set(entry.bot.toLowerCase(), entry.allowed);
   }
 
   /** @type {Array<{bot: string, rule: string|null, matchedGroup: string|null}>} */
   const newlyBlockedBots = [];
-  if (Array.isArray(currentReport?.robotsTxt?.crawlers)) {
-    for (const c of currentReport.robotsTxt.crawlers) {
-      const name = String(c?.bot ?? '').trim();
-      if (!name) continue;
-      const wasAllowed = baselineBots.get(name.toLowerCase());
-      if (wasAllowed === true && c.allowed === false) {
-        newlyBlockedBots.push({
-          bot: name,
-          rule: typeof c.rule === 'string' ? c.rule : null,
-          matchedGroup: typeof c.matchedGroup === 'string' ? c.matchedGroup : null,
-        });
-      }
+  for (const entry of extractBotEntries(currentReport)) {
+    const wasAllowed = baselineBots.get(entry.bot.toLowerCase());
+    if (wasAllowed === true && entry.allowed === false) {
+      newlyBlockedBots.push({
+        bot: entry.bot,
+        rule: entry.rule,
+        matchedGroup: entry.matchedGroup,
+      });
     }
   }
 

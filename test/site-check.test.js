@@ -24,6 +24,7 @@ import {
   renderSiteCheckHtml,
   renderSiteCheckText,
 } from '../core/site-check.js';
+import { diffAgainstBaseline } from '../core/site-diff.js';
 
 const execFileAsync = promisify(execFile);
 const NODE = process.execPath;
@@ -1309,4 +1310,148 @@ test('CLI `hearsay check` v2 flags: --single, --max-pages, --vs (space-separated
     execFileAsync(NODE, [CLI, 'check', `${targetSrv.baseUrl}/`, '--allow-private', '--fail-on', 'bogus']),
     (err) => err.code === 2,
   );
+});
+
+test('SiteCheckV2Report x site-diff & UX regression: markdownNegotiation boolean, no finding double-count, crawlStatus/contentSignal/stack/wafState, 18-bot baseline diff, 5xx robots, and capped HTML cap-skips', async (t) => {
+  const prose =
+    'Production documentation page with clean server-rendered copy for AI search retrieval and engineering verification across releases.';
+
+  // Site A: HTML-only (markdownNegotiation.supported === false), clean SSR homepage,
+  // 2 subpages with CSR empty-shell criticals (/login, /signup), 25 extra links for max_pages_cap,
+  // 1 robots-disallowed link (/admin), Cloudflare edge + Content-Signal.
+  let blockExtendedBot = false;
+  const siteA = await startFixtureServer(t, (req, res) => {
+    const reqPath = (req.url ?? '/').split('?')[0];
+    if (reqPath === '/robots.txt') {
+      res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end([
+        'User-agent: *',
+        'Content-Signal: search=yes, ai-input=yes, ai-train=no',
+        'Disallow: /admin',
+        'Allow: /',
+        ...(blockExtendedBot ? ['', 'User-agent: Amazonbot', 'Disallow: /'] : []),
+      ].join('\n'));
+      return;
+    }
+    if (reqPath === '/llms.txt') {
+      res.writeHead(404).end('Not Found');
+      return;
+    }
+    if (reqPath === '/') {
+      const capLinks = Array.from({ length: 24 }, (_, idx) => `<a href="/page-${idx + 1}">Page ${idx + 1}</a>`).join(' ');
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        server: 'cloudflare',
+        'cf-ray': 'abc123-SJC',
+        'set-cookie': ['__cf_bm=tokenval; Path=/'],
+        etag: '"a-1"',
+      });
+      res.end(
+        '<!doctype html><html><head><title>Site A Home</title></head><body>' +
+          `<nav><a href="/pricing">Pricing</a> <a href="/features">Features</a> <a href="/admin">Admin</a> ${capLinks}</nav>` +
+          `<main><h1>Site A Home</h1><p>${prose} ${prose}</p></main>` +
+          '<script src="/_next/static/chunks/app/layout-123.js"></script>' +
+          '<script>self.__next_f.push([1,"ok"])</script>' +
+          '</body></html>',
+      );
+      return;
+    }
+    if (reqPath === '/pricing' || reqPath === '/features') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        '<!doctype html><html><head><title>App Shell</title></head><body>' +
+          '<div id="root"></div><noscript>Please enable JavaScript.</noscript>' +
+          '<script type="module" src="/assets/app-12345678.js"></script></body></html>',
+      );
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><head><title>${reqPath}</title></head><body><main><h1>${reqPath}</h1><p>${prose}</p></main></body></html>`);
+  });
+
+  // Site B: Returns HTTP 503 for /robots.txt (RFC 9309 temporary disallow -> 0/18 allowed) and serves true Accept: text/markdown
+  const siteB = await startFixtureServer(t, (req, res) => {
+    const reqPath = (req.url ?? '/').split('?')[0];
+    const accept = String(req.headers.accept ?? '');
+    if (reqPath === '/robots.txt') {
+      res.writeHead(503).end('Service Unavailable');
+      return;
+    }
+    if (reqPath === '/llms.txt') {
+      res.writeHead(404).end('Not Found');
+      return;
+    }
+    if (reqPath === '/' && accept.includes('text/markdown')) {
+      res.writeHead(200, {
+        'content-type': 'text/markdown; charset=utf-8',
+        vary: 'Accept',
+        'x-markdown-tokens': '90',
+      });
+      res.end(`# Site B\n\n${prose}\n`);
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><head><title>Site B</title></head><body><main><h1>Site B</h1><p>${prose}</p></main></body></html>`);
+  });
+
+  const baselineReport = await checkSiteV2(`${siteA.baseUrl}/`, {
+    allowPrivateHosts: true,
+    maxPages: 4, // selects /, /pricing, /features, /admin/secret (skipped by robots) + skips 24 /page-* (max_pages_cap)
+    vs: [`${siteB.baseUrl}/`],
+    failOn: 'critical',
+    sleepFn: async () => {},
+  });
+
+  // Fix #1: Site A (HTML-only) has markdownNegotiation: false; Site B (text/markdown) has true
+  assert.ok(baselineReport.competitorXray !== null);
+  const targetRow = baselineReport.competitorXray.target;
+  const compRow = baselineReport.competitorXray.competitors[0];
+  assert.equal(baselineReport.markdownNegotiation.supported, false);
+  assert.equal(targetRow.markdownNegotiation, false, 'HTML-only site must NOT report markdownNegotiation: true');
+  assert.equal(compRow.markdownNegotiation, true, 'text/markdown site must report markdownNegotiation: true');
+
+  // Fix #2: Exact criticalCount === 2 (/login + /signup CSR shells, NO phantom homepage double-count!)
+  assert.equal(baselineReport.summary.criticalCount, 2);
+  assert.equal(targetRow.criticalCount, 2);
+  assert.equal(baselineReport.ciGate.matchedFindings.length, 2);
+  assert.ok(
+    baselineReport.ciGate.matchedFindings.every((f) => !f.url.endsWith('/')),
+    'subpage CSR criticals must not be phantom-attributed to homepage',
+  );
+
+  // Fix #3: crawlStatus (not numeric HTTP 200), contentSignal, stack, and wafState read accurately
+  assert.equal(targetRow.status, 'critical');
+  assert.equal(targetRow.contentSignal, 'search=yes, ai-input=yes, ai-train=no');
+  assert.ok(targetRow.stack.includes('nextjs-app-router'));
+  assert.ok(targetRow.stack.includes('cloudflare'));
+  assert.equal(targetRow.wafState, 'bot_management_active');
+
+  // Fix #4: 18-bot newlyBlockedBots catches extended registry bot (Amazonbot, not in legacy 9-bot list)
+  blockExtendedBot = true;
+  const regressedReport = await checkSiteV2(`${siteA.baseUrl}/`, {
+    allowPrivateHosts: true,
+    single: true,
+    sleepFn: async () => {},
+  });
+  const bDiff = diffAgainstBaseline(regressedReport, baselineReport);
+  assert.equal(bDiff.hasRegression, true);
+  assert.ok(
+    bDiff.newlyBlockedBots.some((b) => b.bot === 'Amazonbot'),
+    `expected Amazonbot in newlyBlockedBots, got: ${JSON.stringify(bDiff.newlyBlockedBots)}`,
+  );
+
+  // Fix #5a: HTTP 503 robots.txt -> aiBotsAllowed.allowed === 0 (not 18/18)
+  assert.equal(compRow.aiBotsAllowed.allowed, 0);
+  assert.equal(compRow.aiBotsAllowed.total, 18);
+
+  // Fix #5b: Terminal text uses unambiguous `html-weight-tier=` label
+  const textOut = renderSiteCheckText(baselineReport);
+  assert.match(textOut, /html-weight-tier=/);
+
+  // Fix #5c: HTML keeps robots_disallowed visible in main table and collapses 20+ max_pages_cap rows into <details> capped at 15
+  const htmlOut = renderSiteCheckHtml(baselineReport);
+  assert.ok(htmlOut.includes('/admin'), 'robots_disallowed row must stay visible');
+  assert.ok(htmlOut.includes('Blocked / Skipped (1)'), 'expected 1 robots_disallowed row in visible table');
+  assert.ok(htmlOut.includes('<details'), 'cap-skipped URLs should be collapsible');
+  assert.ok(htmlOut.includes('more URL(s) omitted by crawl cap'), 'cap-skipped rows should be capped at 15');
 });

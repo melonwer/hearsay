@@ -2426,15 +2426,27 @@ function resolvePageMeta(payload, headersObj, finalUrl) {
 /**
  * Build a `BotAllowanceSummary` from the 18-crawler `RobotsPolicyResult`
  * (excluding non-crawler `policy_signal` tokens like `Google-Extended`).
+ * Per RFC 9309 §2.3.1.4, when `robots.txt` fails or returns HTTP 5xx,
+ * crawlers treat access as temporary disallow (`allowed: 0`).
  *
  * @param {import('./tech-detect.js').RobotsPolicyResult} robotsPolicy
+ * @param {{treatAllBlocked?: boolean}} [opts]
  * @returns {import('./site-diff.js').BotAllowanceSummary}
  */
-function summarizeAiBotsFromPolicy(robotsPolicy) {
+function summarizeAiBotsFromPolicy(robotsPolicy, opts = {}) {
   const realCrawlers = robotsPolicy.bots.filter((b) => b.category !== 'policy_signal');
   const searchCrawlers = realCrawlers.filter(
     (b) => b.category === 'search_retrieval' || b.category === 'user_fetch' || b.category === 'mixed_search_ai',
   );
+  if (opts.treatAllBlocked) {
+    return {
+      allowed: 0,
+      total: realCrawlers.length,
+      searchAllowed: 0,
+      searchTotal: searchCrawlers.length,
+      blockedBots: realCrawlers.map((b) => b.token),
+    };
+  }
   return {
     allowed: realCrawlers.filter((b) => b.allowed).length,
     total: realCrawlers.length,
@@ -3873,7 +3885,12 @@ export async function checkSiteV2(rawUrl, options = {}) {
   ]);
 
   const robotsPolicy = analyzeRobotsPolicy(robotsCapture.text, homePath, snap.headers);
-  const aiBotsAllowed = summarizeAiBotsFromPolicy(robotsPolicy);
+  const robotsFetch5xxOrFailed =
+    !crawl.robotsTxt.soft404 &&
+    (Boolean(crawl.robotsTxt.error) || (typeof crawl.robotsTxt.status === 'number' && crawl.robotsTxt.status >= 500));
+  const aiBotsAllowed = summarizeAiBotsFromPolicy(robotsPolicy, {
+    treatAllBlocked: robotsFetch5xxOrFailed,
+  });
   const markdownNegotiation = markdownOutcome.result;
   const browserDiff = browserOutcome.diff;
   const renderedHtml = browserOutcome.renderedHtml;
@@ -4454,8 +4471,10 @@ export function renderSiteCheckText(report) {
     const rp = report.robotsPolicy;
     const realBots = rp.bots.filter((b) => b.category !== 'policy_signal');
     const policySignals = rp.bots.filter((b) => b.category === 'policy_signal');
+    const allowedNum = v2Report ? v2Report.aiBotsAllowed.allowed : realBots.filter((b) => b.allowed).length;
+    const totalNum = v2Report ? v2Report.aiBotsAllowed.total : realBots.length;
     lines.push(
-      `  18-Bot Summary:   ${realBots.filter((b) => b.allowed).length}/${realBots.length} allowed` +
+      `  18-Bot Summary:   ${allowedNum}/${totalNum} allowed` +
       (rp.summary.searchRetrievalBlocked.length ? ` | search blocked: ${rp.summary.searchRetrievalBlocked.join(', ')}` : '') +
       (rp.summary.mixedSearchAiBlocked.length ? ` | mixed blocked: ${rp.summary.mixedSearchAiBlocked.join(', ')}` : ''),
     );
@@ -4514,7 +4533,7 @@ export function renderSiteCheckText(report) {
     const ext = report.extraction.extracted;
     const f = report.extraction.forensics;
     lines.push(
-      `  Payload-to-Prose:     ${f.payloadToProseRatio}x (tier=${f.rawHtmlCliffs.tier}, >2MB=${f.rawHtmlCliffs.exceeds2MB ? 'YES' : 'no'})` +
+      `  Payload-to-Prose:     ${f.payloadToProseRatio}x (html-weight-tier=${f.rawHtmlCliffs.tier}, >2MB=${f.rawHtmlCliffs.exceeds2MB ? 'YES' : 'no'})` +
       (f.nextFlightBytes > 0 ? `, Next RSC=${formatBytes(f.nextFlightBytes)}` : '') +
       (f.nextDataBytes > 0 ? `, __NEXT_DATA__=${formatBytes(f.nextDataBytes)}` : ''),
     );
@@ -4716,12 +4735,20 @@ export function renderSiteCheckHtml(report) {
         `</section>`
       : '';
 
-  // AI Crawlers KPI count (18-bot when robotsPolicy available, else 9-bot)
+  // AI Crawlers KPI count (18-bot when robotsPolicy available, honoring RFC 9309 5xx disallow)
   const realBotList = report.robotsPolicy
     ? report.robotsPolicy.bots.filter((b) => b.category !== 'policy_signal')
     : null;
-  const botsAllowedNum = realBotList ? realBotList.filter((b) => b.allowed).length : report.robotsTxt.allowedCount;
-  const botsTotalNum = realBotList ? realBotList.length : report.robotsTxt.crawlers.length;
+  const botsAllowedNum = v2Report
+    ? v2Report.aiBotsAllowed.allowed
+    : realBotList
+      ? realBotList.filter((b) => b.allowed).length
+      : report.robotsTxt.allowedCount;
+  const botsTotalNum = v2Report
+    ? v2Report.aiBotsAllowed.total
+    : realBotList
+      ? realBotList.length
+      : report.robotsTxt.crawlers.length;
 
   // Visual Truncation Budget Bars (Raw HTML 30KB / 100KB / 300KB / 2MB + Markdown 50K / 100K)
   const rawHtmlScaleMax = 2 * 1024 * 1024;
@@ -5091,8 +5118,56 @@ export function renderSiteCheckHtml(report) {
       : '';
 
   // Skipped / Errored & Multi-Page Crawl Summary
-  const crawlPagesHtml = v2Report
-    ? `<h2>Crawled Pages (${escapeHtml(v2Report.pages.length)})</h2>` +
+  let crawlPagesHtml = '';
+  if (v2Report) {
+    const blockingSkips = v2Report.skipped.filter(
+      (s) => s.reason === 'robots_disallowed' || s.reason === 'ssrf_blocked',
+    );
+    const capSkips = v2Report.skipped.filter(
+      (s) => s.reason !== 'robots_disallowed' && s.reason !== 'ssrf_blocked',
+    );
+    /** @type {string[]} */
+    const skipSections = [];
+    if (blockingSkips.length > 0 || v2Report.errored.length > 0) {
+      skipSections.push(
+        `<h3>Blocked / Skipped (${escapeHtml(blockingSkips.length)}) &amp; Errored (${escapeHtml(v2Report.errored.length)}) URLs</h3>` +
+          `<table><thead><tr><th>Kind</th><th>Reason</th><th>URL</th><th>Detail</th></tr></thead><tbody>` +
+          blockingSkips
+            .map(
+              (s) =>
+                `<tr><td><span class="badge badge-warn">SKIPPED</span></td><td><code>${escapeHtml(s.reason)}</code></td><td>${renderSafeLink(s.url)}</td><td>${escapeHtml(s.detail ?? s.rule ?? '—')}</td></tr>`,
+            )
+            .join('') +
+          v2Report.errored
+            .map(
+              (e) =>
+                `<tr><td><span class="badge badge-fail">ERRORED</span></td><td><code>${escapeHtml(e.reason)}</code></td><td>${renderSafeLink(e.url)}</td><td>${escapeHtml(e.error)}</td></tr>`,
+            )
+            .join('') +
+          `</tbody></table>`,
+      );
+    }
+    if (capSkips.length > 0) {
+      const capLimit = 15;
+      const visibleCapSkips = capSkips.slice(0, capLimit);
+      const hiddenCapCount = capSkips.length - visibleCapSkips.length;
+      skipSections.push(
+        `<details style="margin-top:0.75rem"><summary><strong>Crawl-cap skipped URLs (${escapeHtml(capSkips.length)})</strong> &mdash; <code>max_pages_cap</code> / <code>template_cap</code> (showing ${escapeHtml(visibleCapSkips.length)} of ${escapeHtml(capSkips.length)})</summary>` +
+          `<table><thead><tr><th>Kind</th><th>Reason</th><th>URL</th><th>Detail</th></tr></thead><tbody>` +
+          visibleCapSkips
+            .map(
+              (s) =>
+                `<tr><td><span class="badge badge-neutral">CAP SKIP</span></td><td><code>${escapeHtml(s.reason)}</code></td><td>${renderSafeLink(s.url)}</td><td>${escapeHtml(s.detail ?? s.rule ?? '—')}</td></tr>`,
+            )
+            .join('') +
+          (hiddenCapCount > 0
+            ? `<tr><td colspan="4" class="muted">&hellip; and ${escapeHtml(hiddenCapCount)} more URL(s) omitted by crawl cap (see JSON output for the full list).</td></tr>`
+            : '') +
+          `</tbody></table></details>`,
+      );
+    }
+    crawlPagesHtml =
+      `<h2>Crawled Pages (${escapeHtml(v2Report.pages.length)})</h2>` +
       `<table><thead><tr><th>URL</th><th>Template</th><th>HTTP</th><th>Raw Words</th><th>Payload/Prose</th><th>Findings</th></tr></thead><tbody>` +
       v2Report.pages
         .map(
@@ -5108,24 +5183,8 @@ export function renderSiteCheckHtml(report) {
         )
         .join('') +
       `</tbody></table>` +
-      (v2Report.skipped.length > 0 || v2Report.errored.length > 0
-        ? `<h3>Skipped (${escapeHtml(v2Report.skipped.length)}) &amp; Errored (${escapeHtml(v2Report.errored.length)}) URLs</h3>` +
-          `<table><thead><tr><th>Kind</th><th>Reason</th><th>URL</th><th>Detail</th></tr></thead><tbody>` +
-          v2Report.skipped
-            .map(
-              (s) =>
-                `<tr><td><span class="badge badge-warn">SKIPPED</span></td><td><code>${escapeHtml(s.reason)}</code></td><td>${renderSafeLink(s.url)}</td><td>${escapeHtml(s.detail ?? s.rule ?? '—')}</td></tr>`,
-            )
-            .join('') +
-          v2Report.errored
-            .map(
-              (e) =>
-                `<tr><td><span class="badge badge-fail">ERRORED</span></td><td><code>${escapeHtml(e.reason)}</code></td><td>${renderSafeLink(e.url)}</td><td>${escapeHtml(e.error)}</td></tr>`,
-            )
-            .join('') +
-          `</tbody></table>`
-        : '')
-    : '';
+      skipSections.join('');
+  }
 
   const redirectsHtml =
     report.redirects.hops.length === 0
