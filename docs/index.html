@@ -381,7 +381,8 @@
            =================================================== -->
       <section id="film" class="scene scene-film" data-theme="light" aria-labelledby="film-heading">
         <div class="column">
-          <h2 id="film-heading" class="display display-center" data-split>See the whole story in 49&nbsp;seconds.</h2>
+          <h2 id="film-heading" class="display display-center" data-split>See it run in real life.</h2>
+          <p class="lede">One command, one receipt, one fix — watch AI change its answer in 40&nbsp;seconds.</p>
         </div>
         <div class="film-stage">
           <figure class="cinema-frame" id="cinema-frame">
@@ -390,12 +391,12 @@
               playsinline
               preload="none"
               poster="film-poster.webp"
-              aria-label="Hearsay 49-second launch film: Receipts, not a fake 0–100 score"
+              aria-label="Hearsay 40-second launch film: one command, one receipt, one fix — watch AI change its answer"
             >
               <source src="hearsay-launch.mp4" type="video/mp4">
-              <a href="hearsay-launch.mp4">Download the 49-second Hearsay launch film (MP4)</a>
+              <a href="hearsay-launch.mp4">Download the 40-second Hearsay launch film (MP4)</a>
             </video>
-            <button type="button" class="play-btn" aria-label="Play the 49-second film">
+            <button type="button" class="play-btn" aria-label="Play the 40-second Hearsay launch film">
               <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" fill="currentColor"/></svg>
               <span>Play film</span>
             </button>
@@ -410,29 +411,29 @@
         <div class="column">
           <div class="scene-heading scene-heading-center">
             <h2 id="install-heading" class="display display-center" data-split>Run Hearsay on your own product.</h2>
-            <p class="lede">MIT licensed, $0, and zero dependencies. Everything stays in SQLite on your computer.</p>
+            <p class="lede">MIT licensed, $0, and runs locally in SQLite. Zero API keys needed to start.</p>
           </div>
 
           <div class="doors">
             <div class="door">
-              <h3 class="door-title">Paste one sentence into Claude Code or Codex</h3>
-              <p class="door-desc">Your coding agent sets up Hearsay, drafts buyer questions, and asks before running.</p>
-              <div class="copy-box">
-                <code id="agent-prompt-text">Install Hearsay from https://github.com/melonwer/hearsay and study my product, check available providers, and show me the buyer questions and cost plan before running.</code>
+              <h3 class="door-title">Run a 10-second site check (zero API keys)</h3>
+              <p class="door-desc">Requires Node.js 22.13+. Audits 18 AI crawlers and Bot-vs-Human diffs — or run <code>npx @melonwer/hearsay serve</code> for the local workbench.</p>
+              <div class="copy-box copy-box-cmd">
+                <code id="local-cmd-text">npx @melonwer/hearsay check https://yoursite.com --browser</code>
               </div>
-              <button type="button" class="action-btn action-btn-primary" data-copy-target="agent-prompt-text" data-default-label="Copy prompt">
-                <span class="action-label">Copy prompt</span>
+              <button type="button" class="action-btn action-btn-primary" data-copy-target="local-cmd-text" data-default-label="Copy command">
+                <span class="action-label">Copy command</span>
               </button>
             </div>
 
             <div class="door">
-              <h3 class="door-title">Run locally in your browser</h3>
-              <p class="door-desc">Requires only Node.js 22.13 or newer. Explore the live Notewell workspace in one click.</p>
-              <div class="copy-box copy-box-cmd">
-                <code id="local-cmd-text">git clone https://github.com/melonwer/hearsay &amp;&amp; cd hearsay &amp;&amp; node server.js</code>
+              <h3 class="door-title">Or paste one sentence into Claude Code, Codex, or Antigravity</h3>
+              <p class="door-desc">Your coding agent runs a technical pre-flight check first, drafts buyer questions, and asks before running.</p>
+              <div class="copy-box">
+                <code id="agent-prompt-text">Install Hearsay from https://github.com/melonwer/hearsay and study my product. Run a technical pre-flight check first, check available providers, and show me the buyer questions and cost plan before running.</code>
               </div>
-              <button type="button" class="action-btn action-btn-secondary" data-copy-target="local-cmd-text" data-default-label="Copy command">
-                <span class="action-label">Copy command</span>
+              <button type="button" class="action-btn action-btn-secondary" data-copy-target="agent-prompt-text" data-default-label="Copy prompt">
+                <span class="action-label">Copy prompt</span>
               </button>
             </div>
           </div>

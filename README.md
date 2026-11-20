@@ -9,9 +9,9 @@ real buyer questions across APIs, signed-in coding CLIs, or plug-and-play Google
 and see which pages AI read, dropped, or cited instead of yours. Local SQLite (`node:sqlite`), no
 subscriptions, zero telemetry.
 
-[![Hearsay animated preview: 10-second crawlability X-ray, answer receipts, and local AI-search forensics](docs/hearsay-preview.gif)](https://melonwer.github.io/hearsay/)
+[![Hearsay animated preview: one command, one receipt, one fix — watch AI change its answer in 40 seconds](docs/hearsay-preview.gif)](https://melonwer.github.io/hearsay/)
 
-**[See the interactive demo and the 49-second film](https://melonwer.github.io/hearsay/)**
+**[See the interactive demo and the 40-second film](https://melonwer.github.io/hearsay/)**
 
 [![npm](https://img.shields.io/npm/v/%40melonwer%2Fhearsay.svg)](https://www.npmjs.com/package/@melonwer/hearsay)
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)

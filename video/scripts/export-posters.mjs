@@ -50,7 +50,7 @@ function parseArgs(argv) {
 
 function chooseHeroTarget(options, media, timeline) {
   const fps = timeline?.fps ?? media?.fps ?? 30;
-  const duration = media?.duration ?? (timeline?.totalFrames ? timeline.totalFrames / fps : 49);
+  const duration = media?.duration ?? (timeline?.totalFrames ? timeline.totalFrames / fps : 40);
 
   if (Number.isFinite(options.frame) && options.frame >= 0) {
     return {

@@ -1,7 +1,8 @@
 import type {ThemeName} from './design';
 
 // ============================================================================
-// Beat-Locked 122 BPM Master Clock (1920x1080 @ 30fps)
+// Beat-Locked 122 BPM Master Clock — Launch Film v3 (1920x1080 @ 30fps)
+// Effortless 6-scene "Before → Fix → After" story (82 beats = 1,210f = 40.33s)
 // ============================================================================
 
 export const FPS = 30;
@@ -17,18 +18,20 @@ export const beatFrame = (beat: number): number =>
   Math.round((beat * FPS * 60) / BPM);
 
 export type SceneId =
-  | 'hook'
-  | 'xray'
-  | 'noScore'
-  | 'hijack'
-  | 'delta'
-  | 'workbench'
+  | 'invisible'
+  | 'command'
+  | 'receipt'
+  | 'fix'
+  | 'payoff'
   | 'outro';
+
+export type StoryPhase = 'before' | 'fix' | 'after' | 'outro';
 
 export interface SceneTiming {
   readonly id: SceneId;
   readonly index: number;
   readonly act: 1 | 2;
+  readonly phase: StoryPhase;
   readonly label: string;
   readonly theme: ThemeName;
   readonly beatStart: number;
@@ -41,6 +44,7 @@ const defineScene = (
   id: SceneId,
   index: number,
   act: 1 | 2,
+  phase: StoryPhase,
   label: string,
   theme: ThemeName,
   beatStart: number,
@@ -52,6 +56,7 @@ const defineScene = (
     id,
     index,
     act,
+    phase,
     label,
     theme,
     beatStart,
@@ -61,144 +66,241 @@ const defineScene = (
   };
 };
 
-// 100 beats @ 122 BPM = 1475 frames = 49.17 seconds (clean 2-bar / 4-bar phrasing)
+// 82 beats @ 122 BPM = 1,210 frames = 40.33 seconds (every cut on an even beat)
 export const TIMELINE: Record<SceneId, SceneTiming> = {
-  // Act 1 — The Hidden Problem & 10-Second X-Ray (44 beats = 649f = 21.63s)
-  hook: defineScene('hook', 1, 1, 'The conversation you never see', 'light', 0, 14),
-  xray: defineScene('xray', 2, 1, '10-second crawlability X-ray', 'dark', 14, 16),
-  noScore: defineScene('noScore', 3, 1, 'Receipts, not a fake score', 'mist', 30, 14),
+  // Act 1 — Before: Invisible → One Command → The Receipt (42 beats = 620f = 20.67s)
+  invisible: defineScene(
+    'invisible',
+    1,
+    1,
+    'before',
+    'Someone just asked AI what to buy',
+    'light',
+    0,
+    14,
+  ),
+  command: defineScene(
+    'command',
+    2,
+    1,
+    'before',
+    'Run one command. No API keys.',
+    'dark',
+    14,
+    14,
+  ),
+  receipt: defineScene(
+    'receipt',
+    3,
+    1,
+    'before',
+    'No fake 74/100 score. Just the receipt.',
+    'dark',
+    28,
+    14,
+  ),
 
-  // Act 2 — Deterministic Forensics, Local Workbench & Lockup (56 beats = 826f = 27.53s)
-  hijack: defineScene('hijack', 4, 2, 'Attrition & own-site hijacks', 'light', 44, 14),
-  delta: defineScene('delta', 5, 2, 'Memory vs. search & persistence', 'dark', 58, 14),
-  workbench: defineScene('workbench', 6, 2, 'Local SQLite workbench & MCP', 'mist', 72, 14),
-  outro: defineScene('outro', 7, 2, 'Hearsay', 'dark', 86, 14),
+  // Act 2 — Fix & After: Plain HTML Fix → Payoff → Keynote Lockup (40 beats = 590f = 19.67s)
+  fix: defineScene(
+    'fix',
+    4,
+    2,
+    'fix',
+    "Fix the one thing AI couldn't read",
+    'mist',
+    42,
+    14,
+  ),
+  payoff: defineScene(
+    'payoff',
+    5,
+    2,
+    'after',
+    'Ask AI again. Watch the answer change.',
+    'light',
+    56,
+    14,
+  ),
+  outro: defineScene(
+    'outro',
+    6,
+    2,
+    'outro',
+    'Hearsay',
+    'dark',
+    70,
+    12,
+  ),
 };
 
 export const SCENE_LIST: readonly SceneTiming[] = [
-  TIMELINE.hook,
-  TIMELINE.xray,
-  TIMELINE.noScore,
-  TIMELINE.hijack,
-  TIMELINE.delta,
-  TIMELINE.workbench,
+  TIMELINE.invisible,
+  TIMELINE.command,
+  TIMELINE.receipt,
+  TIMELINE.fix,
+  TIMELINE.payoff,
   TIMELINE.outro,
 ];
 
-export const TOTAL_BEATS = 100;
-export const TOTAL = beatFrame(TOTAL_BEATS); // 1475 frames
-export const DURATION_SECONDS = Number((TOTAL / FPS).toFixed(2)); // 49.17s
+export const TOTAL_BEATS = 82;
+export const TOTAL = beatFrame(TOTAL_BEATS); // 1,210 frames
+export const DURATION_SECONDS = Number((TOTAL / FPS).toFixed(2)); // 40.33s
+
+/** Iconic settled poster frame: Scene 3 thermal receipt with SKIPPED stamp & struck 74/100. */
+export const POSTER_FRAME = TIMELINE.receipt.from + 152; // frame 565
 
 // ============================================================================
-// Editorial Copy Contracts (Synchronized with README.md & docs/index.html)
+// Plain-English Editorial Copy Contracts (Zero Jargon · 1 Idea Per Screen)
 // ============================================================================
 
 export const SCENE_COPY = {
-  hook: {
-    eyebrow: '01 · THE CONVERSATION YOU NEVER SEE',
-    lines: ['Every day, buyers ask AI', 'what to buy.'] as const,
-    subline: 'Your product checks every box. Why did AI leave you out?',
-    prompt: 'Which SOC 2 meeting recorder should our 40-person team buy?',
-    competitors: [
+  invisible: {
+    lines: ['Someone just asked AI', 'what to buy.'] as const,
+    assistant: 'ChatGPT',
+    prompt: 'Which SOC 2 meeting recorder should our team buy?',
+    recommendations: [
       {
         name: 'Fireflies.ai',
-        detail: 'Business ($19/seat) · SOC 2 Type II, CRM sync.',
+        detail: 'SOC 2 Type II · $19/seat',
       },
       {
         name: 'Otter.ai',
-        detail: 'Business ($20/seat) · SOC 2 Type II, team spaces.',
+        detail: 'SOC 2 Type II · $20/seat',
       },
     ] as const,
-    omittedChip: 'Notewell (your site) — left out',
-    sourceChip: 'g2.com/categories/ai-meeting-assistants',
+    omittedLine: "Notewell isn't even mentioned.",
   },
-  xray: {
-    eyebrow: '02 · 10-SECOND CRAWLABILITY X-RAY · ZERO API KEYS',
-    lines: ['See what zero-JS', 'AI crawlers actually see.'] as const,
-    command: 'npx @melonwer/hearsay check https://yoursite.com --browser --vs competitor.com',
-    stack: 'Vite SPA · CDN: Cloudflare · WAF: bot_management_active',
-    crawlers: '18/18 allowed (OAI-SearchBot, Claude-SearchBot, PerplexityBot…)',
-    rawWords: 0,
-    renderedWords: 1167,
-    proseParity: 0,
-    missingHeadings: 16,
-    competitorParity: 94,
-    verdict: 'FAIL [BLOCKED_HARD_GATE] — Vite SSR recipe included',
+  command: {
+    lines: ['Run one command.', 'No API keys.'] as const,
+    command: 'npx @melonwer/hearsay check notewell.io',
+    humanLabel: 'What humans see',
+    humanWords: 1167,
+    aiLabel: 'What AI sees',
+    aiWords: 0,
+    unit: 'words',
+    punchline: 'Your page was invisible to AI.',
   },
-  noScore: {
-    eyebrow: '03 · NO BLACK-BOX SCORES',
-    lines: ['Stop trusting a fake', '0–100 AI score.'] as const,
-    fakeScore: '74 / 100',
-    fakeLabel: 'AI Visibility Score · $399/mo',
-    receiptMetaLeft: 'n = 45 prompts · 3 models',
-    receiptMetaRight: 'Wilson 95% CI',
-    metrics: [
-      {label: 'Mention rate', value: 18, ciLow: 9, ciHigh: 31, tone: 'cobalt' as const},
-      {label: 'Citation rate', value: 6, ciLow: 2, ciHigh: 18, tone: 'amber' as const},
-      {label: 'Positive recommendation', value: 4, ciLow: 1, ciHigh: 15, tone: 'signal' as const},
+  receipt: {
+    headlinePrefix: 'No fake ',
+    fakeScore: '74/100',
+    headlineSuffix: ' score.',
+    headlineSecond: 'Just the receipt.',
+    headerBrand: 'Hearsay',
+    headerSub: 'Answer receipt',
+    metaLeft: 'ChatGPT',
+    metaRight: 'notewell.io',
+    steps: [
+      {
+        index: '1',
+        label: 'Searched',
+        value: '"soc 2 meeting recorder pricing"',
+      },
+      {
+        index: '2',
+        label: 'Skipped',
+        value: 'notewell.io/pricing',
+        note: 'No readable HTML',
+        stamp: 'SKIPPED',
+      },
+      {
+        index: '3',
+        label: 'Cited instead',
+        value: 'g2.com',
+      },
     ] as const,
-    footerRight: 'Exact rates · n shown',
+    footerLeft: 'Result',
+    footerRight: 'Notewell left out',
+    footerSub: 'Saved locally in SQLite',
   },
-  hijack: {
-    eyebrow: '04 · RETRIEVAL FORENSICS',
-    lines: ['Retrieved, dropped,', 'or hijacked.'] as const,
-    subline: 'AI drops ~85% of retrieved pages—and often cites your docs to recommend a rival.',
-    funnel: [
-      {label: 'Retrieved URLs', pct: 100, count: '20 pages read'},
-      {label: 'Dropped before answer', pct: 85, count: '17 discarded'},
-      {label: 'Final citations', pct: 15, count: '3 kept'},
+  fix: {
+    lines: ['Fix the one thing', "AI couldn't read."] as const,
+    url: 'notewell.io/pricing',
+    beforeCode: '<div id="root"></div>',
+    beforeLabel: 'Before · Empty JavaScript shell',
+    afterLabel: 'After · Plain HTML pricing table',
+    tableTitle: 'Team Plan',
+    rows: [
+      {label: 'Seat price', value: '$22/seat'},
+      {label: 'Compliance', value: 'SOC 2 Type II'},
+      {label: 'Enterprise auth', value: 'SAML SSO'},
     ] as const,
-    hijackUrl: 'notewell.io/docs/security',
-    hijackRecommended: 'Fireflies.ai',
-    hijackNote: 'Cited your SOC 2 spec page while naming Fireflies.ai as the #1 recommendation.',
-    stamp: 'OWN-SITE HIJACK',
+    shippedPill: 'Shipped on Monday',
   },
-  delta: {
-    eyebrow: '05 · MEMORY VS. SEARCH & PERSISTENCE',
-    lines: ['Separate model weights', 'from live web churn.'] as const,
-    memoryTitle: 'Paired search=off vs. search=on',
-    memoryModel: 'Same model · claude-sonnet',
-    memoryOff: 42,
-    memoryOn: 11,
-    memoryDelta: '−31pp displaced by live search',
-    persistenceTitle: 'Multi-wave citation persistence',
-    persistenceSub: '4 weekly waves · single-wave claims refused',
-    domains: [
-      {domain: 'g2.com/categories/…', waves: '4 / 4 waves', status: 'DURABLE', tone: 'emerald' as const},
-      {domain: 'reddit.com/r/saas', waves: '3 / 4 waves', status: 'RECURRING', tone: 'cobalt' as const},
-      {domain: 'top10-ai-notes.io', waves: '1 / 4 waves', status: 'EPHEMERAL', tone: 'neutral' as const},
+  payoff: {
+    lines: ['Ask AI again.', 'Watch the answer change.'] as const,
+    assistant: 'ChatGPT',
+    prompt: 'Which SOC 2 meeting recorder should our team buy?',
+    winner: {
+      name: 'Notewell',
+      detail: '$22/seat · SOC 2 Type II · SAML SSO',
+    },
+    others: [
+      {
+        name: 'Fireflies.ai',
+        detail: 'SOC 2 Type II · $19/seat',
+      },
+      {
+        name: 'Otter.ai',
+        detail: 'SOC 2 Type II · $20/seat',
+      },
     ] as const,
-  },
-  workbench: {
-    eyebrow: '06 · LOCAL WORKBENCH & MCP',
-    lines: ['Runs locally.', 'Speaks MCP.'] as const,
-    windowTitle: 'localhost:3847/check — Hearsay Workbench',
-    routes: [
-      'BYOK Direct APIs',
-      'DataForSEO · Google AIO + ChatGPT Web',
-      '$0 CLIs · Codex · Claude Code · Antigravity',
-    ] as const,
-    chips: [
-      'Local SQLite (node:sqlite)',
-      '46 MCP tools',
-      'Hard cap: HEARSAY_MONTHLY_USD_CAP',
-    ] as const,
+    citedPill: 'Cited: notewell.io/pricing',
+    citationsFrom: 6,
+    citationsTo: 33,
+    outcomePrefix: 'Citations:',
+    outcomeSuffix: 'Saved locally in SQLite',
   },
   outro: {
     wordmark: 'Hearsay',
-    tagline: 'Receipts, not a fake 0–100 score.',
-    command: 'npx @melonwer/hearsay check https://yoursite.com',
-    footer: 'MIT · Local SQLite · 46 MCP tools · Zero telemetry',
+    tagline: 'Know why AI skipped you. Fix it.',
+    command: 'npx @melonwer/hearsay check yoursite.com',
+    footer: 'Open source · MIT · Local SQLite · Zero API keys to start',
   },
 } as const;
 
 // ============================================================================
-// Music Bed & Beat-Locked SFX Cues
+// Scene-Relative Cue Offsets (Synced 1:1 with Visual Animation & SFX Hits)
+// ============================================================================
+
+export const SCENE_CUES = {
+  invisible: {
+    chatEnter: 28,
+    omittedLand: 124,
+  },
+  command: {
+    cutIn: 4,
+    typeStart: 22,
+    humanReveal: 86,
+    aiZeroLand: 118,
+  },
+  receipt: {
+    strikeStart: 34,
+    receiptPrint: 56,
+    skippedStamp: 116,
+  },
+  fix: {
+    cardEnter: 6,
+    morphStart: 76,
+    shippedPill: 124,
+  },
+  payoff: {
+    notewellSlideIn: 66,
+    citedLock: 100,
+  },
+  outro: {
+    logoLand: 8,
+    ctaResolve: 46,
+  },
+} as const;
+
+// ============================================================================
+// Music Bed & Beat-Aligned SFX Cues
+// Loudness target: I ≈ -18.5 LUFS, True Peak ≈ -3.5 dBTP, 0 clipped samples
 // ============================================================================
 
 /**
  * audio/music.mp3 is 111.46s (3,343f @ 30fps).
- * trimBefore=252 (8.40s) leaves 103.06s (3,091f) — easily covers 100% of TOTAL (1,475f / 49.17s).
+ * trimBefore=252 (8.40s) leaves 103.06s (3,091f) — easily covers 100% of TOTAL (1,210f / 40.33s).
  */
 export const MUSIC = {
   from: 0,
@@ -207,7 +309,7 @@ export const MUSIC = {
   trimBefore: 252,
   volume: 0.4,
   fadeInFrames: 18,
-  fadeOutFrames: 48,
+  fadeOutFrames: 42,
 } as const;
 
 export interface SfxCue {
@@ -219,122 +321,120 @@ export interface SfxCue {
 }
 
 export const SFX: readonly SfxCue[] = [
-  // Scene 1: hook
+  // Scene 1: invisible (0..207)
   {
-    from: TIMELINE.hook.from + 24,
+    from: TIMELINE.invisible.from + SCENE_CUES.invisible.chatEnter, // 28
     duration: 45,
     src: 'audio/whoosh.mp3',
-    volume: 0.38,
+    volume: 0.36,
     action: 'Buyer chat card enters',
   },
   {
-    from: TIMELINE.hook.from + 122,
+    from: TIMELINE.invisible.from + SCENE_CUES.invisible.omittedLand, // 124
     duration: 15,
     src: 'audio/click.mp3',
-    volume: 0.46,
-    action: 'Omitted badge lands',
+    volume: 0.44,
+    action: "Notewell isn't mentioned line lands",
   },
 
-  // Scene 2: xray
+  // Scene 2: command (207..413)
   {
-    from: TIMELINE.xray.from + 4,
-    duration: 45,
-    src: 'audio/whoosh.mp3',
-    volume: 0.42,
-    action: 'Cut to dark X-ray terminal',
-  },
-  {
-    from: TIMELINE.xray.from + 96,
-    duration: 15,
-    src: 'audio/click.mp3',
-    volume: 0.46,
-    action: 'Bot-vs-Human diff reveals',
-  },
-  {
-    from: TIMELINE.xray.from + 168,
-    duration: 38,
-    src: 'audio/marker.mp3',
-    volume: 0.5,
-    action: 'BLOCKED_HARD_GATE verdict',
-  },
-
-  // Scene 3: noScore
-  {
-    from: TIMELINE.noScore.from + 44,
-    duration: 38,
-    src: 'audio/marker.mp3',
-    volume: 0.56,
-    action: 'Crimson slash across 74/100',
-  },
-  {
-    from: TIMELINE.noScore.from + 70,
-    duration: 15,
-    src: 'audio/paper.mp3',
-    volume: 0.54,
-    action: 'Thermal receipt prints',
-  },
-
-  // Scene 4: hijack
-  {
-    from: TIMELINE.hijack.from + 20,
-    duration: 15,
-    src: 'audio/paper.mp3',
-    volume: 0.5,
-    action: 'Hijack receipt enters',
-  },
-  {
-    from: TIMELINE.hijack.from + 114,
-    duration: 38,
-    src: 'audio/marker.mp3',
-    volume: 0.54,
-    action: 'OWN-SITE HIJACK stamp',
-  },
-
-  // Scene 5: delta
-  {
-    from: TIMELINE.delta.from + 6,
+    from: TIMELINE.command.from + SCENE_CUES.command.cutIn, // 211
     duration: 45,
     src: 'audio/whoosh.mp3',
     volume: 0.38,
-    action: 'Dark diagnostics cut',
+    action: 'Cut to obsidian dark command scene',
   },
   {
-    from: TIMELINE.delta.from + 104,
+    from: TIMELINE.command.from + SCENE_CUES.command.humanReveal, // 293
     duration: 15,
     src: 'audio/click.mp3',
-    volume: 0.46,
-    action: 'Durable domain ranks in',
+    volume: 0.44,
+    action: 'What humans see: 1,167 words reveals',
+  },
+  {
+    from: TIMELINE.command.from + SCENE_CUES.command.aiZeroLand, // 325
+    duration: 38,
+    src: 'audio/marker.mp3',
+    volume: 0.48,
+    action: 'What AI sees: 0 words lands',
   },
 
-  // Scene 6: workbench
+  // Scene 3: receipt (413..620)
   {
-    from: TIMELINE.workbench.from + 14,
+    from: TIMELINE.receipt.from + SCENE_CUES.receipt.strikeStart, // 447
+    duration: 38,
+    src: 'audio/marker.mp3',
+    volume: 0.5,
+    action: 'Crimson slash across 74/100',
+  },
+  {
+    from: TIMELINE.receipt.from + SCENE_CUES.receipt.receiptPrint, // 469
     duration: 15,
     src: 'audio/paper.mp3',
-    volume: 0.46,
-    action: 'macOS workbench frame settles',
+    volume: 0.5,
+    action: 'Thermal receipt rolls down',
   },
   {
-    from: TIMELINE.workbench.from + 116,
+    from: TIMELINE.receipt.from + SCENE_CUES.receipt.skippedStamp, // 529
     duration: 15,
     src: 'audio/click.mp3',
-    volume: 0.42,
-    action: 'Provider & USD cap strip locks',
+    volume: 0.46,
+    action: 'SKIPPED crimson stamp lands',
   },
 
-  // Scene 7: outro
+  // Scene 4: fix (620..826)
   {
-    from: TIMELINE.outro.from + 10,
-    duration: 90,
-    src: 'audio/impact.mp3',
-    volume: 0.46,
-    action: 'Hearsay wordmark lands',
+    from: TIMELINE.fix.from + SCENE_CUES.fix.cardEnter, // 626
+    duration: 15,
+    src: 'audio/paper.mp3',
+    volume: 0.42,
+    action: 'Mist canvas and empty root card enter',
   },
   {
-    from: TIMELINE.outro.from + 58,
+    from: TIMELINE.fix.from + SCENE_CUES.fix.morphStart, // 696
+    duration: 45,
+    src: 'audio/whoosh.mp3',
+    volume: 0.38,
+    action: 'Morph into plain HTML pricing table',
+  },
+  {
+    from: TIMELINE.fix.from + SCENE_CUES.fix.shippedPill, // 744
+    duration: 15,
+    src: 'audio/click.mp3',
+    volume: 0.44,
+    action: 'Shipped on Monday pill locks in',
+  },
+
+  // Scene 5: payoff (826..1033)
+  {
+    from: TIMELINE.payoff.from + SCENE_CUES.payoff.notewellSlideIn, // 892
+    duration: 45,
+    src: 'audio/whoosh.mp3',
+    volume: 0.36,
+    action: 'Notewell slides smoothly into #1',
+  },
+  {
+    from: TIMELINE.payoff.from + SCENE_CUES.payoff.citedLock, // 926
+    duration: 15,
+    src: 'audio/click.mp3',
+    volume: 0.46,
+    action: 'Cited pill and 6% to 33% outcome land',
+  },
+
+  // Scene 6: outro (1033..1210)
+  {
+    from: TIMELINE.outro.from + SCENE_CUES.outro.logoLand, // 1041
+    duration: 90,
+    src: 'audio/impact.mp3',
+    volume: 0.44,
+    action: 'Hearsay keynote lockup lands',
+  },
+  {
+    from: TIMELINE.outro.from + SCENE_CUES.outro.ctaResolve, // 1079
     duration: 75,
     src: 'audio/shimmer.mp3',
     volume: 0.28,
-    action: 'Tagline & npx command pill resolve',
+    action: 'Tagline and npx command pill resolve',
   },
 ];

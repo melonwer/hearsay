@@ -118,7 +118,7 @@ function computeKeyframes(duration, fps, timeline) {
       const durSec = scene.duration / effectiveFps;
       if (startSec >= duration) continue;
       const clampedDur = Math.min(durSec, duration - startSec);
-      const fractions = clampedDur >= 3.2 ? [0.22, 0.54, 0.84] : [0.28, 0.74];
+      const fractions = clampedDur >= 2.8 ? [0.22, 0.54, 0.84] : [0.28, 0.74];
       fractions.forEach((fraction, idx) => {
         const timeSec = clampTime(startSec + clampedDur * fraction);
         const frame = Math.min(
@@ -163,20 +163,27 @@ function computeKeyframes(duration, fps, timeline) {
 
 function selectContactSheetFrames(extractedFrames) {
   const total = extractedFrames.length;
-  if (total <= 16) {
-    if (total === 15) return {cols: 5, rows: 3, items: extractedFrames};
-    const cols = Math.min(4, Math.max(1, total));
-    const rows = Math.ceil(total / cols);
-    return {cols, rows, items: extractedFrames};
-  }
-  // Pick 16 evenly spaced frames across all extracted frames so every scene is represented
-  const target = 16;
+  // Exact zero-padding grids for common scene/beat counts (3×6 shows all 6 scenes × 3 beats, 1 scene per row)
+  if (total === 18) return {cols: 3, rows: 6, items: extractedFrames};
+  if (total === 16) return {cols: 4, rows: 4, items: extractedFrames};
+  if (total === 15) return {cols: 5, rows: 3, items: extractedFrames};
+  if (total === 12) return {cols: 4, rows: 3, items: extractedFrames};
+  if (total === 9) return {cols: 3, rows: 3, items: extractedFrames};
+  if (total === 8) return {cols: 4, rows: 2, items: extractedFrames};
+  if (total === 6) return {cols: 3, rows: 2, items: extractedFrames};
+  if (total === 4) return {cols: 2, rows: 2, items: extractedFrames};
+
+  // Sample evenly into the largest full zero-padding grid (4×4, 4×3, or 3×2) so there are no blank tiles
+  const [cols, rows] =
+    total >= 16 ? [4, 4] : total >= 12 ? [4, 3] : total >= 6 ? [3, 2] : [Math.max(1, total), 1];
+  const target = cols * rows;
+  if (target === total) return {cols, rows, items: extractedFrames};
   const selected = [];
   for (let i = 0; i < target; i += 1) {
     const idx = Math.round((i * (total - 1)) / (target - 1));
     selected.push(extractedFrames[idx]);
   }
-  return {cols: 4, rows: 4, items: selected};
+  return {cols, rows, items: selected};
 }
 
 function buildContactSheet(ffmpeg, selected, outputPath) {
@@ -294,9 +301,9 @@ async function main() {
     throw new Error(`Required no-BGM file missing: ${options.nobgm}`);
   }
 
-  // 3. Clean stale v2 QA frames and extract new individual PNGs + contact sheet
+  // 3. Clean stale QA frames and extract new individual PNGs + contact sheet
   for (const entry of readdirSync(options.outDir)) {
-    if (/^v2-frame-.*\.png$/.test(entry) || entry === 'v2-contact-sheet.png') {
+    if (/^(?:v\d+-|qa-)?frame-.*\.png$/.test(entry) || /^(?:v\d+-)?contact-sheet\.png$/.test(entry)) {
       rmSync(join(options.outDir, entry), {force: true});
     }
   }
@@ -306,7 +313,7 @@ async function main() {
   for (let i = 0; i < keyframes.length; i += 1) {
     const kf = keyframes[i];
     const indexStr = String(i + 1).padStart(2, '0');
-    const filename = `v2-frame-${indexStr}-${slugify(kf.scene)}.png`;
+    const filename = `v3-frame-${indexStr}-${slugify(kf.scene)}.png`;
     const framePath = join(options.outDir, filename);
     execFileSync(
       ffmpeg,
@@ -337,7 +344,7 @@ async function main() {
   }
 
   const contactSelection = selectContactSheetFrames(extractedFrames);
-  const contactSheetPath = join(options.outDir, 'v2-contact-sheet.png');
+  const contactSheetPath = join(options.outDir, 'v3-contact-sheet.png');
   buildContactSheet(ffmpeg, contactSelection, contactSheetPath);
 
   const report = {

@@ -948,6 +948,7 @@ a { color: inherit; }
    Scene 6 — Film
    ============================================ */
 
+.scene-film .lede { margin: 14px auto 0; text-align: center; }
 .film-stage { padding: clamp(40px, 6vw, 72px) 20px 0; }
 .cinema-frame {
   position: relative;

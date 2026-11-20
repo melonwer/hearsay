@@ -3,13 +3,12 @@ import {Audio} from '@remotion/media';
 import {AbsoluteFill, Sequence, interpolate, staticFile} from 'remotion';
 import {PALETTE} from './design';
 import {ensureFontsLoaded} from './fonts';
-import {HookScene, NoScoreScene, XRayScene} from './scenes/Act1Opening';
 import {
-  DeltaScene,
-  HijackScene,
-  OutroScene,
-  WorkbenchScene,
-} from './scenes/Act2Forensics';
+  CommandScene,
+  InvisibleScene,
+  ReceiptScene,
+} from './scenes/Act1Opening';
+import {FixScene, OutroScene, PayoffScene} from './scenes/Act2Forensics';
 import {
   MUSIC,
   PREMOUNT_FRAMES,
@@ -25,12 +24,11 @@ void ensureFontsLoaded();
 type SceneComponent = React.FC<{duration: number}>;
 
 const SCENE_COMPONENTS: Record<SceneId, SceneComponent> = {
-  hook: HookScene,
-  xray: XRayScene,
-  noScore: NoScoreScene,
-  hijack: HijackScene,
-  delta: DeltaScene,
-  workbench: WorkbenchScene,
+  invisible: InvisibleScene,
+  command: CommandScene,
+  receipt: ReceiptScene,
+  fix: FixScene,
+  payoff: PayoffScene,
   outro: OutroScene,
 };
 

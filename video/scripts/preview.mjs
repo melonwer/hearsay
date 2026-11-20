@@ -11,12 +11,13 @@ import {
   resolveBinary,
 } from './media-utils.mjs';
 
-const DEFAULT_MAX_BYTES = 1_500_000; // Target safely under ~1.5 MB for GitHub README
+const DEFAULT_MAX_BYTES = 1_200_000; // Target safely under 1.2 MB for GitHub README
 
 const QUALITY_PRESETS = [
   {width: 800, fps: 14, maxColors: 128, bayerScale: 3},
-  {width: 760, fps: 13, maxColors: 112, bayerScale: 4},
-  {width: 720, fps: 12, maxColors: 96, bayerScale: 4},
+  {width: 800, fps: 14, maxColors: 96, bayerScale: 3},
+  {width: 800, fps: 14, maxColors: 64, bayerScale: 4},
+  {width: 760, fps: 13, maxColors: 64, bayerScale: 4},
   {width: 720, fps: 12, maxColors: 64, bayerScale: 5},
   {width: 720, fps: 12, maxColors: 48, bayerScale: 5},
 ];
@@ -84,26 +85,26 @@ function selectHighlightBeats(duration, fps, timeline) {
     });
   }
 
-  // 2. Sample 6-8 punchy highlight beats across all scenes from timeline.ts
+  // 2. Sample 6 crisp settled highlight beats across the scenes from timeline.ts
   const scenes = timeline?.scenes ?? [];
   if (scenes.length >= 2) {
     let chosenScenes = scenes;
-    if (scenes.length > 8) {
-      // Pick 7 evenly distributed scenes including opening and outro
-      chosenScenes = Array.from({length: 7}, (_, i) => {
-        const idx = Math.round((i * (scenes.length - 1)) / 6);
+    if (scenes.length > 6) {
+      // Pick 6 evenly distributed scenes including opening and outro
+      chosenScenes = Array.from({length: 6}, (_, i) => {
+        const idx = Math.round((i * (scenes.length - 1)) / 5);
         return scenes[idx];
       });
     }
 
-    const totalTargetSec = 8.4;
+    const totalTargetSec = 7.5;
     const perBeatSec = Math.min(1.25, Math.max(0.95, totalTargetSec / chosenScenes.length));
     const beats = chosenScenes.map((scene, idx) => {
       const sceneStart = scene.from / effectiveFps;
       const sceneDur = scene.duration / effectiveFps;
       const beatDur = Math.min(perBeatSec, Math.max(0.75, sceneDur * 0.45));
-      // Land on the settled hero payoff (~70% in; ~62% on outro before closing fade)
-      const anchor = idx === chosenScenes.length - 1 ? 0.62 : 0.70;
+      // Land on the settled hero payoff (~72% in; ~65% on outro before closing fade)
+      const anchor = idx === chosenScenes.length - 1 ? 0.65 : 0.72;
       const start = sceneStart + Math.max(0.2, sceneDur * anchor - beatDur * 0.5);
       return clampBeat(start, beatDur, scene.id);
     });
@@ -125,9 +126,9 @@ function selectHighlightBeats(duration, fps, timeline) {
     return beats;
   }
 
-  // 3. Fallback: 7 evenly spread highlight beats computed purely from ffprobe duration
-  const beatCount = 7;
-  const beatDur = 1.15;
+  // 3. Fallback: 6 evenly spread highlight beats computed purely from ffprobe duration
+  const beatCount = 6;
+  const beatDur = 1.2;
   const usableStart = Math.min(0.6, duration * 0.04);
   const usableEnd = Math.max(usableStart + beatDur, duration - beatDur - 0.3);
   const span = Math.max(0.1, usableEnd - usableStart);
