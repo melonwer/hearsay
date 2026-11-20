@@ -9,9 +9,9 @@ real buyer questions across APIs, signed-in coding CLIs, or plug-and-play Google
 and see which pages AI read, dropped, or cited instead of yours. Local SQLite (`node:sqlite`), no
 subscriptions, zero telemetry.
 
-[![Hearsay animated preview: The conversation you never see](docs/hearsay-preview.gif)](https://melonwer.github.io/hearsay/)
+[![Hearsay animated preview: 10-second crawlability X-ray, answer receipts, and local AI-search forensics](docs/hearsay-preview.gif)](https://melonwer.github.io/hearsay/)
 
-**[See the interactive demo and the 51-second film](https://melonwer.github.io/hearsay/)**
+**[See the interactive demo and the 49-second film](https://melonwer.github.io/hearsay/)**
 
 [![npm](https://img.shields.io/npm/v/%40melonwer%2Fhearsay.svg)](https://www.npmjs.com/package/@melonwer/hearsay)
 [![CI](https://github.com/melonwer/hearsay/actions/workflows/ci.yml/badge.svg)](https://github.com/melonwer/hearsay/actions/workflows/ci.yml)
@@ -93,7 +93,7 @@ Hearsay replaces black-box scores with **four deterministic forensics checks**:
 | **Memory vs. search** | Mixed silently | Paired `search=off` vs. grounded delta per `(provider, model)` |
 | **Off-site targets** | Noisy single-day URL dumps | Multi-wave Citation Persistence (`durable`, `recurring`, `ephemeral`, or `single_wave_unverified`) |
 | **Engines & cost** | Per-seat / per-engine paywalls | Direct APIs, BYOK **DataForSEO** (`google-aio` + `chatgpt-web`), $0 signed-in CLIs (`Codex`, `Claude Code`, `Antigravity`), hard monthly USD cap |
-| **Data & reports** | Hosted lock-in | Local SQLite, white-label HTML/PDF Evidence Dossiers, 45 MCP tools, GitHub Actions weekly waves |
+| **Data & reports** | Hosted lock-in | Local SQLite, white-label HTML/PDF Evidence Dossiers, 46 MCP tools, GitHub Actions weekly waves |
 
 ---
 
@@ -129,7 +129,7 @@ Or run directly without cloning: `npx @melonwer/hearsay serve` (no Git? Use **Co
 
 Open the local URL printed in your terminal, then:
 
-1. Click **Explore Interactive Notewell Demo**, or start in your own SQLite workspace.
+1. Open **`/check`** for the **Site X-Ray Workbench UI** (live SSE crawl streaming, Bot-vs-Human diffs, `--vs` competitor parity, and SQLite drift history) — or click **Explore Interactive Notewell Demo** to inspect a full multi-wave workspace.
 2. Connect any mix of routes:
    - **Direct APIs:** `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `PERPLEXITY_API_KEY`
    - **Plug-and-play consumer surfaces (BYOK):** `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` for **Google AI Overviews** and **ChatGPT Web** (with geolocation + pre-wave health canary)
@@ -146,7 +146,7 @@ Paste this into your coding assistant — studies live in `.hearsay/<app-id>/` w
 > available providers, and propose buyer questions, spend limits, and a schedule before enabling
 > collection.
 
-Or wire up the skill bundles and 45-tool MCP server directly:
+Or wire up the skill bundles and 46-tool MCP server directly:
 
 ```sh
 node bin/hearsay.js doctor                                   # inspect runtime and agent routes

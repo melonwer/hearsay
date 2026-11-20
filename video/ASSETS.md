@@ -2,7 +2,7 @@
 
 The conceptual product cards are original SVG/CSS artwork. Hearsay UI screenshots come from the fictional fixtures in `public/captures/`; no customer data or private chats appear in the film.
 
-Inter Display is by Rasmus Andersson, used under the SIL Open Font License. The included license is `public/fonts/LICENSE.txt`.
+Inter Display is by Rasmus Andersson, used under the SIL Open Font License. The included license is `public/fonts/LICENSE.txt`. Fira Mono (`FiraMono-{Regular,Medium,Bold}.otf`) is bundled under the SIL Open Font License.
 
 The audio files below were copied from Video Shotcraft. SHA-256 comparison confirmed each copied file exactly matches the named upstream asset. The upstream attribution record identifies Mixkit as the source.
 

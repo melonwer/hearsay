@@ -31,7 +31,8 @@
     "render": "remotion render src/index.ts HearsayLaunch out/hearsay-launch.mp4 --concurrency=1 --log=error",
     "render:nobgm": "remotion render src/index.ts HearsayLaunch out/hearsay-launch-nobgm.mp4 --concurrency=1 --props=props-nobgm.json --log=error",
     "qa": "node scripts/qa.mjs",
-    "preview:gif": "node scripts/preview.mjs"
+    "preview:gif": "node scripts/preview.mjs",
+    "posters": "node scripts/export-posters.mjs"
   },
   "type": "module"
 }
